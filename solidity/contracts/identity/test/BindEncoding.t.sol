@@ -20,11 +20,11 @@ import {XIdentityVerifier} from "../XIdentityVerifier.sol";
 ///
 /// The same file is asserted from the other side in `bind.test.ts`.
 contract BindEncodingTest is Test {
-    /// Vendored parity fixture. Source of truth is the TS encoder in the
-    /// browser identity package, which generates these bytes for a known
-    /// proof; both the TS tests and this Solidity test assert against the
-    /// same file. The TS side will live in this repo's ts/ package later —
-    /// until then, regenerate the fixture there and copy it here.
+    /// Shared parity fixture. Source of truth is the TS encoder in
+    /// `ts/packages/contracts/src/identity/bind.ts`, which generates these
+    /// bytes for a known proof; both the TS tests and this Solidity test
+    /// assert against this one file. Regenerate with
+    /// `pnpm -C ts/packages/contracts regen:fixtures`.
     string internal constant FIXTURE = "contracts/identity/test/fixtures/bind-encoding.json";
 
     address internal constant WALLET = 0x2222222222222222222222222222222222222222;
