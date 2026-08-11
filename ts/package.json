@@ -2,6 +2,7 @@
   "name": "@libid/ts",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.30.3",
   "scripts": {
     "codegen": "pnpm -r codegen",
     "codegen:check": "pnpm -r codegen:check",
