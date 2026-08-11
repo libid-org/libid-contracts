@@ -1,0 +1,53 @@
+# Install Foundry, restore the forge artifact cache, and build the contracts.
+#
+# Four jobs need `forge build` before they can do anything else: solidity runs
+# the tests over it, handles-drift shells to `forge fmt`, rust vendors the
+# artifacts into the crate, and ts generates bindings from them. Repeating the
+# install + cache + build stanza in each job is how the copies drift, so the
+# sequence lives here once.
+#
+# The cache key is the SAME in every job that uses this action — it is derived
+# only from inputs.foundry-version and the checked-out sources — so whichever
+# job saves first warms all the others: on the next run `forge build` restores
+# a fully built `out/` and is a near no-op, because forge's own cache is
+# content-addressed over the sources and the solc version and rebuilds nothing
+# that did not change.
+name: forge-build
+description: Install Foundry, restore the shared forge cache, and run `forge build` in solidity/.
+
+inputs:
+  foundry-version:
+    description: Foundry release to install (the workflow's FOUNDRY_VERSION).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Also provides `anvil`, which the rust integration tests spawn, and
+    # `cast`. Pinned by commit because this action runs in credential-adjacent
+    # jobs and a moved tag should not be able to change what executes.
+    - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+      with:
+        version: ${{ inputs.foundry-version }}
+
+    # `solidity/lib/**` hashes the checked-out submodule trees, so bumping a
+    # submodule pointer changes the key. The foundry version is in the key too:
+    # artifacts embed solc metadata, and a stale `out/` from another compiler
+    # is exactly the confusion a cache must not introduce.
+    - name: Restore forge artifacts
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          solidity/out
+          solidity/cache
+        key: forge-${{ runner.os }}-${{ inputs.foundry-version }}-${{ hashFiles('solidity/**/*.sol', 'solidity/foundry.toml', 'solidity/remappings.txt', 'solidity/lib/**') }}
+        restore-keys: |
+          forge-${{ runner.os }}-${{ inputs.foundry-version }}-
+
+    # Deliberately not `--force`: forge's cache is content-addressed, so a
+    # stale artifact cannot outlive a source change, and on a warm cache this
+    # step is the fast no-op the whole arrangement exists to buy.
+    - name: Build contracts
+      shell: bash
+      working-directory: solidity
+      run: forge build
