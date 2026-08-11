@@ -8,8 +8,14 @@ name: CI
 # no-op everywhere else.
 #
 # Job ids are stable on purpose (solidity, handles-drift, rust, ts, dco):
-# release/publish jobs will be added to this file later and will hang their
-# `needs:` off these names.
+# the release/publish jobs at the bottom of this file hang their `needs:` off
+# these names.
+#
+# Releases: publishing a GitHub Release tagged `v<version>` runs this same
+# workflow with the release event. versions and publish-check run on every
+# event; verify-tag, publish-crates and publish-npm are release-only. One
+# version, one tag, two registries — see the "Releasing" section of the
+# README.
 #
 # Every third-party action is pinned by commit SHA, with the tag in a comment,
 # so a moved tag cannot change what executes.
@@ -18,6 +24,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  release:
+    types: [published]
 
 concurrency:
   # Superseded pushes stop burning minutes immediately.
@@ -201,6 +209,10 @@ jobs:
     name: DCO
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # A release event carries no commit range — every commit it points at was
+    # already DCO-checked on its PR — and the range plumbing below would only
+    # fail on the empty variables.
+    if: github.event_name != 'release'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -252,3 +264,200 @@ jobs:
             exit 1
           fi
           echo "All commits in $range are signed off."
+
+  # ---------------------------------------------------------------------------
+  # One version, everywhere. The crate and the npm package release together
+  # under a single number, and this check fails the PR the moment the two
+  # manifests disagree — release day is too late to find out.
+  # ---------------------------------------------------------------------------
+  versions:
+    name: Version fields agree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Crate and npm versions are equal
+        run: ./.github/workflows/scripts/verify-tag.sh
+
+  # ---------------------------------------------------------------------------
+  # Publishability, checked on every PR: both registries' dry-runs pass from a
+  # plain checkout. Deliberately NO forge build and NO submodules — the crate
+  # ships its vendored artifacts and the npm package ships committed ABIs, so
+  # if either dry-run reaches for solidity/, that is a packaging bug this job
+  # exists to catch.
+  # ---------------------------------------------------------------------------
+  publish-check:
+    name: Publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+
+      # Packs the crate and rebuilds it from the packaged tarball, proving the
+      # published form compiles without the rest of the repo.
+      - name: cargo publish --dry-run
+        working-directory: rust
+        run: cargo publish --dry-run -p libid-contracts
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm -C ts install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -C ts build
+
+      # From the package directory, not `pnpm -C`: pnpm 10 mangles the flags
+      # it forwards to `npm publish` when -C is in play (observed: EUSAGE).
+      - name: pnpm publish --dry-run
+        working-directory: ts/packages/contracts
+        run: pnpm publish --dry-run --no-git-checks
+
+  # ---------------------------------------------------------------------------
+  # Release-only jobs from here down. A release is cut by publishing a GitHub
+  # Release tagged v<version>; nothing publishes from pushes or PRs.
+  # ---------------------------------------------------------------------------
+
+  # The tag names the version the manifests already carry — the tag is a
+  # pointer, never a source. Everything that publishes needs this first.
+  verify-tag:
+    name: Release tag matches versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Tag equals crate and npm versions
+        run: ./.github/workflows/scripts/verify-tag.sh "${{ github.event.release.tag_name }}"
+
+  # crates.io first: the crate has no dependency on the npm package, and
+  # publishing the harder-to-yank registry first means a failure here leaves
+  # nothing half-released.
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [verify-tag, versions, solidity, rust, publish-check]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+
+      # Idempotent-ish: a re-run after a partially failed release (say npm
+      # setup was missing) must not hard-fail on the half that already landed.
+      # The sparse index is the cheap ground truth; 404 means never published.
+      - name: Skip if this version is already on crates.io
+        id: crates-check
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          published="$(curl -fsSL https://index.crates.io/li/bi/libid-contracts | jq -r .vers || true)"
+          if grep -qxF "$version" <<<"$published"; then
+            echo "::notice::libid-contracts $version is already on crates.io; skipping publish."
+            echo "already-published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already-published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: cargo publish
+        if: steps.crates-check.outputs.already-published == 'false'
+        working-directory: rust
+        run: cargo publish -p libid-contracts --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+
+  # npm via OIDC trusted publishing: no long-lived token, the registry trusts
+  # this repo + workflow + environment combination directly, and npm attaches
+  # provenance. The npm-deploy environment is also the place to hang a manual
+  # approval gate if one is ever wanted.
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [verify-tag, ts, publish-crates]
+    environment: npm-deploy
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      # The repo is public, so provenance attestation is on. (If the repo ever
+      # goes private, flip this to false — provenance requires a public repo.)
+      NPM_CONFIG_PROVENANCE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+
+      # OIDC trusted publishing needs npm >= 11.5; the npm bundled with the
+      # pinned Node may lag behind.
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest && npm --version
+
+      - name: Install dependencies
+        run: pnpm -C ts install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -C ts build
+
+      # A prerelease must not become `latest`: 1.2.0-rc.1 publishes under the
+      # dist-tag `rc`, a plain release under `latest`. The first prerelease
+      # identifier is the tag, and it must be a legal dist-tag (npm rejects
+      # anything that parses as a version, e.g. from 1.2.3-1).
+      - name: Derive dist-tag from version
+        id: dist-tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base="${version%%+*}"
+          if [ "$base" != "${base#*-}" ]; then
+            pre="${base#*-}"
+            dist_tag="${pre%%.*}"
+            if ! printf '%s' "$dist_tag" | grep -qE '^[A-Za-z][A-Za-z0-9._-]*$'; then
+              echo "::error::prerelease identifier '$dist_tag' (from $version) is not a usable npm dist-tag; use a form like 1.2.0-rc.1" >&2
+              exit 1
+            fi
+          else
+            dist_tag=latest
+          fi
+          echo "Publishing with dist-tag: $dist_tag"
+          echo "dist-tag=$dist_tag" >> "$GITHUB_OUTPUT"
+
+      # From the package directory, not `pnpm -C` — same pnpm 10 flag-mangling
+      # noted in publish-check.
+      - name: pnpm publish
+        working-directory: ts/packages/contracts
+        run: pnpm publish --access public --no-git-checks --tag "${{ steps.dist-tag.outputs.dist-tag }}"
