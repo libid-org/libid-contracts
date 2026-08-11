@@ -1,0 +1,322 @@
+{
+  "version": 1,
+  "note": [
+    "The single source of truth for platform identity constants and for handle",
+    "normalization. Solidity, Rust and TypeScript constants are generated from",
+    "this file by scripts/regen-identity-handles.py. The normalizer logic is",
+    "hand written in each language, but every language runs the same vector",
+    "table, so a difference between them fails a test instead of writing a",
+    "different key on chain.",
+    "",
+    "Normalization is a closed byte transform. It is not Unicode case folding",
+    "and not UTS-46. Handles on the supported platforms are ASCII, so a closed",
+    "transform gives three languages the same answer with no shared library."
+  ],
+  "platforms": [
+    {
+      "key": "x",
+      "domain": "dyaka.identity.platform.x",
+      "stripLeadingAt": true,
+      "maxLength": 15,
+      "shape": "handle",
+      "allowUnderscore": true,
+      "allowHyphen": false,
+      "note": "X allows letters, digits and underscore, up to 15 characters.",
+      "futureAllowanceSeconds": 300,
+      "allowanceNote": "A notary states wall-clock time as it observes it, so the observation is never ahead. Five minutes covers clock skew between the notary and the chain."
+    },
+    {
+      "key": "github",
+      "domain": "dyaka.identity.platform.github",
+      "stripLeadingAt": true,
+      "maxLength": 39,
+      "shape": "handle",
+      "allowUnderscore": false,
+      "allowHyphen": true,
+      "note": [
+        "GitHub allows letters, digits and hyphen, up to 39 characters. A hyphen",
+        "may not start or end the handle, and two hyphens may not touch."
+      ],
+      "futureAllowanceSeconds": 300,
+      "allowanceNote": "Same as X: notary wall-clock, five minutes for skew."
+    },
+    {
+      "key": "google",
+      "domain": "dyaka.identity.platform.google",
+      "stripLeadingAt": false,
+      "maxLength": 62,
+      "shape": "email",
+      "note": [
+        "The address is used as proved. This transform does not remove dots,",
+        "does not strip a +tag, and does not rewrite a domain, because two",
+        "different addresses must never become one identity.",
+        "",
+        "62 bytes is a hard limit and not only a lookup limit. A longer address",
+        "is rejected instead of truncated, for the same reason."
+      ],
+      "futureAllowanceSeconds": 7200,
+      "allowanceNote": "The OIDC circuit exposes no `iat`, so the observation is the token's `exp` — Google issues about an hour of life, and the claim therefore reads roughly an hour ahead of the moment it describes."
+    }
+  ],
+  "errors": [
+    {
+      "key": "Empty",
+      "note": "Nothing is left after the transform."
+    },
+    {
+      "key": "TooLong",
+      "note": "More bytes than the platform allows."
+    },
+    {
+      "key": "BadCharacter",
+      "note": "A byte the platform does not allow."
+    },
+    {
+      "key": "BadShape",
+      "note": "Allowed bytes in an arrangement the platform does not allow."
+    }
+  ],
+  "vectors": [
+    {
+      "platform": "x",
+      "input": " @Alice_1 ",
+      "output": "alice_1",
+      "note": "Outer spaces go, one @ goes, letters fold down."
+    },
+    {
+      "platform": "x",
+      "input": "alice",
+      "output": "alice"
+    },
+    {
+      "platform": "x",
+      "input": "@a",
+      "output": "a"
+    },
+    {
+      "platform": "x",
+      "input": "A1_b2",
+      "output": "a1_b2"
+    },
+    {
+      "platform": "x",
+      "input": "a12345678901234",
+      "output": "a12345678901234",
+      "note": "15 bytes is the limit."
+    },
+    {
+      "platform": "x",
+      "input": "a123456789012345",
+      "error": "TooLong"
+    },
+    {
+      "platform": "x",
+      "input": "",
+      "error": "Empty"
+    },
+    {
+      "platform": "x",
+      "input": "   ",
+      "error": "Empty"
+    },
+    {
+      "platform": "x",
+      "input": "@",
+      "error": "Empty",
+      "note": "One @ goes, nothing is left."
+    },
+    {
+      "platform": "x",
+      "input": "@@alice",
+      "error": "BadCharacter",
+      "note": "Only one @ goes."
+    },
+    {
+      "platform": "x",
+      "input": "alice-1",
+      "error": "BadCharacter",
+      "note": "X does not allow a hyphen."
+    },
+    {
+      "platform": "x",
+      "input": "ali ce",
+      "error": "BadCharacter",
+      "note": "An inner space is not trimmed."
+    },
+    {
+      "platform": "x",
+      "input": "ali\tce",
+      "error": "BadCharacter"
+    },
+    {
+      "platform": "x",
+      "input": "ali\nce",
+      "error": "BadCharacter"
+    },
+    {
+      "platform": "x",
+      "input": "alicé",
+      "error": "BadCharacter",
+      "note": "A byte above 0x7f is refused."
+    },
+    {
+      "platform": "x",
+      "input": "\talice",
+      "error": "BadCharacter",
+      "note": "A leading tab is not trimmed. Only 0x20 is."
+    },
+    {
+      "platform": "x",
+      "input": "alice\t",
+      "error": "BadCharacter",
+      "note": "A trailing tab is not trimmed either."
+    },
+    {
+      "platform": "x",
+      "input": "\nalice",
+      "error": "BadCharacter"
+    },
+    {
+      "platform": "x",
+      "input": " @ alice ",
+      "error": "BadCharacter",
+      "note": "Trim runs once, before the @ strip, and never again."
+    },
+    {
+      "platform": "github",
+      "input": "@Octo-Cat",
+      "output": "octo-cat"
+    },
+    {
+      "platform": "github",
+      "input": "octocat",
+      "output": "octocat"
+    },
+    {
+      "platform": "github",
+      "input": " OctoCat ",
+      "output": "octocat"
+    },
+    {
+      "platform": "github",
+      "input": "a",
+      "output": "a"
+    },
+    {
+      "platform": "github",
+      "input": "o-c",
+      "output": "o-c"
+    },
+    {
+      "platform": "github",
+      "input": "-octocat",
+      "error": "BadShape",
+      "note": "A hyphen may not start it."
+    },
+    {
+      "platform": "github",
+      "input": "octocat-",
+      "error": "BadShape",
+      "note": "A hyphen may not end it."
+    },
+    {
+      "platform": "github",
+      "input": "octo--cat",
+      "error": "BadShape",
+      "note": "Two hyphens may not touch."
+    },
+    {
+      "platform": "github",
+      "input": "octo_cat",
+      "error": "BadCharacter",
+      "note": "GitHub does not allow an underscore."
+    },
+    {
+      "platform": "github",
+      "input": "-",
+      "error": "BadShape"
+    },
+    {
+      "platform": "github",
+      "input": "",
+      "error": "Empty"
+    },
+    {
+      "platform": "github",
+      "input": "abcdefghijabcdefghijabcdefghijabcdefghi",
+      "output": "abcdefghijabcdefghijabcdefghijabcdefghi",
+      "note": "39 bytes is the limit."
+    },
+    {
+      "platform": "github",
+      "input": "abcdefghijabcdefghijabcdefghijabcdefghij",
+      "error": "TooLong"
+    },
+    {
+      "platform": "github",
+      "input": "\n",
+      "error": "BadCharacter"
+    },
+    {
+      "platform": "google",
+      "input": "A.B+tag@Example.COM",
+      "output": "a.b+tag@example.com",
+      "note": "The dot and the +tag stay. Only case folds."
+    },
+    {
+      "platform": "google",
+      "input": "alice@example.com",
+      "output": "alice@example.com"
+    },
+    {
+      "platform": "google",
+      "input": " Alice@Example.com ",
+      "output": "alice@example.com"
+    },
+    {
+      "platform": "google",
+      "input": "@Alice@example.com",
+      "error": "BadShape",
+      "note": "Google keeps its @, so this address has two."
+    },
+    {
+      "platform": "google",
+      "input": "alice",
+      "error": "BadShape",
+      "note": "An address needs one @."
+    },
+    {
+      "platform": "google",
+      "input": "@example.com",
+      "error": "BadShape",
+      "note": "The @ may not start it."
+    },
+    {
+      "platform": "google",
+      "input": "alice@",
+      "error": "BadShape",
+      "note": "The @ may not end it."
+    },
+    {
+      "platform": "google",
+      "input": "",
+      "error": "Empty"
+    },
+    {
+      "platform": "google",
+      "input": "ali ce@example.com",
+      "error": "BadCharacter"
+    },
+    {
+      "platform": "google",
+      "input": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
+      "output": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
+      "note": "62 bytes is the limit."
+    },
+    {
+      "platform": "google",
+      "input": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijk@example.com",
+      "error": "TooLong"
+    }
+  ]
+}
