@@ -1,0 +1,33 @@
+[package]
+name = "libid-contracts"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/libid-org/libid-contracts"
+description = "Typed alloy bindings, embedded forge artifacts, and deploy/upgrade helpers for the libid contract stack (login, transfer bank diamond, identity names)."
+keywords = ["ethereum", "alloy", "contracts", "deployment"]
+categories = ["cryptography::cryptocurrencies"]
+# The vendored artifacts are part of the crate: consumers deploy from the
+# embedded bytecode with no filesystem dependency at runtime.
+include = ["src/**", "artifacts/**", "README.md"]
+
+[dependencies]
+alloy = { version = "1", features = [
+    "contract",
+    "providers",
+    "network",
+    "transport-http",
+    "serde",
+] }
+include_dir = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# `send_with_nonce_retry!` backs off between attempts; alloy's HTTP transport
+# already brings the tokio runtime, so this adds only the timer.
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+alloy = { version = "1", features = ["node-bindings", "signer-local"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
