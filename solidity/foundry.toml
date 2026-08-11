@@ -11,6 +11,12 @@ evm_version = "cancun"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
+# No CBOR metadata / ipfs hash in bytecode: via_ir compiles the tree as one
+# unit, so the metadata hash of every contract changes when any source does —
+# which would make the vendored artifacts under rust/contracts/artifacts churn
+# on unrelated edits. Explorer verification still works via standard-json.
+bytecode_hash = "none"
+cbor_metadata = false
 fs_permissions = [
     # Local proof artifacts, if someone drops them in; the OIDC flow tests
     # self-skip when these files are absent.
