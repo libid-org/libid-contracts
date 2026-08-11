@@ -146,7 +146,10 @@ jobs:
 
       - name: Formatting (nightly rustfmt)
         working-directory: rust
-        run: cargo +nightly fmt --all -- --check
+        # +"$NIGHTLY", not +nightly: the bare channel name makes rustup fetch
+        # the LATEST nightly (without the rustfmt component) instead of the
+        # pinned one installed above.
+        run: cargo +"$NIGHTLY" fmt --all -- --check
 
       - name: Clippy
         working-directory: rust
