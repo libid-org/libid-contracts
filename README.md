@@ -46,6 +46,46 @@ python3 scripts/regen-identity-handles.py --check  # verify nothing drifted
 Today this generates `solidity/contracts/identity/HandleVectors.sol`; the Rust
 and TypeScript outputs activate once those packages exist in this repo.
 
+## Releasing
+
+The Rust crate ([`libid-contracts`](https://crates.io/crates/libid-contracts))
+and the npm package
+([`@libid/contracts`](https://www.npmjs.com/package/@libid/contracts)) release
+together under a single version number. A release is cut by publishing a
+GitHub Release tagged `v<version>`; nothing publishes from pushes or PRs.
+
+```sh
+./scripts/bump-version.sh 0.2.0        # sets Cargo.toml, Cargo.lock, package.json
+git checkout -b release/v0.2.0
+git commit -sam "chore: release v0.2.0"
+# open a PR, get it merged, then:
+gh release create v0.2.0 --title "v0.2.0" --generate-notes
+```
+
+Publishing the release triggers CI's release jobs:
+
+1. `verify-tag` — the tag must equal the version in both manifests (the tag
+   is a pointer, never a source; the `versions` job also enforces crate/npm
+   equality on every PR).
+2. `publish-crates` — after the Solidity, Rust and publish dry-run jobs pass,
+   `cargo publish` with `CARGO_REGISTRY_TOKEN`. If the version is already on
+   crates.io (a re-run after a partial release), it skips with a notice.
+3. `publish-npm` — after `publish-crates`, builds and publishes
+   `@libid/contracts` via npm OIDC trusted publishing (no token secret), with
+   provenance. A prerelease publishes under its first prerelease identifier
+   as the dist-tag (`1.2.0-rc.1` → `rc`); a plain version under `latest`.
+
+One-time setup (repo admin):
+
+- Repo secret `CARGO_REGISTRY_TOKEN`: a crates.io API token with publish
+  rights for `libid-contracts`.
+- GitHub environment `npm-deploy` (Settings → Environments). Optionally add
+  required reviewers to make npm publishing a manually approved gate.
+- npmjs.com trusted publisher for `@libid/contracts`: package Settings →
+  Trusted Publisher → GitHub Actions, with organization `libid-org`,
+  repository `libid-contracts`, workflow filename `ci.yml`, environment
+  `npm-deploy`.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0; see `LICENSE-MIT`, `LICENSE-APACHE`
