@@ -1,0 +1,53 @@
+{
+  "name": "@libid/contracts",
+  "version": "0.1.0",
+  "description": "Typed viem-ready ABIs for the libid contracts, plus the identity helper layer (handle normalization, bind, resolve).",
+  "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/libid-org/libid-contracts.git",
+    "directory": "ts/packages/contracts"
+  },
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/identity/fixtures"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./abis": {
+      "types": "./dist/abis/index.d.ts",
+      "default": "./dist/abis/index.js"
+    },
+    "./identity": {
+      "types": "./dist/identity/index.d.ts",
+      "default": "./dist/identity/index.js"
+    }
+  },
+  "scripts": {
+    "codegen": "node scripts/codegen.mjs",
+    "codegen:check": "node scripts/codegen.mjs --check",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "regen:fixtures": "tsx src/identity/fixtures/regen.ts"
+  },
+  "peerDependencies": {
+    "viem": "^2.48.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "viem": "^2.48.11",
+    "vitest": "^3.2.0"
+  }
+}
