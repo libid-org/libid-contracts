@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {IdentityClaim} from "../IIdentityVerifier.sol";
 import {XIdentityVerifier} from "../XIdentityVerifier.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 ///
 /// Only the getters matter: the adapter never calls the real one to verify
@@ -30,6 +32,7 @@ contract MockHonkVerifier {
 contract XIdentityVerifierTest is Test {
     XIdentityVerifier internal adapter;
     MockHonkVerifier internal honk;
+    Notary internal notaryContract;
 
     uint256 internal constant NOTARY_PK = 0xA001;
     address internal notary;
@@ -44,6 +47,7 @@ contract XIdentityVerifierTest is Test {
 
     function setUp() public {
         notary = vm.addr(NOTARY_PK);
+        notaryContract = deployNotary(owner, notary);
         honk = new MockHonkVerifier();
 
         XIdentityVerifier impl = new XIdentityVerifier();
@@ -55,7 +59,7 @@ contract XIdentityVerifierTest is Test {
                         XIdentityVerifier.initialize,
                         (
                             owner,
-                            notary,
+                            address(notaryContract),
                             address(honk),
                             XIdentityVerifier.ResponseShape(PLATFORM, ENDPOINT, HANDLE_PREFIX, ID_PREFIX, ID_SUFFIX)
                         )
@@ -254,7 +258,7 @@ contract XIdentityVerifierTest is Test {
     function test_aSignatureFromAnotherKeyIsRefused() public {
         bytes memory payload = _payload(_defaults());
         vm.prank(owner);
-        adapter.setTrust(makeAddr("someone else"), address(honk));
+        notaryContract.setNotary(makeAddr("someone else"));
 
         vm.expectRevert(XIdentityVerifier.NotaryVerificationFailed.selector);
         adapter.verify(payload);
@@ -332,13 +336,14 @@ contract XIdentityVerifierTest is Test {
         adapter.verify(payload);
     }
 
-    /// The keys are this contract's own, so rotating one is a transaction here
-    /// and nowhere else.
+    /// The notary rotates on the shared Notary contract, for every consumer
+    /// at once; this adapter follows the pointer.
     function test_theNotaryCanBeRotated() public {
         vm.prank(owner);
-        adapter.setTrust(makeAddr("rotated"), address(honk));
+        notaryContract.setNotary(makeAddr("rotated"));
 
         assertEq(adapter.notary(), makeAddr("rotated"));
+        assertEq(address(adapter.notaryContract()), address(notaryContract));
         assertEq(adapter.platformName(), "api.x.com");
     }
 
@@ -381,6 +386,6 @@ contract XIdentityVerifierTest is Test {
     function test_aZeroTrustAddressIsRefused() public {
         vm.prank(owner);
         vm.expectRevert(XIdentityVerifier.ZeroSigner.selector);
-        adapter.setTrust(notary, address(0));
+        adapter.setHonkVerifier(address(0));
     }
 }

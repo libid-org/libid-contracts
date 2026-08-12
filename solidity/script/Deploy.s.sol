@@ -8,7 +8,7 @@ import {WalletFactory} from "../contracts/login/WalletFactory.sol";
 import {WebWallet} from "../contracts/login/WebWallet.sol";
 import {IBank} from "../contracts/transfer/bank/IBank.sol";
 import {BankDiamondDeployer} from "../contracts/transfer/script/BankDiamondDeployer.sol";
-import {NotaryRegistry} from "../contracts/login/NotaryRegistry.sol";
+import {Notary} from "../contracts/notary/Notary.sol";
 import {MockERC20} from "../contracts/transfer/MockERC20.sol";
 import {XHonkVerifier} from "../contracts/login/zk/XHonkVerifier.sol";
 import {XZkVerifier, IHonkVerifier} from "../contracts/login/zk/XZkVerifier.sol";
@@ -47,6 +47,16 @@ contract Deploy is Script, BankDiamondDeployer {
 
         vm.startBroadcast(deployerKey);
 
+        // 0. Notary (UUPS proxy) — the ONE notary-attestation verifier every
+        //    other contract points at. Deployed first so its proxy address can
+        //    be wired into every consumer's initialize. Key rotation is
+        //    `notaryContract.setNotary`; a proof-system change is a UUPS
+        //    upgrade of this proxy alone.
+        Notary notaryImpl = new Notary();
+        Notary notaryContract = Notary(
+            address(new ERC1967Proxy(address(notaryImpl), abi.encodeCall(Notary.initialize, (deployer, notaryAddr))))
+        );
+
         // 1. WebWallet implementation (beacon target)
         WebWallet walletImpl = new WebWallet();
 
@@ -61,23 +71,15 @@ contract Deploy is Script, BankDiamondDeployer {
             )
         );
 
-        // 3. NotaryRegistry (UUPS proxy) — Bank uses it to verify notary signatures
-        NotaryRegistry notaryRegistryImpl = new NotaryRegistry();
-        NotaryRegistry notaryRegistry = NotaryRegistry(
-            address(
-                new ERC1967Proxy(
-                    address(notaryRegistryImpl), abi.encodeCall(NotaryRegistry.initialize, (deployer, notaryAddr))
-                )
-            )
-        );
-
         // 4. Registry (UUPS proxy) — unified MPC + ZK registration
         Registry registryImpl = new Registry();
         Registry registry = Registry(
             address(
                 new ERC1967Proxy(
                     address(registryImpl),
-                    abi.encodeCall(Registry.initialize, (notaryAddr, backendAddr, address(factory), deployer))
+                    abi.encodeCall(
+                        Registry.initialize, (address(notaryContract), backendAddr, address(factory), deployer)
+                    )
                 )
             )
         );
@@ -85,7 +87,7 @@ contract Deploy is Script, BankDiamondDeployer {
         // 5. Bank (EIP-2535 diamond) — facets + BankInit (seeds templates/prefixes).
         //    Same BANK_CONTRACT_ADDRESS surface as before; the diamond keeps every
         //    Bank function signature, so backend/frontend need only the new address.
-        IBank bank = IBank(deployBankDiamond(deployer, address(notaryRegistry), backendAddr, address(registry)));
+        IBank bank = IBank(deployBankDiamond(deployer, address(notaryContract), backendAddr, address(registry)));
 
         // 6. XHonkVerifier — single UltraHonk verifier for the merged
         //    X dual-session proof. Called from XZkVerifier.
@@ -120,7 +122,7 @@ contract Deploy is Script, BankDiamondDeployer {
                         XZkVerifier.initialize,
                         (
                             deployer,
-                            notaryAddr,
+                            address(notaryContract),
                             IHonkVerifier(address(xHonk)),
                             bytes(xClientIdStr),
                             "/2/users/me",
@@ -171,7 +173,7 @@ contract Deploy is Script, BankDiamondDeployer {
                     XIdentityVerifier.initialize,
                     (
                         deployer,
-                        notaryAddr,
+                        address(notaryContract),
                         address(xHonk),
                         XIdentityVerifier.ResponseShape(
                             "api.x.com", "/2/users/me", "\"username\":\"", "\"id\":\"", "\""
@@ -199,7 +201,7 @@ contract Deploy is Script, BankDiamondDeployer {
                     GitHubIdentityVerifier.initialize,
                     (
                         deployer,
-                        notaryAddr,
+                        address(notaryContract),
                         backendAddr,
                         // GitHub's id is a bare number ending at a comma.
                         GitHubIdentityVerifier.ResponseShape("/user", "\"login\":\"", "\"id\":", ",")
@@ -224,7 +226,8 @@ contract Deploy is Script, BankDiamondDeployer {
             IdentityJwksRoots rootsImpl = new IdentityJwksRoots();
             jwksRootsAddr = address(
                 new ERC1967Proxy(
-                    address(rootsImpl), abi.encodeCall(IdentityJwksRoots.initialize, (deployer, notaryAddr))
+                    address(rootsImpl),
+                    abi.encodeCall(IdentityJwksRoots.initialize, (deployer, address(notaryContract)))
                 )
             );
 
@@ -252,7 +255,7 @@ contract Deploy is Script, BankDiamondDeployer {
         console.log("REGISTRY_CONTRACT_ADDRESS= ", address(registry));
         console.log("BANK_CONTRACT_ADDRESS= ", address(bank));
         console.log("DEV_TOKEN_ADDRESS= ", address(devToken));
-        console.log("NotaryRegistry:         ", address(notaryRegistry));
+        console.log("NOTARY_CONTRACT_ADDRESS= ", address(notaryContract));
         console.log("XHonkVerifier:          ", address(xHonk));
         console.log("XZkVerifier:            ", xZkVerifierAddr);
         console.log("IDENTITY_NAMES_ADDRESS= ", identityNamesAddr);

@@ -7,7 +7,8 @@ import {Registry} from "../../login/Registry.sol";
 import {IBank} from "../bank/IBank.sol";
 import {BankDiamondDeployer} from "../script/BankDiamondDeployer.sol";
 import {SenderNotRegistered, ZeroAmount, InsufficientBalance, InsufficientAllowance} from "../bank/BankErrors.sol";
-import {NotaryRegistry} from "../../login/NotaryRegistry.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 import {WalletFactory} from "../../login/WalletFactory.sol";
 import {WebWallet} from "../../login/WebWallet.sol";
 import {MockERC20} from "../MockERC20.sol";
@@ -46,22 +47,17 @@ contract TransferWithinTest is Test, BankDiamondDeployer {
             )
         );
 
+        Notary notaryReg = deployNotary(address(this), NOTARY);
         registry = Registry(
             address(
                 new ERC1967Proxy(
                     address(rImpl),
-                    abi.encodeCall(Registry.initialize, (NOTARY, BACKEND, address(factory), address(this)))
+                    abi.encodeCall(Registry.initialize, (address(notaryReg), BACKEND, address(factory), address(this)))
                 )
             )
         );
 
         factory.setRegistry(address(registry));
-        NotaryRegistry nrImpl = new NotaryRegistry();
-        NotaryRegistry notaryReg = NotaryRegistry(
-            address(
-                new ERC1967Proxy(address(nrImpl), abi.encodeCall(NotaryRegistry.initialize, (address(this), NOTARY)))
-            )
-        );
         bank = IBank(deployBankDiamond(address(this), address(notaryReg), BACKEND, address(registry)));
         token = new MockERC20("Test", "TST");
         bank.registerToken("TST", address(token));

@@ -144,10 +144,10 @@ contract PausableFlowTest is Test, BankDiamondDeployer {
 
         // Neither carries whenNotPaused — must still work (so migrate/rotate
         // can run during a cutover pause).
-        registry.setNotary(address(0x99));
+        registry.setBackend(address(0x99));
         bank.registerToken("$X", address(0xCAFE));
 
-        assertEq(registry.notary(), address(0x99), "admin setNotary blocked by pause");
+        assertEq(registry.backend(), address(0x99), "admin setBackend blocked by pause");
         assertTrue(registry.paused(), "registry should be paused");
         assertTrue(bank.paused(), "bank should still be paused");
         // A whenNotPaused entrypoint (withdraw) still reverts EnforcedPause.

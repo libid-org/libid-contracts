@@ -5,6 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {IdentityJwksRoots} from "../IdentityJwksRoots.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 /// The naming system's Google trust list, fed by a notarized reading of
 /// Google's JWKS endpoint.
@@ -15,6 +17,7 @@ import {IdentityJwksRoots} from "../IdentityJwksRoots.sol";
 /// it out of another tree would be the coupling this system exists without.
 contract IdentityJwksRootsTest is Test {
     IdentityJwksRoots internal roots;
+    Notary internal notaryContract;
 
     address internal constant NOTARY = 0x6f4c950442e1Af093BcfF730381E63Ae9171b87a;
     /// A notary this test can sign as, for the cases the fixture cannot reach.
@@ -29,9 +32,14 @@ contract IdentityJwksRootsTest is Test {
     uint256 internal provenAt;
 
     function setUp() public {
+        notaryContract = deployNotary(owner, NOTARY);
         IdentityJwksRoots impl = new IdentityJwksRoots();
         roots = IdentityJwksRoots(
-            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (owner, NOTARY))))
+            address(
+                new ERC1967Proxy(
+                    address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (owner, address(notaryContract)))
+                )
+            )
         );
 
         _loadFixture();
@@ -143,11 +151,12 @@ contract IdentityJwksRootsTest is Test {
 
     // ─── What it refuses ────────────────────────────────────────────
 
-    /// The signature is the whole authority, so a reading nobody on the list
-    /// signed is worth nothing.
+    /// The signature is the whole authority, so a reading the current notary
+    /// did not sign is worth nothing. Rotation happens on the shared Notary
+    /// contract, and this list follows it.
     function test_aReadingFromAnUnknownNotaryIsRefused() public {
         vm.prank(owner);
-        roots.removeNotary(NOTARY);
+        notaryContract.setNotary(makeAddr("somebody else"));
 
         vm.expectRevert(IdentityJwksRoots.UnknownNotary.selector);
         roots.rotate(proof, claims);
@@ -173,7 +182,7 @@ contract IdentityJwksRootsTest is Test {
     /// reading that was never about Google.
     function test_aReadingGenuinelySignedForAnotherHostIsRefused() public {
         vm.prank(owner);
-        roots.addNotary(vm.addr(TEST_NOTARY_PK));
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
 
         IdentityJwksRoots.NotarizedJwksProof memory p = _signedProof(keccak256("accounts.example.com"));
 
@@ -185,7 +194,7 @@ contract IdentityJwksRootsTest is Test {
     /// signature covers the root, not what is under it.
     function test_aReadingWithoutTheHostLeafIsRefused() public {
         vm.prank(owner);
-        roots.addNotary(vm.addr(TEST_NOTARY_PK));
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
 
         IdentityJwksRoots.NotarizedJwksProof memory p = _signedProof(keccak256(bytes("www.googleapis.com")));
 
@@ -234,7 +243,7 @@ contract IdentityJwksRootsTest is Test {
     /// exact window a compromised key would be used in.
     function test_rotatingAKidRetiresTheKeyItCarried() public {
         vm.prank(owner);
-        roots.addNotary(vm.addr(TEST_NOTARY_PK));
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
 
         // Install a first key for this kid, then a second one for the same kid.
         bytes32 first = _installKid("kid-1", "modulus-one");
@@ -337,10 +346,16 @@ contract IdentityJwksRootsTest is Test {
 
     // ─── Administration ─────────────────────────────────────────────
 
-    function test_onlyTheOwnerChangesTheNotaryList() public {
+    function test_onlyTheOwnerRotatesTheNotary() public {
         vm.prank(keeper);
         vm.expectRevert();
-        roots.addNotary(keeper);
+        notaryContract.setNotary(keeper);
+    }
+
+    /// The list reads the notary through the shared Notary contract.
+    function test_theNotaryIsReadThroughTheNotaryContract() public view {
+        assertEq(address(roots.notaryContract()), address(notaryContract));
+        assertEq(roots.notary(), NOTARY);
     }
 
     /// Renouncing would freeze the list while Google's keys keep expiring, so

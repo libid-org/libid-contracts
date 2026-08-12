@@ -7,14 +7,18 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 
 import {IOidcVerifier} from "./IOidcVerifier.sol";
 import {IVerifier} from "./Verifier.sol";
+import {INotary} from "../../notary/INotary.sol";
 
 /// IOidcVerifier implementation for Google OIDC.
 ///
 /// Owns three things:
 ///
-///   1. A set of trusted notary addresses (PoA). Used to verify TLS-notary
+///   1. A pointer to the shared Notary contract. Used to verify TLS-notary
 ///      attestations over `googleapis.com/oauth2/v3/certs` that rotate the
-///      RSA JWKS.
+///      RSA JWKS. The rotation digest deliberately names no chain and no
+///      contract, so the same notarized reading is valid on every deployment
+///      that trusts the notary — that replay is a feature; only WHO the
+///      notary is lives in the Notary contract.
 ///   2. The kid → modulusHash mapping populated by `rotateRoots`. Each entry
 ///      has an expiry; old keys age out automatically.
 ///   3. A reference to the UltraHonk Verifier deployed for the `jwt_email`
@@ -37,7 +41,6 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
     /// Max `aud` (client id) length the jwt_email circuit hashes — must match its
     /// `AUDIENCE_MAX`. A configured client id longer than this can never match.
     uint256 public constant MAX_AUDIENCE_BYTES = 128;
-    bytes32 private constant SECP256K1_HALF_N = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
     // ─── Storage ──────────────────────────────────────────────────
     // Owner lives in Ownable2StepUpgradeable's namespaced storage (owner()).
@@ -46,7 +49,8 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
     /// (not immutable — this contract sits behind a UUPS proxy).
     IVerifier public verifier;
 
-    mapping(address => bool) public isNotary;
+    /// The Notary contract a rotation's attestation is checked with.
+    INotary public notaryContract;
     /// kid keccak → modulusHash (the value stored is the limb-keccak the
     /// circuit produces).
     mapping(bytes32 => bytes32) public modulusOfKid;
@@ -78,8 +82,6 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
 
     // ─── Events / errors ──────────────────────────────────────────
     event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-    event NotaryAdded(address indexed notary);
-    event NotaryRemoved(address indexed notary);
     /// Emitted whenever the accepted Google client id changes. `clientId` is the
     /// plaintext id when configured via the string setter, or "" when set by raw
     /// hash; `audienceHash` is authoritative.
@@ -99,8 +101,6 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
     error InvalidModulusLength();
     error InvalidB64Char();
     error InvalidB64Length();
-    error MalleableSignature();
-    error InvalidSignatureV();
 
     error WrongPublicInputCount();
     error BadHonkProof();
@@ -156,25 +156,31 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
     }
 
     /// Initialize the proxy. Mirrors XZkVerifier's UUPS pattern: the Honk
-    /// `verifier`, owner, and an initial notary are set here (not in the
+    /// `verifier`, owner, and the Notary pointer are set here (not in the
     /// constructor) because this contract sits behind an ERC1967 proxy.
+    /// @param notaryContract_ The shared Notary contract (INotary). Notary key
+    ///        rotation happens THERE; this contract holds only the pointer.
     /// @param clientId The Google OAuth client id whose id_tokens this verifier
     ///        accepts (the JWT `aud`). Bound into the proof by the circuit and
     ///        enforced on chain — see `expectedAudienceHash`. Changeable later
     ///        by the owner via `setExpectedAudience`.
-    function initialize(IVerifier _verifier, address _owner, address initialNotary, string calldata clientId)
+    function initialize(IVerifier _verifier, address _owner, address notaryContract_, string calldata clientId)
         external
         initializer
     {
-        if (address(_verifier) == address(0) || _owner == address(0) || initialNotary == address(0)) {
+        if (address(_verifier) == address(0) || _owner == address(0) || notaryContract_ == address(0)) {
             revert ZeroAddress();
         }
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
         verifier = _verifier;
         _setExpectedAudience(clientId);
-        isNotary[initialNotary] = true;
-        emit NotaryAdded(initialNotary);
+        notaryContract = INotary(notaryContract_);
+    }
+
+    /// The current notary signer, read through the Notary contract.
+    function notary() external view returns (address) {
+        return notaryContract.notary();
     }
 
     /// Only the owner may upgrade the implementation.
@@ -224,17 +230,6 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
         emit AudienceConfigured(audienceHash, clientId);
     }
 
-    function addNotary(address n) external onlyOwner {
-        if (n == address(0)) revert ZeroAddress();
-        isNotary[n] = true;
-        emit NotaryAdded(n);
-    }
-
-    function removeNotary(address n) external onlyOwner {
-        delete isNotary[n];
-        emit NotaryRemoved(n);
-    }
-
     // ─── IPlatformProver ──────────────────────────────────────────
     function platformName() external pure override returns (string memory) {
         return "google";
@@ -271,9 +266,11 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
 
     // ─── Internal: rotation ───────────────────────────────────────
     function _rotate(NotarizedJwksProof memory p, JwkClaim[] memory claims) internal {
+        // The digest deliberately names no chain and no contract (see the
+        // contract comment); the Notary contract checks the attestation over
+        // it — EIP-191 + recover + signer compare today.
         bytes32 digest = _notaryDigest(p);
-        address signer = _ecrecoverEth191(digest, p.notarySignature);
-        if (!isNotary[signer]) revert UnknownNotary();
+        if (!notaryContract.verify(digest, p.notarySignature)) revert UnknownNotary();
 
         if (p.timestamp > block.timestamp + CLOCK_SKEW_GRACE) revert FutureProof();
         if (block.timestamp > p.timestamp + FRESHNESS_WINDOW) revert StaleProof();
@@ -452,23 +449,6 @@ contract GoogleOidcVerifier is IOidcVerifier, Initializable, UUPSUpgradeable, Ow
 
     function _hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
         return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
-    }
-
-    function _ecrecoverEth191(bytes32 digest, bytes memory sig) internal pure returns (address) {
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        require(sig.length == 65, "sig: bad length");
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
-        }
-        if (v < 27) v += 27;
-        if (v != 27 && v != 28) revert InvalidSignatureV();
-        if (uint256(s) > uint256(SECP256K1_HALF_N)) revert MalleableSignature();
-        return ecrecover(ethHash, v, r, s);
     }
 
     function _containsKeyValue(bytes memory haystack, bytes memory key, bytes memory value)

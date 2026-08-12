@@ -7,6 +7,7 @@ import {Registry} from "../../Registry.sol";
 import {WalletFactory} from "../../WalletFactory.sol";
 import {WebWallet} from "../../WebWallet.sol";
 import {IOidcVerifier} from "../../oidc/IOidcVerifier.sol";
+import {deployNotary} from "../../../notary/test/DeployNotary.sol";
 
 // A JWT expiry far in the future but well below uint256 max, so the
 // `jwtExp + CLOCK_SKEW_GRACE` freshness check can't overflow.
@@ -80,7 +81,10 @@ contract RegistryOidcLinkFlowTest is Test {
         registry = Registry(
             address(
                 new ERC1967Proxy(
-                    address(rImpl), abi.encodeCall(Registry.initialize, (NOTARY, BACKEND, address(factory), OWNER))
+                    address(rImpl),
+                    abi.encodeCall(
+                        Registry.initialize, (address(deployNotary(OWNER, NOTARY)), BACKEND, address(factory), OWNER)
+                    )
                 )
             )
         );

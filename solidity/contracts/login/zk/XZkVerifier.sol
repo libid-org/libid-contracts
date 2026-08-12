@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {IZkSessionVerifier} from "./IZkSessionVerifier.sol";
+import {INotary} from "../../notary/INotary.sol";
 
 interface IHonkVerifier {
     function verify(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
@@ -83,7 +83,9 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
     bytes32 internal constant OP_TOKEN_ATTEST = keccak256("XZkVerifier.token.v1");
     bytes32 internal constant OP_ME_ATTEST = keccak256("XZkVerifier.me.v1");
 
-    address public notary;
+    /// The Notary contract whose attestations this accepts. The digests still
+    /// bind `address(this)` + the OP tags; only the check itself is shared.
+    INotary public notaryContract;
     IHonkVerifier public honkVerifier;
     string public endpoint;
     string public handlePrefix;
@@ -146,9 +148,11 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
         _disableInitializers();
     }
 
+    /// @param _notaryContract The shared Notary contract (INotary). Notary key
+    ///        rotation happens THERE; this contract holds only the pointer.
     function initialize(
         address _owner,
-        address _notary,
+        address _notaryContract,
         IHonkVerifier _honkVerifier,
         bytes calldata _xClientId,
         string calldata _endpoint,
@@ -157,12 +161,12 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
     ) external initializer {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
-        require(_notary != address(0), "zero notary");
+        require(_notaryContract != address(0), "zero notary contract");
         require(address(_honkVerifier) != address(0), "zero verifier");
         require(bytes(_endpoint).length > 0, "empty endpoint");
         require(bytes(_handlePrefix).length > 0, "empty prefix");
         require(bytes(_platformName).length > 0, "empty platform");
-        notary = _notary;
+        notaryContract = INotary(_notaryContract);
         honkVerifier = _honkVerifier;
         // Seed the allowlist with the deploying app so existing deployments and
         // the unchanged deploy signature keep working.
@@ -172,9 +176,9 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
         platformName = _platformName;
     }
 
-    function setNotary(address _v) external onlyOwner {
-        require(_v != address(0), "zero notary");
-        notary = _v;
+    /// The current notary signer, read through the Notary contract.
+    function notary() external view returns (address) {
+        return notaryContract.notary();
     }
 
     function setHonkVerifier(IHonkVerifier _v) external onlyOwner {
@@ -466,8 +470,7 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
                 uint256(att.timestamp)
             )
         );
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        if (ECDSA.recover(ethHash, att.notarySignature) != notary) revert NotaryVerificationFailed();
+        if (!notaryContract.verify(digest, att.notarySignature)) revert NotaryVerificationFailed();
     }
 
     function _verifyMeSig(MeAttestation calldata att) internal view {
@@ -490,8 +493,7 @@ contract XZkVerifier is IZkSessionVerifier, Initializable, UUPSUpgradeable, Owna
                 uint256(att.timestamp)
             )
         );
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        if (ECDSA.recover(ethHash, att.notarySignature) != notary) revert NotaryVerificationFailed();
+        if (!notaryContract.verify(digest, att.notarySignature)) revert NotaryVerificationFailed();
     }
 
     /// True when the revealed /token request carries an accepted `client_id`.

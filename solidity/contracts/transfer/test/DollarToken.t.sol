@@ -5,20 +5,14 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IBank} from "../bank/IBank.sol";
 import {BankDiamondDeployer} from "../script/BankDiamondDeployer.sol";
-import {NotaryRegistry} from "../../login/NotaryRegistry.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 contract DollarTokenTest is Test, BankDiamondDeployer {
     IBank bank;
 
     function setUp() public {
-        NotaryRegistry nrImpl = new NotaryRegistry();
-        NotaryRegistry notaryReg = NotaryRegistry(
-            address(
-                new ERC1967Proxy(
-                    address(nrImpl), abi.encodeCall(NotaryRegistry.initialize, (address(this), address(1)))
-                )
-            )
-        );
+        Notary notaryReg = deployNotary(address(this), address(1));
         bank = IBank(deployBankDiamond(address(this), address(notaryReg), address(2), address(3)));
     }
 

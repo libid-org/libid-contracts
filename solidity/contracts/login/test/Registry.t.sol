@@ -4,12 +4,15 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Registry} from "../Registry.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 import {WalletFactory} from "../WalletFactory.sol";
 import {WebWallet} from "../WebWallet.sol";
 
 contract RegistryTest is Test {
     Registry registry;
     WalletFactory factory;
+    Notary notaryContract;
     WebWallet walletImplV1;
 
     address owner = address(this);
@@ -46,11 +49,12 @@ contract RegistryTest is Test {
             )
         );
 
+        notaryContract = deployNotary(owner, notaryAddr);
         registry = Registry(
             address(
                 new ERC1967Proxy(
                     address(rImpl),
-                    abi.encodeCall(Registry.initialize, (notaryAddr, backendAddr, address(factory), owner))
+                    abi.encodeCall(Registry.initialize, (address(notaryContract), backendAddr, address(factory), owner))
                 )
             )
         );
@@ -1010,12 +1014,13 @@ contract RegistryTest is Test {
     function test_storageLivesUnderTheErc7201Root() public view {
         bytes32 root = keccak256(abi.encode(uint256(keccak256("dyaka.storage.Registry")) - 1)) & ~bytes32(uint256(0xff));
 
-        // `notary` is the first field of RegistryStorage. The field is at the root.
-        assertTrue(registry.notary() != address(0), "the fixture must set a notary");
+        // `notaryContract` is the first field of RegistryStorage. The field is
+        // at the root.
+        assertTrue(registry.notaryContract() != address(0), "the fixture must set a notary contract");
         assertEq(
             address(uint160(uint256(vm.load(address(registry), root)))),
-            registry.notary(),
-            "notary is not at the namespace root"
+            registry.notaryContract(),
+            "notaryContract is not at the namespace root"
         );
 
         // No data is in the sequential slots that the contract used before.
@@ -1058,6 +1063,6 @@ contract RegistryTest is Test {
 
     function test_initialize_revertsOnDoubleInit() public {
         vm.expectRevert();
-        registry.initialize(notaryAddr, backendAddr, address(factory), owner);
+        registry.initialize(address(notaryContract), backendAddr, address(factory), owner);
     }
 }

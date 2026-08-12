@@ -8,6 +8,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
+import {INotary} from "../notary/INotary.sol";
 
 /// @title GitHubIdentityVerifier - the naming system's own GitHub proof.
 ///
@@ -89,8 +90,9 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
     ///      nothing about whether that is the host this contract speaks for.
     string private constant PLATFORM_DOMAIN = "api.github.com";
 
-    /// @notice The notary key whose attestations this accepts.
-    address public notary;
+    /// @notice The Notary contract whose attestations this accepts. The digest
+    ///         still binds `address(this)`; only the check itself is shared.
+    INotary public notaryContract;
 
     /// @notice The backend key that co-signs. Both must agree.
     address public backend;
@@ -136,33 +138,36 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
         _disableInitializers();
     }
 
-    function initialize(address owner_, address notary_, address backend_, ResponseShape calldata shape_)
+    /// @param notaryContract_ The shared Notary contract (INotary). Notary key
+    ///        rotation happens THERE; this contract holds only the pointer.
+    function initialize(address owner_, address notaryContract_, address backend_, ResponseShape calldata shape_)
         external
         initializer
     {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
-        _setSigners(notary_, backend_);
+        if (notaryContract_ == address(0) || backend_ == address(0)) revert ZeroSigner();
+        notaryContract = INotary(notaryContract_);
+        backend = backend_;
         _setResponseShape(shape_);
     }
 
-    /// @notice Replace the keys this trusts. Both at once, because a rotation
-    ///         that left one behind would accept a proof half of which nobody
-    ///         current signed.
-    function setSigners(address notary_, address backend_) external onlyOwner {
-        _setSigners(notary_, backend_);
+    /// @notice Replace the backend key that co-signs. The notary side rotates
+    ///         on the Notary contract, for every consumer at once.
+    function setBackend(address backend_) external onlyOwner {
+        if (backend_ == address(0)) revert ZeroSigner();
+        backend = backend_;
+    }
+
+    /// @notice The current notary signer, read through the Notary contract.
+    function notary() external view returns (address) {
+        return notaryContract.notary();
     }
 
     /// @notice Follow a change in GitHub's response.
     function setResponseShape(ResponseShape calldata shape_) external onlyOwner {
         _setResponseShape(shape_);
-    }
-
-    function _setSigners(address notary_, address backend_) private {
-        if (notary_ == address(0) || backend_ == address(0)) revert ZeroSigner();
-        notary = notary_;
-        backend = backend_;
     }
 
     function _setResponseShape(ResponseShape calldata shape_) private {
@@ -234,8 +239,7 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
                 t.timestamp
             )
         );
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        if (ECDSA.recover(ethHash, t.notarySignature) != notary) revert NotaryVerificationFailed();
+        if (!notaryContract.verify(digest, t.notarySignature)) revert NotaryVerificationFailed();
     }
 
     /// @dev Names no contract — `(userAddress, walletAddress, transcriptRoot,

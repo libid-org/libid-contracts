@@ -7,6 +7,7 @@ import {Registry} from "../../Registry.sol";
 import {WalletFactory} from "../../WalletFactory.sol";
 import {WebWallet} from "../../WebWallet.sol";
 import {IZkSessionVerifier} from "../IZkSessionVerifier.sol";
+import {deployNotary} from "../../../notary/test/DeployNotary.sol";
 
 /// Stand-in verifier that returns whatever the test author set up. Lets us
 /// exercise the Registry dispatcher path without dragging in real
@@ -106,7 +107,10 @@ contract RegistryZkDispatcherTest is Test {
         registry = Registry(
             address(
                 new ERC1967Proxy(
-                    address(rImpl), abi.encodeCall(Registry.initialize, (NOTARY, BACKEND, address(factory), OWNER))
+                    address(rImpl),
+                    abi.encodeCall(
+                        Registry.initialize, (address(deployNotary(OWNER, NOTARY)), BACKEND, address(factory), OWNER)
+                    )
                 )
             )
         );
