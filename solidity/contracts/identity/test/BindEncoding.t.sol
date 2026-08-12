@@ -44,8 +44,6 @@ contract BindEncodingTest is Test {
         assertEq(p.endpoint, "/user", "endpoint");
 
         assertEq(p.tls.notarySignature, hex"aabb", "notary signature");
-        assertEq(p.tls.backendSignature, hex"ccdd", "backend signature");
-        assertEq(p.tls.userAddress, SESSION, "user address");
         assertEq(p.tls.walletAddress, WALLET, "wallet address");
         assertEq(p.tls.domainHash, _b32(1), "domain hash");
         assertEq(p.tls.clientRandom, _b32(2), "client random");

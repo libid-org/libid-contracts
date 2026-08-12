@@ -228,7 +228,6 @@ async fn deploys_the_identity_stack() {
         &GitHubIdentityVerifier::initializeCall {
             owner_: deployer,
             notaryContract_: notary_proxy,
-            backend_: Address::repeat_byte(0x22),
             shape_: GitHubIdentityVerifier::ResponseShape {
                 endpoint: "/user".into(),
                 handlePrefix: "\"login\":\"".into(),

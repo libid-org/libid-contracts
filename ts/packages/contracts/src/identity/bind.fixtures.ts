@@ -17,8 +17,6 @@ export const b32 = (n: number): Hex => `0x${n.toString(16).padStart(64, '0')}`
 export const GITHUB_FIXTURE: GitHubProof = {
   tls: {
     notarySignature: '0xaabb',
-    backendSignature: '0xccdd',
-    userAddress: SESSION,
     walletAddress: WALLET,
     domainHash: b32(1),
     clientRandom: b32(2),

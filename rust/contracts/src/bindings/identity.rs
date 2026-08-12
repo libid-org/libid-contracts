@@ -190,8 +190,6 @@ mod github_verifier_inner {
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
             struct FullTlsProof {
                 bytes notarySignature;
-                bytes backendSignature;
-                address userAddress;
                 address walletAddress;
                 bytes32 domainHash;
                 bytes32 clientRandom;
@@ -227,15 +225,12 @@ mod github_verifier_inner {
             function initialize(
                 address owner_,
                 address notaryContract_,
-                address backend_,
                 ResponseShape calldata shape_
             ) external;
-            function setBackend(address backend_) external;
             function setResponseShape(ResponseShape calldata shape_) external;
 
             function notaryContract() external view returns (address);
             function notary() external view returns (address);
-            function backend() external view returns (address);
             function platformName() external view returns (string memory);
         }
     }

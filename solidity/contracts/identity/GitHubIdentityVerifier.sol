@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -29,13 +28,23 @@ import {INotary} from "../notary/INotary.sol";
 ///      wallet. A duplicated pipeline costs a second attestation; a shared one
 ///      costs the independence the naming system is for.
 ///
-///      **This platform is the strict one.** Two independent signatures have to
-///      agree — the notary's and the backend's — so forging a name here needs
-///      both keys, where X and Google need only the notary's.
+///      **The notary is the only trust root here**, as it is for X and Google.
+///
+///      **`walletAddress` is NOT authenticated.** The notary digest does not
+///      cover it, so a proof can be re-pointed at any address and still verifies.
+///      `verify` is a view and proofs arrive as public calldata, so a successful
+///      claim can be copied out of a block, its wallet swapped, and resubmitted by
+///      the attacker to satisfy `IdentityNames`' `msg.sender` check.
+///
+///      Closing it belongs in the proof and needs no new machinery: the notary
+///      commits the request path as an `endpoint:` leaf, so a request to
+///      `/user?bind=0x…` puts the wallet inside notarised data, and this contract
+///      can check that leaf against `walletAddress` the way it already checks the
+///      handle. Moving GitHub proving into the browser, as X and Google do, takes
+///      the OAuth backend out of the trust model entirely.
 ///
 ///      **No OAuth-app pinning, and none to drop.** The MPC proof carries no
-///      client_id claim: the app is bound by the backend that ran the exchange
-///      rather than by anything inside the transcript.
+///      client_id claim.
 ///
 ///      **The response shape is this contract's own.** `handlePrefix` and the
 ///      id delimiters say how GitHub's JSON reads — a bare number ending at a
@@ -51,8 +60,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
     /// One notarized TLS session.
     struct FullTlsProof {
         bytes notarySignature;
-        bytes backendSignature;
-        address userAddress;
         address walletAddress;
         bytes32 domainHash;
         bytes32 clientRandom;
@@ -94,9 +101,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
     ///         still binds `address(this)`; only the check itself is shared.
     INotary public notaryContract;
 
-    /// @notice The backend key that co-signs. Both must agree.
-    address public backend;
-
     /// @notice How GitHub's `/user` response reads.
     ///
     /// @dev The bytes revealed in the transcript are matched against
@@ -125,7 +129,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
     error WrongEndpoint();
     error DomainHashMismatch();
     error NotaryVerificationFailed();
-    error InvalidBackendSignature();
     error MerklePathTooLong();
     error InvalidMerkleProof();
     error UserIdRequired();
@@ -140,24 +143,13 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
 
     /// @param notaryContract_ The shared Notary contract (INotary). Notary key
     ///        rotation happens THERE; this contract holds only the pointer.
-    function initialize(address owner_, address notaryContract_, address backend_, ResponseShape calldata shape_)
-        external
-        initializer
-    {
+    function initialize(address owner_, address notaryContract_, ResponseShape calldata shape_) external initializer {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
-        if (notaryContract_ == address(0) || backend_ == address(0)) revert ZeroSigner();
+        if (notaryContract_ == address(0)) revert ZeroSigner();
         notaryContract = INotary(notaryContract_);
-        backend = backend_;
         _setResponseShape(shape_);
-    }
-
-    /// @notice Replace the backend key that co-signs. The notary side rotates
-    ///         on the Notary contract, for every consumer at once.
-    function setBackend(address backend_) external onlyOwner {
-        if (backend_ == address(0)) revert ZeroSigner();
-        backend = backend_;
     }
 
     /// @notice The current notary signer, read through the Notary contract.
@@ -206,7 +198,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
         if (keccak256(bytes(p.domain)) != t.domainHash) revert DomainHashMismatch();
 
         _verifyNotarySignature(t);
-        _verifyBackendSignature(t);
 
         _verifyLeaf(t.domainPath, t.transcriptRoot, "domain:", bytes(p.domain));
         _verifyLeaf(t.endpointPath, t.transcriptRoot, "endpoint:", bytes(p.endpoint));
@@ -240,15 +231,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
             )
         );
         if (!notaryContract.verify(digest, t.notarySignature)) revert NotaryVerificationFailed();
-    }
-
-    /// @dev Names no contract — `(userAddress, walletAddress, transcriptRoot,
-    ///      timestamp)` — so it is the notary digest above that pins which
-    ///      contract the attestation was made for.
-    function _verifyBackendSignature(FullTlsProof memory t) private view {
-        bytes32 digest = keccak256(abi.encode(t.userAddress, t.walletAddress, t.transcriptRoot, t.timestamp));
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        if (ECDSA.recover(ethHash, t.backendSignature) != backend) revert InvalidBackendSignature();
     }
 
     function _verifyLeaf(bytes32[] memory path, bytes32 root, string memory prefix, bytes memory value) private pure {

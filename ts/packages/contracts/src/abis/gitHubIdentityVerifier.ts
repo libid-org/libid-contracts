@@ -57,19 +57,6 @@ export const gitHubIdentityVerifierAbi = [
   },
   {
     "type": "function",
-    "name": "backend",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -79,11 +66,6 @@ export const gitHubIdentityVerifierAbi = [
       },
       {
         "name": "notaryContract_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "backend_",
         "type": "address",
         "internalType": "address"
       },
@@ -202,19 +184,6 @@ export const gitHubIdentityVerifierAbi = [
     "inputs": [],
     "outputs": [],
     "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "setBackend",
-    "inputs": [
-      {
-        "name": "backend_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -433,33 +402,6 @@ export const gitHubIdentityVerifierAbi = [
   },
   {
     "type": "error",
-    "name": "ECDSAInvalidSignature",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureS",
-    "inputs": [
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -492,11 +434,6 @@ export const gitHubIdentityVerifierAbi = [
   {
     "type": "error",
     "name": "IdNotSupported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidBackendSignature",
     "inputs": []
   },
   {
