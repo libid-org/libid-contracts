@@ -103,6 +103,154 @@ jobs:
         run: python3 scripts/regen-identity-handles.py --check
 
   # ---------------------------------------------------------------------------
+  # Verifiers: the committed bb-generated Solidity verifiers reproduce from
+  # the pinned libid-circuits release. This replaces the reproducibility gate
+  # that died with the dyaka monorepo split — there, the deploy workflow
+  # recompiled the circuit next to the contracts; here, the circuits live in
+  # libid-circuits and this job re-derives both verifiers from that repo's
+  # released verification keys (verifier ⟵ vk alone, no nargo needed) and
+  # byte-compares against the committed sources. A mismatch means the
+  # deployed verifier no longer corresponds to the circuit the release
+  # ships — the web prover and the on-chain verifier must roll together.
+  #
+  # solidity/circuits-version pins the release tag. Until that release is
+  # actually cut on libid-org/libid-circuits, the download step fails with an
+  # explicit message — that is intended, not flaky.
+  #
+  # TODO(release v0.1.0): once libid-circuits v0.1.0 is published, add
+  # `verifiers` to the `needs:` of publish-crates so nothing publishes over a
+  # drifted verifier.
+  # ---------------------------------------------------------------------------
+  verifiers:
+    name: Verifiers match circuits release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read pinned circuits release
+        id: pin
+        run: |
+          set -euo pipefail
+          tag="$(cat solidity/circuits-version)"
+          echo "Pinned libid-circuits release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download circuit artifacts from the pinned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pin.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p circuits-release
+          if ! gh release download "$TAG" \
+              --repo libid-org/libid-circuits \
+              --dir circuits-release \
+              --pattern 'libid-circuits-*.tar.gz' \
+              --pattern 'manifest.json'; then
+            echo "::error::libid-circuits release '$TAG' (pinned in solidity/circuits-version) does not exist or has no artifacts yet. Cut that release first, or fix the pin." >&2
+            exit 1
+          fi
+          ls -la circuits-release/
+
+      # Every tarball must hash to what the manifest promises before anything
+      # inside it is trusted.
+      - name: Verify tarball sha256s against the manifest
+        working-directory: circuits-release
+        run: |
+          set -euo pipefail
+          for tarball in libid-circuits-*.tar.gz; do
+            want="$(jq -re --arg t "$tarball" '.tarballs[$t].sha256' manifest.json)"
+            got="$(sha256sum "$tarball" | cut -d' ' -f1)"
+            if [ "$want" != "$got" ]; then
+              echo "::error::$tarball sha256 mismatch: manifest says $want, asset is $got" >&2
+              exit 1
+            fi
+            echo "$tarball: sha256 OK"
+          done
+
+      - name: Extract artifacts
+        working-directory: circuits-release
+        run: |
+          set -euo pipefail
+          version="$(jq -re .version manifest.json)"
+          for circuit in jwt_email dyaka-noir-token; do
+            mkdir -p "$circuit"
+            tar -xzf "libid-circuits-${version}-${circuit}.tar.gz" -C "$circuit"
+          done
+          # The bb pin comes from the manifest — the release names the version
+          # that produced its vks, and only that version reproduces them.
+          echo "BB_VERSION=$(jq -re .toolchain.bb manifest.json)" >> "$GITHUB_ENV"
+
+      - name: Cache barretenberg
+        id: bb-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bb
+          key: bb-${{ runner.os }}-${{ env.BB_VERSION }}
+
+      - name: Install barretenberg (pinned from manifest)
+        if: steps.bb-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
+          export PATH="$HOME/.bb:$PATH"
+          bbup --version "${BB_VERSION}"
+
+      - name: Put barretenberg on PATH
+        run: echo "$HOME/.bb" >> "$GITHUB_PATH"
+
+      - name: Verify bb version
+        run: |
+          set -euo pipefail
+          [ "$(bb --version | tail -1)" = "${BB_VERSION}" ]
+
+      # Same forge as everywhere else in this workflow, binary only — fmt
+      # reads foundry.toml but compiles nothing.
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      # The canonical generation chain, mirrored from libid-circuits'
+      # scripts/gen-verifier.sh: write_solidity_verifier from the vk, annotate
+      # every assembly block memory-safe (via_ir), rename the second
+      # HonkVerifier to XHonkVerifier (two bb verifiers in one project would
+      # otherwise collide), then forge fmt under solidity/foundry.toml.
+      - name: Regenerate verifiers and compare
+        run: |
+          set -euo pipefail
+          gen="solidity/.circuits-check"
+          mkdir -p "$gen"
+
+          bb write_solidity_verifier -k circuits-release/jwt_email/vk \
+            -o "$gen/Verifier.sol" -t evm
+          bb write_solidity_verifier -k circuits-release/dyaka-noir-token/vk \
+            -o "$gen/XHonkVerifier.sol" -t evm
+
+          perl -i -pe 's/assembly \{/assembly ("memory-safe") \{/g' \
+            "$gen/Verifier.sol" "$gen/XHonkVerifier.sol"
+          perl -i -pe 's/contract HonkVerifier is BaseZKHonkVerifier/contract XHonkVerifier is BaseZKHonkVerifier/g' \
+            "$gen/XHonkVerifier.sol"
+
+          (cd solidity && forge fmt .circuits-check/Verifier.sol .circuits-check/XHonkVerifier.sol)
+
+          status=0
+          for pair in \
+            "$gen/Verifier.sol:solidity/contracts/login/oidc/Verifier.sol" \
+            "$gen/XHonkVerifier.sol:solidity/contracts/login/zk/XHonkVerifier.sol"; do
+            fresh="${pair%%:*}"; committed="${pair##*:}"
+            if diff -q "$fresh" "$committed" >/dev/null; then
+              echo "$committed reproduces from the release vk."
+            else
+              echo "::error::$committed does not match the verifier regenerated from the pinned circuits release" >&2
+              git diff --no-index --stat "$committed" "$fresh" || true
+              git diff --no-index "$committed" "$fresh" | head -60 || true
+              status=1
+            fi
+          done
+          exit "$status"
+
+  # ---------------------------------------------------------------------------
   # Rust: vendored artifacts, formatting, clippy, tests. Needs forge twice
   # over — the vendored artifacts are diffed against a fresh `forge build`,
   # and the integration tests spawn `anvil` (installed with the toolchain).

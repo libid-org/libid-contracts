@@ -4,3 +4,5 @@ solidity/broadcast/
 ts/node_modules/
 ts/packages/*/node_modules/
 ts/packages/*/dist/
+solidity/.circuits-check/
+circuits-release/
