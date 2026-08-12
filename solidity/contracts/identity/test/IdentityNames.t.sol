@@ -34,10 +34,8 @@ contract IdentityNamesTest is Test {
         verifier = new MockIdentityVerifier("mock");
 
         vm.startPrank(owner);
-        names.setPlatform(X, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE, HandleVectors.rulesFor(X));
-        names.setPlatform(
-            GITHUB, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE, HandleVectors.rulesFor(GITHUB)
-        );
+        _wire(X, address(verifier), NO_FUTURE_ALLOWANCE);
+        _wire(GITHUB, address(verifier), NO_FUTURE_ALLOWANCE);
         vm.stopPrank();
 
         // Observations are provider timestamps, so the chain has to be past
@@ -48,6 +46,16 @@ contract IdentityNamesTest is Test {
     /// The mock states wall-clock time, the way a notary does, so it never
     /// needs to claim an observation ahead of the chain.
     uint64 internal constant NO_FUTURE_ALLOWANCE = 0;
+
+    /// The version every platform's first verifier lands on.
+    uint32 internal constant V1 = 1;
+
+    /// Configure a platform's keyspace and its first verifier, the way a
+    /// deployment does. Caller supplies the prank.
+    function _wire(bytes32 platformId, address verifierAddr, uint64 allowance) internal {
+        names.setPlatform(platformId, HandleVectors.rulesFor(platformId));
+        names.setVerifier(platformId, V1, IIdentityVerifier(verifierAddr), allowance);
+    }
 
     /// Stage a claim and bind it as `who`.
     function _bind(address who, string memory userId, string memory handle, uint64 at) internal {
@@ -170,7 +178,7 @@ contract IdentityNamesTest is Test {
         names.bind(GITHUB, hex"", false);
 
         vm.prank(owner);
-        names.setPlatform(GITHUB, IIdentityVerifier(address(verifier)), 2 hours, HandleVectors.rulesFor(GITHUB));
+        names.setVerifier(GITHUB, V1, IIdentityVerifier(address(verifier)), 2 hours);
 
         verifier.stage("123", "alice", alice, ahead);
         vm.prank(alice);
@@ -181,7 +189,7 @@ contract IdentityNamesTest is Test {
     /// The boundary is inclusive: exactly at the limit is not "ahead".
     function test_anObservationExactlyAtTheLimitIsAccepted() public {
         vm.prank(owner);
-        names.setPlatform(X, IIdentityVerifier(address(verifier)), 1 hours, HandleVectors.rulesFor(X));
+        names.setVerifier(X, V1, IIdentityVerifier(address(verifier)), 1 hours);
 
         uint64 atLimit = uint64(block.timestamp) + 1 hours;
         verifier.stage("123", "alice", alice, atLimit);
@@ -269,7 +277,7 @@ contract IdentityNamesTest is Test {
     function test_aPlatformCannotBeGivenAZeroVerifier() public {
         vm.prank(owner);
         vm.expectRevert(IdentityNames.NoVerifier.selector);
-        names.setPlatform(X, IIdentityVerifier(address(0)), NO_FUTURE_ALLOWANCE, HandleVectors.rulesFor(X));
+        names.setVerifier(X, V1, IIdentityVerifier(address(0)), NO_FUTURE_ALLOWANCE);
     }
 
     /// An allowance near the top of the range makes `_requireNotAhead` revert
@@ -282,7 +290,7 @@ contract IdentityNamesTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.AllowanceTooLarge.selector, type(uint64).max, cap));
-        names.setPlatform(X, IIdentityVerifier(address(verifier)), type(uint64).max, HandleVectors.rulesFor(X));
+        names.setVerifier(X, V1, IIdentityVerifier(address(verifier)), type(uint64).max);
     }
 
     /// The real platforms sit far below the cap — Google needs about an hour —
@@ -291,7 +299,7 @@ contract IdentityNamesTest is Test {
         uint64 cap = names.MAX_FUTURE_OBSERVATION();
 
         vm.prank(owner);
-        names.setPlatform(X, IIdentityVerifier(address(verifier)), cap, HandleVectors.rulesFor(X));
+        names.setVerifier(X, V1, IIdentityVerifier(address(verifier)), cap);
     }
 
     // ─── The freshness signal ───────────────────────────────────────
@@ -440,17 +448,21 @@ contract IdentityNamesTest is Test {
         assertTrue(_lastBindPublished(), "the flag was false, the name is still on display");
     }
 
-    /// The `published` flag out of the last `IdentityBound` in the recorded
-    /// logs. It is the final word of the non-indexed data.
-    function _lastBindPublished() internal returns (bool) {
+    /// The `published` flag and the proof version out of the last
+    /// `IdentityBound` in the recorded logs.
+    function _lastBind() internal returns (bool published, uint32 version) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool)");
+        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32)");
         for (uint256 i = logs.length; i > 0; i--) {
             if (logs[i - 1].topics[0] != topic) continue;
-            (,,,, bool published) = abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool));
-            return published;
+            (,,,, published, version) = abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32));
+            return (published, version);
         }
         revert("no IdentityBound in the logs");
+    }
+
+    function _lastBindPublished() internal returns (bool published) {
+        (published,) = _lastBind();
     }
 
     /// One wallet's withdrawal is its own. There is no path to another's.
@@ -535,7 +547,7 @@ contract IdentityNamesTest is Test {
         HandleNormalizer.Rules memory narrowed = HandleVectors.rulesFor(GITHUB);
         narrowed.allowHyphen = false;
         vm.prank(owner);
-        names.setPlatform(GITHUB, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE, narrowed);
+        names.setPlatform(GITHUB, narrowed);
 
         assertEq(names.resolveHandle(GITHUB, "octo-cat"), address(0), "the forward resolver cannot name it");
         assertEq(names.primaryOf(alice, GITHUB), "", "so neither does the reverse one");
@@ -572,6 +584,348 @@ contract IdentityNamesTest is Test {
         assertEq(names.resolveHandle(GITHUB, "alice"), bob);
     }
 
+    // ─── Proof versions ─────────────────────────────────────────────
+    //
+    // A platform's proof can change shape without the account behind it
+    // changing — X gaining OIDC, say. Both formats have to be accepted while
+    // users migrate, so the verifier is keyed by version and the keyspace is
+    // not.
+
+    /// The first verifier a platform gets becomes its default, because
+    /// requiring a second call would only invite a half-configured platform.
+    function test_theFirstVersionBecomesTheLatest() public view {
+        assertEq(names.latestVersionOf(X), V1);
+        assertEq(address(names.verifierOf(X, V1)), address(verifier));
+    }
+
+    /// Registering a new version must NOT redirect anybody. A format is
+    /// deployed, exercised against the real chain, and only then made default.
+    function test_registeringAVersionDoesNotMoveTheDefault() public {
+        MockIdentityVerifier v2 = new MockIdentityVerifier("v2");
+        vm.prank(owner);
+        names.setVerifier(X, 2, IIdentityVerifier(address(v2)), NO_FUTURE_ALLOWANCE);
+
+        assertEq(names.latestVersionOf(X), V1, "the default moved on its own");
+        assertEq(address(names.verifierOf(X, 2)), address(v2), "but the version is installed");
+    }
+
+    /// Two formats accepted at once — the whole point.
+    function test_twoVersionsBindSideBySide() public {
+        MockIdentityVerifier v2 = _addVersion(2, NO_FUTURE_ALLOWANCE);
+
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+
+        v2.stage("456", "bob", bob, 100);
+        vm.prank(bob);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        assertEq(names.resolveHandle(X, "alice"), alice, "the old format still binds");
+        assertEq(names.resolveHandle(X, "bob"), bob, "and the new one does too");
+    }
+
+    /// Moving the default is the migration switch, and it moves only what a
+    /// caller that names no version gets.
+    function test_movingTheDefaultChangesWhatPlainBindUses() public {
+        MockIdentityVerifier v2 = _addVersion(2, NO_FUTURE_ALLOWANCE);
+        vm.prank(owner);
+        names.setLatestVersion(X, 2);
+
+        // Only v2 has a claim staged, so a plain bind reaching v1 would find
+        // an empty one and revert.
+        v2.stage("456", "bob", bob, 100);
+        vm.prank(bob);
+        names.bind(X, hex"", false);
+
+        assertEq(names.resolveHandle(X, "bob"), bob);
+        assertEq(names.latestVersionOf(X), 2);
+    }
+
+    /// A client mid-migration names the version it built its proof for, and
+    /// keeps working the day the default moves.
+    function test_anOlderVersionStillBindsAfterTheDefaultMoves() public {
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+        vm.prank(owner);
+        names.setLatestVersion(X, 2);
+
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+
+        assertEq(names.resolveHandle(X, "alice"), alice);
+    }
+
+    function test_aVersionWithNoVerifierIsRefused() public {
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, uint32(7)));
+        names.bindAtVersion(X, 7, hex"", false);
+    }
+
+    /// The end of a migration: the format stops being accepted.
+    function test_retiringAVersionStopsNewBindings() public {
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+        vm.startPrank(owner);
+        names.setLatestVersion(X, 2);
+        names.retireVerifier(X, V1);
+        vm.stopPrank();
+
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, V1));
+        names.bindAtVersion(X, V1, hex"", false);
+    }
+
+    /// A name belongs to the account that proved it, not to the format the
+    /// proof was written in. Retiring a version must not unbind anybody.
+    function test_retiringAVersionLeavesItsNamesResolving() public {
+        _bind(alice, "123", "alice", 100);
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+
+        vm.startPrank(owner);
+        names.setLatestVersion(X, 2);
+        names.retireVerifier(X, V1);
+        vm.stopPrank();
+
+        assertEq(names.resolveHandle(X, "alice"), alice, "the name went with the format");
+        assertEq(names.resolveId(X, "123"), alice);
+    }
+
+    /// Retiring the default would leave the platform answering `bind` while
+    /// accepting nothing. Move the default first.
+    function test_theDefaultVersionCannotBeRetired() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.VersionInUseAsLatest.selector, X, V1));
+        names.retireVerifier(X, V1);
+    }
+
+    /// Whether a version is still in use has to be answerable BEFORE retiring
+    /// it, or the owner is guessing. The binding carries the version, and it
+    /// costs no extra storage: 20 + 8 + 4 bytes is one word.
+    function test_theBindingRecordsWhichVersionProvedIt() public {
+        MockIdentityVerifier v2 = _addVersion(2, NO_FUTURE_ALLOWANCE);
+
+        v2.stage("456", "bob", bob, 100);
+        vm.recordLogs();
+        vm.prank(bob);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        (,, uint32 idVersion) = names.byId(IdentityNodes.idNode(X, "456"));
+        (,, uint32 handleVersion) = names.byHandle(IdentityNodes.handleNode(X, "bob"));
+        assertEq(idVersion, 2, "the id node");
+        assertEq(handleVersion, 2, "the handle node");
+
+        (, uint32 logged) = _lastBind();
+        assertEq(logged, 2, "and the log an indexer reads");
+    }
+
+    /// The allowance travels with the version, not the platform: a notary
+    /// states wall-clock time and is never ahead, while an OIDC claim carries
+    /// the token's `exp` and reads about an hour ahead. One number for both
+    /// would either reject every OIDC bind or hand the notary a window it
+    /// never needed.
+    function test_theFutureAllowanceIsPerVersion() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+        uint64 ahead = uint64(block.timestamp) + 30 minutes;
+
+        // v1 carries no allowance, so the same observation is refused there.
+        verifier.stage("123", "alice", alice, ahead);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IdentityNames.ObservedInTheFuture.selector, ahead, uint64(block.timestamp))
+        );
+        names.bindAtVersion(X, V1, hex"", false);
+
+        v2.stage("123", "alice", alice, ahead);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+        assertEq(names.resolveHandle(X, "alice"), alice);
+    }
+
+    /// The nodes are shared by every version, so two versions reading
+    /// different clocks would compare two clocks — and the looser one would win
+    /// every time. A user who bound through the lenient version could not
+    /// re-prove through the strict one until the borrowed hour had passed.
+    function test_aLenientVersionCannotLockOutAStrictOne() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+
+        // v2 reads a clock an hour ahead — an OIDC token's `exp`.
+        uint64 ahead = uint64(block.timestamp) + 1 hours;
+        v2.stage("123", "alice", alice, ahead);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        // v1 states wall-clock time and is never ahead. Alice re-proves
+        // through the client she has, a minute later.
+        vm.warp(block.timestamp + 1 minutes);
+        verifier.stage("123", "alice2", alice, uint64(block.timestamp));
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+
+        assertEq(names.resolveHandle(X, "alice2"), alice, "the strict version was locked out");
+        assertEq(names.resolveHandle(X, "alice"), address(0), "and the rename took effect");
+    }
+
+    /// Ordering inside one version is untouched: every claim shifts by the same
+    /// amount, so an older token still loses to a newer one.
+    function test_orderingInsideAVersionSurvivesTheShift() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+        uint64 later = uint64(block.timestamp) + 1 hours;
+
+        v2.stage("123", "alice", alice, later);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        // A token issued earlier, so expiring earlier.
+        v2.stage("123", "alice", alice, later - 10 minutes);
+        vm.prank(alice);
+        vm.expectRevert();
+        names.bindAtVersion(X, 2, hex"", false);
+    }
+
+    /// What is stored is the observation on the shared scale, so a consumer
+    /// comparing two bindings compares like with like.
+    function test_theStoredObservationIsOnTheSharedScale() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+        uint64 reported = uint64(block.timestamp) + 1 hours;
+
+        v2.stage("123", "alice", alice, reported);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        (, uint64 stored,) = names.byId(IdentityNodes.idNode(X, "123"));
+        assertEq(stored, reported - 2 hours, "the version's allowance was not taken off");
+    }
+
+    // ─── A platform is not usable until it can verify ───────────────
+
+    /// Between `setPlatform` and `setVerifier` a platform owns a keyspace and
+    /// can verify nothing. Answering `address(0)` there would tell a caller
+    /// "nobody holds this name" about a platform that is not wired yet.
+    function test_aPlatformWithoutAVerifierDoesNotResolve() public {
+        bytes32 fresh = keccak256("dyaka.identity.platform.fresh");
+        vm.prank(owner);
+        names.setPlatform(fresh, HandleVectors.rulesFor(X));
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolveId(fresh, "123");
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolveHandle(fresh, "alice");
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolvePair(fresh, "alice", "123");
+    }
+
+    /// And binding says the same thing, rather than naming a version the
+    /// caller never chose.
+    function test_bindingAPlatformWithoutAVerifierNamesThePlatform() public {
+        bytes32 fresh = keccak256("dyaka.identity.platform.fresh");
+        vm.prank(owner);
+        names.setPlatform(fresh, HandleVectors.rulesFor(X));
+
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.bind(fresh, hex"", false);
+    }
+
+    /// `bindAtVersion(id, 0, …)` is not a spelling of `bind`.
+    function test_bindAtVersionRefusesTheZeroSentinel() public {
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(IdentityNames.ZeroVersion.selector);
+        names.bindAtVersion(X, 0, hex"", false);
+    }
+
+    /// `setPlatform` writes field-wise now, so a rules change must leave the
+    /// installed verifiers and the default version exactly where they were.
+    /// Reintroducing the whole-struct assignment would unwire every platform.
+    function test_changingTheRulesLeavesTheVersionsWired() public {
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+        vm.startPrank(owner);
+        names.setLatestVersion(X, 2);
+
+        HandleNormalizer.Rules memory narrowed = HandleVectors.rulesFor(X);
+        narrowed.maxLength = 12;
+        names.setPlatform(X, narrowed);
+        vm.stopPrank();
+
+        assertEq(names.latestVersionOf(X), 2, "the default was reset");
+        assertEq(address(names.verifierOf(X, V1)), address(verifier), "v1 was unwired");
+        assertTrue(address(names.verifierOf(X, 2)) != address(0), "v2 was unwired");
+
+        // And v1 still binds, which is the thing a caller pinned to it would
+        // notice. `_bind` goes through the default, which is v2 now.
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+        assertEq(names.resolveHandle(X, "alice"), alice);
+    }
+
+    /// A node nobody holds is not a dependency on its proof format. Leaving
+    /// the version set would report one that cannot exist and postpone the
+    /// retirement the field exists to enable.
+    function test_aRetiredHandleReportsNoVersion() public {
+        _bind(alice, "123", "alice", 100);
+        _bind(alice, "123", "alice2", 200);
+
+        (address ownerOf,, uint32 version) = names.byHandle(IdentityNodes.handleNode(X, "alice"));
+        assertEq(ownerOf, address(0), "the handle was retired");
+        assertEq(version, 0, "but it still claims a version");
+    }
+
+    // ─── Version configuration ──────────────────────────────────────
+
+    /// Zero is the "no verifier" sentinel — an unconfigured platform reads
+    /// `latestVersion == 0` — so it cannot also name a real version.
+    function test_versionZeroCannotNameAVerifier() public {
+        vm.prank(owner);
+        vm.expectRevert(IdentityNames.ZeroVersion.selector);
+        names.setVerifier(X, 0, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE);
+    }
+
+    /// A verifier needs a keyspace to write into. Without this the platform
+    /// would accept proofs while every resolver reverted `UnknownPlatform`.
+    function test_aVerifierNeedsItsPlatformConfiguredFirst() public {
+        bytes32 nowhere = keccak256("dyaka.identity.platform.nowhere");
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, nowhere));
+        names.setVerifier(nowhere, V1, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE);
+    }
+
+    function test_theDefaultCannotPointAtAVersionThatDoesNotExist() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, uint32(9)));
+        names.setLatestVersion(X, 9);
+    }
+
+    function test_retiringAVersionThatWasNeverThereIsRefused() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, uint32(9)));
+        names.retireVerifier(X, 9);
+    }
+
+    function test_onlyTheOwnerMovesTheDefaultOrRetiresAVersion() public {
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        names.setLatestVersion(X, 2);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        names.retireVerifier(X, 2);
+    }
+
+    /// Install a fresh verifier for `version` on X and return it.
+    function _addVersion(uint32 version, uint64 allowance) internal returns (MockIdentityVerifier v) {
+        v = new MockIdentityVerifier("extra");
+        vm.prank(owner);
+        names.setVerifier(X, version, IIdentityVerifier(address(v)), allowance);
+    }
+
     // ─── Ownership ──────────────────────────────────────────────────
 
     /// The owner has no privileged path to a binding. It obeys the same target
@@ -596,16 +950,22 @@ contract IdentityNamesTest is Test {
 
         MockIdentityVerifier replacement = new MockIdentityVerifier("replacement");
         vm.prank(owner);
-        names.setPlatform(X, IIdentityVerifier(address(replacement)), NO_FUTURE_ALLOWANCE, HandleVectors.rulesFor(X));
+        names.setVerifier(X, V1, IIdentityVerifier(address(replacement)), NO_FUTURE_ALLOWANCE);
 
         assertEq(names.resolveId(X, "123"), alice);
         assertEq(names.resolveHandle(X, "alice"), alice);
-        assertEq(address(names.verifierOf(X)), address(replacement));
+        assertEq(address(names.verifierOf(X, V1)), address(replacement));
     }
 
     function test_onlyTheOwnerConfiguresAPlatform() public {
         vm.prank(alice);
         vm.expectRevert();
-        names.setPlatform(X, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE, HandleVectors.rulesFor(X));
+        names.setPlatform(X, HandleVectors.rulesFor(X));
+    }
+
+    function test_onlyTheOwnerConfiguresAVerifier() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        names.setVerifier(X, V1, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE);
     }
 }

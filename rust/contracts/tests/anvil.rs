@@ -191,7 +191,7 @@ async fn deploys_the_bank_diamond() {
 }
 
 /// (c) IdentityNames behind proxy + GitHubIdentityVerifier behind proxy,
-/// wired via setPlatform, then views.
+/// wired via setPlatform + setVerifier, then views.
 #[tokio::test]
 async fn deploys_the_identity_stack() {
     let provider = test_provider();
@@ -249,11 +249,11 @@ async fn deploys_the_identity_stack() {
 
     let platform_id = keccak256(b"libid.identity.platform.github");
     let names = IdentityNames::new(names_proxy, &provider);
+    // The keyspace and the proof format are configured separately: rules do
+    // not vary by version, verifiers do.
     names
         .setPlatform(
             platform_id,
-            github_proxy,
-            3600,
             IdentityNames::Rules {
                 maxLength: 39,
                 stripLeadingAt: true,
@@ -269,9 +269,24 @@ async fn deploys_the_identity_stack() {
         .await
         .unwrap();
 
+    let version = names.INITIAL_VERSION().call().await.unwrap();
+    names
+        .setVerifier(platform_id, version, github_proxy, 3600)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
     assert_eq!(
-        names.verifierOf(platform_id).call().await.unwrap(),
+        names.verifierOf(platform_id, version).call().await.unwrap(),
         github_proxy
+    );
+    // The first version installed becomes the platform's default.
+    assert_eq!(
+        names.latestVersionOf(platform_id).call().await.unwrap(),
+        version
     );
     // An unbound id resolves to nobody rather than reverting.
     assert_eq!(

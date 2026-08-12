@@ -182,12 +182,7 @@ contract Deploy is Script, BankDiamondDeployer {
                 )
             )
         );
-        names.setPlatform(
-            HandleVectors.PLATFORM_X,
-            IIdentityVerifier(xIdentityAddr),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_X)
-        );
+        _wireIdentityPlatform(names, HandleVectors.PLATFORM_X, xIdentityAddr);
 
         // The naming system's own GitHub verifier. It holds its own keys and
         // its own view of GitHub's response, and the notary attests to IT — so
@@ -209,12 +204,7 @@ contract Deploy is Script, BankDiamondDeployer {
                 )
             )
         );
-        names.setPlatform(
-            HandleVectors.PLATFORM_GITHUB,
-            IIdentityVerifier(githubIdentityAddr),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB)
-        );
+        _wireIdentityPlatform(names, HandleVectors.PLATFORM_GITHUB, githubIdentityAddr);
 
         // Google needs the circuit's Honk verifier, which the OIDC script
         // deploys, so this is wired only when that address is supplied. The
@@ -238,12 +228,7 @@ contract Deploy is Script, BankDiamondDeployer {
                     abi.encodeCall(GoogleIdentityVerifier.initialize, (deployer, googleHonkAddr, jwksRootsAddr))
                 )
             );
-            names.setPlatform(
-                HandleVectors.PLATFORM_GOOGLE,
-                IIdentityVerifier(googleIdentityAddr),
-                HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),
-                HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE)
-            );
+            _wireIdentityPlatform(names, HandleVectors.PLATFORM_GOOGLE, googleIdentityAddr);
         }
 
         vm.stopBroadcast();
@@ -270,5 +255,21 @@ contract Deploy is Script, BankDiamondDeployer {
             console.log("NOTE: point a JWKS rotation listener at IDENTITY_JWKS_ROOTS_ADDRESS");
             console.log("      before Google names work. The trust list starts empty.");
         }
+    }
+
+    /// @dev Give a platform its keyspace and its first verifier.
+    ///
+    ///      One helper rather than the pair spelled out per platform: the rules
+    ///      and the allowance both come from the generated table keyed by
+    ///      platform id, so a new platform is one line here and cannot pick up
+    ///      a neighbour's rules by a copy-paste slip.
+    function _wireIdentityPlatform(IdentityNames names, bytes32 platformId, address verifier) internal {
+        names.setPlatform(platformId, HandleVectors.rulesFor(platformId));
+        names.setVerifier(
+            platformId,
+            names.INITIAL_VERSION(),
+            IIdentityVerifier(verifier),
+            HandleVectors.futureAllowanceFor(platformId)
+        );
     }
 }

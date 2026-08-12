@@ -183,6 +183,17 @@ export interface Call {
 /// an indexer never needs it — say true only when something on chain must
 /// display the name. For Google the handle is an email address, which is worth
 /// a thought before publishing it.
+///
+/// **The proof version is resolved on chain, at the moment the call lands** —
+/// not when this calldata is built. The day the owner moves a platform's
+/// default, this call starts handing the proof to the new format's verifier.
+/// That is right for a client that builds its proof fresh from this package
+/// each time, because both sides move together.
+///
+/// It is wrong for a client pinned to one format: a shipped wallet that still
+/// encodes version 1 would hand version-1 bytes to a version-2 verifier, and
+/// the best case is an opaque revert. Such a client wants
+/// `bindAtVersionCall`.
 export function bindCall(names: Address, platformId: Hex, proof: Hex, publishName: boolean): Call {
   return {
     to: names,
@@ -190,6 +201,33 @@ export function bindCall(names: Address, platformId: Hex, proof: Hex, publishNam
       abi: identityNamesAbi,
       functionName: 'bind',
       args: [platformId, proof, publishName],
+    }),
+  }
+}
+
+/// Bind with a named proof version.
+///
+/// A platform's proof can change shape while the account behind it does not —
+/// X gaining OIDC, say — so several formats are accepted at once while users
+/// migrate. `bindCall` uses whichever version the platform currently defaults
+/// to, which is what a client building its proof fresh each time wants.
+///
+/// Use this when the client is pinned to a format: a proof built for version 1
+/// keeps binding on the day the default moves to 2, and stops only when the
+/// owner retires version 1 outright.
+export function bindAtVersionCall(
+  names: Address,
+  platformId: Hex,
+  version: number,
+  proof: Hex,
+  publishName: boolean,
+): Call {
+  return {
+    to: names,
+    data: encodeFunctionData({
+      abi: identityNamesAbi,
+      functionName: 'bindAtVersion',
+      args: [platformId, version, proof, publishName],
     }),
   }
 }
