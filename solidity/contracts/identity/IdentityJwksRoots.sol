@@ -31,6 +31,12 @@ import {INotary} from "../notary/INotary.sol";
 ///      **Why a contract of its own.** A verifier should verify. Rotation is a
 ///      separate concern with a separate caller set and a separate key list,
 ///      and a second OIDC provider would want the same list.
+///
+///      **The trust model, in one line: the notary attests the reading, time
+///      does the expiry, and nobody owns rotation.** Every entry carries a
+///      stamp, verifiers check the stamp at use-site, and an expired key stops
+///      being trusted with no transaction from anyone. The owner's only lever
+///      over the key list is `untrustModulus`, which can only REMOVE trust.
 contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     bytes32 private constant EXPECTED_DOMAIN_HASH = keccak256(bytes("www.googleapis.com"));
     bytes private constant EXPECTED_DOMAIN = bytes("www.googleapis.com");
@@ -38,6 +44,15 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     uint256 public constant FRESHNESS_WINDOW = 1 hours;
     uint256 public constant CLOCK_SKEW_GRACE = 5 minutes;
     uint256 public constant DEFAULT_MODULUS_TTL = 30 days;
+    /// The most distinct kids the list will track at once. Google publishes a
+    /// handful of overlapping keys; a notarized reading cannot invent kids, so
+    /// this cap is headroom, not a working limit. It exists so the enumeration
+    /// below stays a bounded loop no submitter — honest or not — can bloat.
+    uint256 public constant MAX_TRACKED_KIDS = 16;
+    /// How much trusted runway `needsRotation()` insists on. Rotation re-stamps
+    /// every key for DEFAULT_MODULUS_TTL, so a keeper acting on this signal
+    /// rotates roughly weekly rather than racing the expiry.
+    uint256 public constant RENEWAL_MARGIN = 7 days;
 
     /// @notice The Notary contract a rotation's attestation is checked with.
     INotary public notaryContract;
@@ -57,14 +72,33 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     ///         modulus Google has retired and re-stamp it for another TTL.
     mapping(bytes32 => uint256) public rotatedAtKid;
 
+    /// Every kid currently tracked, so keepers can enumerate the list without
+    /// an indexer. Bounded by MAX_TRACKED_KIDS; expired entries leave via
+    /// `prune()`, which anyone may call.
+    bytes32[] private _trackedKids;
+    /// kid keccak -> index+1 in `_trackedKids` (0 = not tracked).
+    mapping(bytes32 => uint256) private _trackedKidIndex;
+    /// The timestamp of the freshest reading ever applied — the notary's
+    /// observation time, not the block it landed in. A keeper compares this to
+    /// wall-clock to decide whether its reading would be news.
+    uint256 public freshestObservedAt;
+
     /// Reserved for future upgrades (UUPS). New state is appended before this
     /// gap and the gap shrunk, so the layout survives.
-    uint256[50] private __gap;
+    uint256[47] private __gap;
 
     event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
     event ModulusUntrusted(bytes32 indexed modulusHash);
+    /// One key written by a rotation, with the reading's own timestamp. What a
+    /// keeper watches: `observedAt` orders readings, `expiresAt` says when this
+    /// entry stops being trusted if no rotation lands before then.
+    event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
+    /// An expired key left the tracked set. Permissionless — time retired the
+    /// key, `prune()` merely reclaimed the slot.
+    event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
 
     error ZeroAddress();
+    error TooManyKids();
     error UnknownNotary();
     error WrongDomain();
     error FutureProof();
@@ -136,8 +170,64 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     }
 
     /// @notice Apply a notarized reading of Google's JWKS. Anyone may call it.
+    ///         The proof is the whole authorization: a keeper needs gas and
+    ///         nothing else — no role, no allowlist, no owner anywhere in the
+    ///         path.
     function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external {
         _rotate(proof, claims);
+    }
+
+    /// @notice Drop every expired kid from the tracked set. Anyone may call it.
+    ///
+    /// @dev Expiry itself needs no transaction — verifiers check the stamp at
+    ///      use-site, so an expired key is already untrusted the second its TTL
+    ///      passes. Pruning only reclaims enumeration slots (and the storage
+    ///      refund). Rotation calls this by itself when the set is full, so
+    ///      even the prune is optional housekeeping.
+    function prune() external {
+        _pruneExpired();
+    }
+
+    // ─── Keeper views ─────────────────────────────────────────────
+
+    /// One tracked key, as a keeper sees it.
+    struct RootInfo {
+        bytes32 kidHash;
+        bytes32 modulusHash;
+        /// The notarized reading that last wrote this kid (proof timestamp).
+        uint256 observedAt;
+        /// When this entry stops being trusted, absent a fresher rotation.
+        uint256 expiresAt;
+    }
+
+    /// @notice Every tracked key with its provenance and expiry, expired ones
+    ///         included until someone prunes. One call tells a keeper the whole
+    ///         state of the list.
+    function currentRoots() external view returns (RootInfo[] memory infos) {
+        uint256 n = _trackedKids.length;
+        infos = new RootInfo[](n);
+        for (uint256 i = 0; i < n; i++) {
+            bytes32 kidHash = _trackedKids[i];
+            infos[i] = RootInfo({
+                kidHash: kidHash,
+                modulusHash: modulusOfKid[kidHash],
+                observedAt: rotatedAtKid[kidHash],
+                expiresAt: expiresAtKid[kidHash]
+            });
+        }
+    }
+
+    /// @notice True when no key is guaranteed trusted RENEWAL_MARGIN from now —
+    ///         the single bit a keeper polls to decide whether to fetch a fresh
+    ///         reading. True from deployment until the first rotation lands.
+    function needsRotation() external view returns (bool) {
+        uint256 horizon = block.timestamp + RENEWAL_MARGIN;
+        uint256 n = _trackedKids.length;
+        for (uint256 i = 0; i < n; i++) {
+            bytes32 modulusHash = modulusOfKid[_trackedKids[i]];
+            if (trustedHashExpiresAt[modulusHash] > horizon) return false;
+        }
+        return true;
     }
 
     function _rotate(NotarizedJwksProof memory p, JwkClaim[] memory claims) internal {
@@ -153,6 +243,10 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         if (p.domainHash != EXPECTED_DOMAIN_HASH) revert WrongDomain();
         _verifyLeaf(p.domainPath, p.transcriptRoot, "domain:", EXPECTED_DOMAIN);
         _verifyLeaf(p.endpointPath, p.transcriptRoot, "endpoint:", EXPECTED_ENDPOINT);
+
+        // Monotonic high-water mark of reading timestamps. Replaying an older
+        // proof leaves it alone, so it only ever moves forward.
+        if (p.timestamp > freshestObservedAt) freshestObservedAt = p.timestamp;
 
         uint256 expiry = block.timestamp + DEFAULT_MODULUS_TTL;
         for (uint256 i = 0; i < claims.length; i++) {
@@ -182,11 +276,20 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         bytes32 modulusHash = keccak256(packed);
 
         bytes32 kidHash = keccak256(c.kid);
-        // Ignore a claim proved no later than the one already applied. Equal
-        // timestamps re-apply identical values, so replay stays idempotent
-        // rather than reverting — a revert would let a front-runner grief the
-        // keeper's batch by landing one claim from it first.
+        // Ignore a claim proved no later than the one already applied — the
+        // monotonic rule that makes replay harmless. Rotation is open and a
+        // proof binds no contract, so anyone can replay any still-fresh
+        // reading anywhere, forever; ignoring (never reverting) keeps a
+        // front-runner from bricking the honest keeper's batch by landing one
+        // claim from it first, and skipping (never applying) keeps an older
+        // reading from rolling a kid back or re-stamping its TTL.
         if (provenAt < rotatedAtKid[kidHash]) return;
+        bytes32 previous = modulusOfKid[kidHash];
+        // A byte-identical resubmission of the applied reading is a no-op:
+        // nothing is written, nothing is emitted, and in particular the TTL is
+        // NOT re-stamped — so spamming the same proof neither grows state nor
+        // stretches trust.
+        if (provenAt == rotatedAtKid[kidHash] && previous == modulusHash) return;
         rotatedAtKid[kidHash] = provenAt;
 
         // The key this kid used to carry stops being trusted NOW, rather than
@@ -198,16 +301,64 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         // publishes overlapping keys and tokens live about an hour, so the cost
         // is that a token signed by the key Google just retired stops verifying
         // a little early; the user signs in again.
-        bytes32 previous = modulusOfKid[kidHash];
         if (previous != bytes32(0) && previous != modulusHash) {
             delete trustedHashExpiresAt[previous];
             emit ModulusUntrusted(previous);
+        } else if (previous == bytes32(0)) {
+            _trackKid(kidHash);
         }
 
         modulusOfKid[kidHash] = modulusHash;
         expiresAtKid[kidHash] = expiry;
         trustedHashExpiresAt[modulusHash] = expiry;
         emit ModulusRotated(kidHash, string(c.kid), modulusHash, expiry);
+        emit RootApplied(kidHash, modulusHash, provenAt, expiry);
+    }
+
+    /// Add a kid to the enumeration. Growth is doubly bounded: a kid can only
+    /// enter through a notarized reading of Google's own JWKS (a submitter
+    /// cannot invent one), and the set is capped — when full, expired entries
+    /// are pruned to make room, and only a set full of LIVE keys refuses.
+    function _trackKid(bytes32 kidHash) internal {
+        if (_trackedKidIndex[kidHash] != 0) return;
+        if (_trackedKids.length >= MAX_TRACKED_KIDS) {
+            _pruneExpired();
+            if (_trackedKids.length >= MAX_TRACKED_KIDS) revert TooManyKids();
+        }
+        _trackedKids.push(kidHash);
+        _trackedKidIndex[kidHash] = _trackedKids.length;
+    }
+
+    /// Swap-remove every expired kid. `rotatedAtKid` survives on purpose: it is
+    /// the monotonic floor that keeps a replayed old reading from resurrecting
+    /// the entry the prune just removed.
+    function _pruneExpired() internal {
+        uint256 i = _trackedKids.length;
+        while (i > 0) {
+            i--;
+            bytes32 kidHash = _trackedKids[i];
+            if (expiresAtKid[kidHash] > block.timestamp) continue;
+
+            bytes32 modulusHash = modulusOfKid[kidHash];
+            delete modulusOfKid[kidHash];
+            delete expiresAtKid[kidHash];
+            // Only clear the verifier-facing stamp if it is genuinely spent —
+            // it can sit above the kid's own expiry only if some fresher
+            // rotation re-trusted the same modulus under another kid.
+            if (trustedHashExpiresAt[modulusHash] <= block.timestamp) {
+                delete trustedHashExpiresAt[modulusHash];
+            }
+
+            uint256 last = _trackedKids.length - 1;
+            if (i != last) {
+                bytes32 moved = _trackedKids[last];
+                _trackedKids[i] = moved;
+                _trackedKidIndex[moved] = i + 1;
+            }
+            _trackedKids.pop();
+            delete _trackedKidIndex[kidHash];
+            emit RootPruned(kidHash, modulusHash);
+        }
     }
 
     function _verifyLeaf(bytes32[] memory path, bytes32 root, string memory prefix, bytes memory value) internal pure {

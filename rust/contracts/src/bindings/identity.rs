@@ -262,15 +262,29 @@ mod jwks_roots_inner {
                 bytes nB64url;
             }
 
+            #[derive(Debug, serde::Serialize, serde::Deserialize)]
+            struct RootInfo {
+                bytes32 kidHash;
+                bytes32 modulusHash;
+                uint256 observedAt;
+                uint256 expiresAt;
+            }
+
             function initialize(address owner_, address notaryContract_) external;
             function untrustModulus(bytes32 modulusHash) external;
             function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
+            function prune() external;
             function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
             function notaryContract() external view returns (address);
             function notary() external view returns (address);
+            function currentRoots() external view returns (RootInfo[] memory);
+            function freshestObservedAt() external view returns (uint256);
+            function needsRotation() external view returns (bool);
 
             event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
             event ModulusUntrusted(bytes32 indexed modulusHash);
+            event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
+            event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
         }
     }
 }
