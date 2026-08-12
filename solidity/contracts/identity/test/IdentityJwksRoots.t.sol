@@ -277,13 +277,26 @@ contract IdentityJwksRootsTest is Test {
 
     /// Install `kid` carrying a key derived from `seed`, and return the modulus
     /// hash it wrote.
+    function _installKid(string memory kid, string memory seed) internal returns (bytes32) {
+        (IdentityJwksRoots.NotarizedJwksProof memory p, IdentityJwksRoots.JwkClaim[] memory one) =
+            _kidReading(kid, seed, block.timestamp);
+        roots.rotate(p, one);
+        return roots.modulusOfKid(keccak256(bytes(kid)));
+    }
+
+    /// Build a full notarized reading that carries one key, signed by the
+    /// notary key this test holds, timestamped `provedAt`.
     ///
     /// The fixture holds one reading of Google's real keys, and a rotation only
     /// retires something when a kid comes back carrying a DIFFERENT key — which
     /// no single reading contains. So this builds a second reading: a JWKS leaf
     /// of its own, a transcript that carries it beside the domain and endpoint
     /// leaves, and the notary key this test holds.
-    function _installKid(string memory kid, string memory seed) internal returns (bytes32) {
+    function _kidReading(string memory kid, string memory seed, uint256 provedAt)
+        internal
+        view
+        returns (IdentityJwksRoots.NotarizedJwksProof memory p, IdentityJwksRoots.JwkClaim[] memory one)
+    {
         bytes memory nB64 = _syntheticModulus(seed);
         bytes memory jwk = abi.encodePacked('{"kid":"', kid, '","n":"', nB64, '"}');
 
@@ -296,20 +309,18 @@ contract IdentityJwksRootsTest is Test {
         bytes32 pair = _hashPair(domainLeaf, endpointLeaf);
         bytes32 root = _hashPair(pair, jwkLeaf);
 
-        IdentityJwksRoots.NotarizedJwksProof memory p = _signedProof(EXPECTED_DOMAIN_HASH);
+        p = _signedProof(EXPECTED_DOMAIN_HASH);
         p.transcriptRoot = root;
         p.domainPath = _path(endpointLeaf, jwkLeaf);
         p.endpointPath = _path(domainLeaf, jwkLeaf);
+        p.timestamp = provedAt;
         _sign(p);
 
-        IdentityJwksRoots.JwkClaim[] memory one = new IdentityJwksRoots.JwkClaim[](1);
+        one = new IdentityJwksRoots.JwkClaim[](1);
         one[0].jwkBytes = jwk;
         one[0].jwkPath = _path(pair);
         one[0].kid = bytes(kid);
         one[0].nB64url = nB64;
-
-        roots.rotate(p, one);
-        return roots.modulusOfKid(keccak256(bytes(kid)));
     }
 
     /// A 2048-bit modulus, written straight in base64url so the test needs no
@@ -342,6 +353,178 @@ contract IdentityJwksRootsTest is Test {
         p = new bytes32[](2);
         p[0] = a;
         p[1] = b;
+    }
+
+    // ─── Monotonicity under replay ──────────────────────────────────
+
+    /// The rollback that matters: a GENUINELY signed older reading, replayed
+    /// inside its freshness window after a newer one has landed. The signature
+    /// verifies; the per-kid monotonic stamp is what refuses the regression —
+    /// silently, so a keeper batch is never bricked.
+    function test_aGenuinelySignedOlderReadingCannotRegressState() public {
+        vm.prank(owner);
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
+
+        // The older reading exists first (proved 30 min ago), but the NEWER
+        // one lands on chain first.
+        (IdentityJwksRoots.NotarizedJwksProof memory oldP, IdentityJwksRoots.JwkClaim[] memory oldC) =
+            _kidReading("kid-1", "retired-modulus", block.timestamp - 30 minutes);
+        bytes32 newModulus = _installKid("kid-1", "current-modulus");
+
+        bytes32 kidHash = keccak256(bytes("kid-1"));
+        uint256 stamp = roots.rotatedAtKid(kidHash);
+        uint256 expiry = roots.expiresAtKid(kidHash);
+
+        vm.prank(keeper);
+        roots.rotate(oldP, oldC); // must not revert, must not apply
+
+        assertEq(roots.modulusOfKid(kidHash), newModulus, "older reading rolled the kid back");
+        assertEq(roots.rotatedAtKid(kidHash), stamp, "older reading overwrote the stamp");
+        assertEq(roots.expiresAtKid(kidHash), expiry, "older reading re-stamped the TTL");
+        assertEq(roots.trustedHashExpiresAt(newModulus), expiry, "current key lost trust");
+    }
+
+    /// Resubmitting the exact reading already applied writes nothing — in
+    /// particular it does NOT re-stamp the TTL, so spamming one proof for its
+    /// whole freshness window cannot stretch trust by even a second.
+    function test_anIdenticalResubmissionDoesNotRestampTheTtl() public {
+        roots.rotate(proof, claims);
+        bytes32 kidHash = keccak256(claims[0].kid);
+        uint256 expiry = roots.expiresAtKid(kidHash);
+
+        vm.warp(block.timestamp + 30 minutes); // still inside the window
+        vm.prank(keeper);
+        roots.rotate(proof, claims);
+
+        assertEq(roots.expiresAtKid(kidHash), expiry, "replay re-stamped the TTL");
+    }
+
+    /// The freshest-reading mark only moves forward, whoever submits.
+    function test_freshestObservedAtIsMonotonic() public {
+        assertEq(roots.freshestObservedAt(), 0);
+        roots.rotate(proof, claims);
+        assertEq(roots.freshestObservedAt(), provenAt);
+
+        vm.prank(owner);
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
+        (IdentityJwksRoots.NotarizedJwksProof memory oldP, IdentityJwksRoots.JwkClaim[] memory oldC) =
+            _kidReading("kid-1", "whatever", provenAt - 10 minutes);
+        roots.rotate(oldP, oldC);
+        assertEq(roots.freshestObservedAt(), provenAt, "an older reading moved the mark");
+
+        vm.warp(provenAt + 20 minutes);
+        (IdentityJwksRoots.NotarizedJwksProof memory newP, IdentityJwksRoots.JwkClaim[] memory newC) =
+            _kidReading("kid-1", "whatever", provenAt + 10 minutes);
+        roots.rotate(newP, newC);
+        assertEq(roots.freshestObservedAt(), provenAt + 10 minutes, "a newer reading must move the mark");
+    }
+
+    // ─── Expiry and pruning ─────────────────────────────────────────
+
+    /// Time alone retires a key: past its stamp the verifier-facing read says
+    /// expired, with no transaction from anyone. `prune()` — callable by
+    /// anyone — then reclaims the bookkeeping.
+    function test_anExpiredKeyIsPrunableByAnyone() public {
+        roots.rotate(proof, claims);
+        bytes32 kidHash = keccak256(claims[0].kid);
+        bytes32 modulusHash = roots.modulusOfKid(kidHash);
+        uint256 expiry = roots.expiresAtKid(kidHash);
+
+        vm.warp(expiry); // the stamp is spent; use-site checks already refuse it
+
+        vm.expectEmit(true, false, false, true);
+        emit IdentityJwksRoots.RootPruned(kidHash, modulusHash);
+        vm.prank(keeper);
+        roots.prune();
+
+        assertEq(roots.modulusOfKid(kidHash), bytes32(0), "kid still tracked");
+        assertEq(roots.expiresAtKid(kidHash), 0);
+        assertEq(roots.trustedHashExpiresAt(modulusHash), 0, "spent stamp not cleared");
+        assertEq(roots.currentRoots().length, 0, "enumeration not reclaimed");
+        // The monotonic floor survives the prune: an old reading still cannot
+        // resurrect what time retired.
+        assertEq(roots.rotatedAtKid(kidHash), provenAt, "provenance floor lost");
+    }
+
+    /// Pruning is a no-op while the keys are alive.
+    function test_pruneLeavesLiveKeysAlone() public {
+        roots.rotate(proof, claims);
+        uint256 before = roots.currentRoots().length;
+
+        vm.prank(keeper);
+        roots.prune();
+
+        assertEq(roots.currentRoots().length, before, "a live key was pruned");
+        assertGt(roots.trustedHashExpiresAt(roots.modulusOfKid(keccak256(claims[0].kid))), 0);
+    }
+
+    /// The tracked set is capped, and the cap defends itself: a full set first
+    /// sheds its expired entries, and only a set full of LIVE keys refuses.
+    /// Since every kid must arrive inside a notarized reading of Google's own
+    /// JWKS, an adversary cannot even choose the kids — this is the ceiling on
+    /// Google's, not the submitter's, behavior.
+    function test_theTrackedSetIsBoundedAndSelfPrunes() public {
+        vm.prank(owner);
+        notaryContract.setNotary(vm.addr(TEST_NOTARY_PK));
+
+        uint256 max = roots.MAX_TRACKED_KIDS();
+        for (uint256 i = 0; i < max; i++) {
+            _installKid(string.concat("kid-", vm.toString(i)), vm.toString(i));
+        }
+        assertEq(roots.currentRoots().length, max, "set should sit at the cap");
+
+        // A brand-new kid while every slot holds a live key: refused.
+        (IdentityJwksRoots.NotarizedJwksProof memory p, IdentityJwksRoots.JwkClaim[] memory one) =
+            _kidReading("kid-overflow", "overflow", block.timestamp);
+        vm.expectRevert(IdentityJwksRoots.TooManyKids.selector);
+        roots.rotate(p, one);
+
+        // Once the old stamps are spent, the same insert prunes its own room.
+        vm.warp(block.timestamp + roots.DEFAULT_MODULUS_TTL() + 1);
+        (p, one) = _kidReading("kid-overflow", "overflow", block.timestamp);
+        roots.rotate(p, one);
+        assertEq(roots.currentRoots().length, 1, "expired entries should have been shed");
+        assertEq(roots.currentRoots()[0].kidHash, keccak256(bytes("kid-overflow")));
+    }
+
+    // ─── What a keeper reads ────────────────────────────────────────
+
+    /// One call, the whole state: every tracked key with its provenance and
+    /// expiry.
+    function test_currentRootsDescribesTheWholeList() public {
+        roots.rotate(proof, claims);
+
+        IdentityJwksRoots.RootInfo[] memory infos = roots.currentRoots();
+        assertEq(infos.length, claims.length, "every claim should be listed");
+        for (uint256 i = 0; i < infos.length; i++) {
+            assertEq(infos[i].modulusHash, roots.modulusOfKid(infos[i].kidHash));
+            assertEq(infos[i].observedAt, provenAt, "provenance is the reading's timestamp");
+            assertEq(infos[i].expiresAt, roots.trustedHashExpiresAt(infos[i].modulusHash));
+        }
+    }
+
+    /// The single bit a keeper polls: true until the first rotation, false
+    /// while a key has RENEWAL_MARGIN of trusted runway, true again as the
+    /// runway shortens — and long before anything actually expires.
+    function test_needsRotationTracksTheTrustedRunway() public {
+        assertTrue(roots.needsRotation(), "an empty list needs a rotation");
+
+        roots.rotate(proof, claims);
+        assertFalse(roots.needsRotation(), "a fresh rotation buys quiet");
+
+        bytes32 kidHash = keccak256(claims[0].kid);
+        uint256 expiry = roots.expiresAtKid(kidHash);
+        vm.warp(expiry - roots.RENEWAL_MARGIN());
+        assertTrue(roots.needsRotation(), "the margin should trip before expiry does");
+    }
+
+    /// Each applied key announces itself with the reading's own timestamp, so
+    /// a bot can follow the list from logs alone.
+    function test_rotationEmitsRootAppliedWithProvenance() public {
+        bytes32 kidHash = keccak256(claims[0].kid);
+        vm.expectEmit(true, false, false, false);
+        emit IdentityJwksRoots.RootApplied(kidHash, bytes32(0), provenAt, 0);
+        roots.rotate(proof, claims);
     }
 
     // ─── Administration ─────────────────────────────────────────────

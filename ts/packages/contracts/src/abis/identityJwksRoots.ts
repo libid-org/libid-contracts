@@ -50,6 +50,32 @@ export const identityJwksRootsAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_TRACKED_KIDS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RENEWAL_MARGIN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "UPGRADE_INTERFACE_VERSION",
     "inputs": [],
     "outputs": [
@@ -70,6 +96,41 @@ export const identityJwksRootsAbi = [
   },
   {
     "type": "function",
+    "name": "currentRoots",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "infos",
+        "type": "tuple[]",
+        "internalType": "struct IdentityJwksRoots.RootInfo[]",
+        "components": [
+          {
+            "name": "kidHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "modulusHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "observedAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "expiresAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "expiresAtKid",
     "inputs": [
       {
@@ -78,6 +139,19 @@ export const identityJwksRootsAbi = [
         "internalType": "bytes32"
       }
     ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "freshestObservedAt",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -120,6 +194,19 @@ export const identityJwksRootsAbi = [
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "needsRotation",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -188,6 +275,13 @@ export const identityJwksRootsAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "prune",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -462,6 +556,56 @@ export const identityJwksRootsAbi = [
   },
   {
     "type": "event",
+    "name": "RootApplied",
+    "inputs": [
+      {
+        "name": "kidHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "modulusHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "observedAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RootPruned",
+    "inputs": [
+      {
+        "name": "kidHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "modulusHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Upgraded",
     "inputs": [
       {
@@ -580,6 +724,11 @@ export const identityJwksRootsAbi = [
   {
     "type": "error",
     "name": "StaleProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyKids",
     "inputs": []
   },
   {

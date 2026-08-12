@@ -42,19 +42,36 @@ mod inner {
                 string calldata initialAud
             ) external;
 
+            #[derive(Debug, serde::Serialize, serde::Deserialize)]
+            struct RootInfo {
+                bytes32 kidHash;
+                bytes32 modulusHash;
+                uint256 observedAt;
+                uint256 expiresAt;
+            }
+
             function setExpectedAudience(string calldata clientId) external;
             function setExpectedAudienceHash(bytes32 audienceHash) external;
             function setRegistry(address r) external;
+            function untrustModulus(bytes32 modulusHash) external;
 
             function modulusOfKid(bytes32 kidHash) external view returns (bytes32);
             function expiresAtKid(bytes32 kidHash) external view returns (uint256);
+            function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
             function platformName() external view returns (string memory);
             function notaryContract() external view returns (address);
             function notary() external view returns (address);
+            function currentRoots() external view returns (RootInfo[] memory);
+            function freshestObservedAt() external view returns (uint256);
+            function needsRotation() external view returns (bool);
 
             function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
+            function prune() external;
 
             event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
+            event ModulusUntrusted(bytes32 indexed modulusHash);
+            event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
+            event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
             event AudienceConfigured(bytes32 indexed audienceHash, string clientId);
         }
     }

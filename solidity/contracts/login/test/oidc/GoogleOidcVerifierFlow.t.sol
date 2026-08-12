@@ -300,6 +300,167 @@ contract GoogleOidcVerifierFlowTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    /// Resubmitting the exact reading already applied writes nothing — in
+    /// particular it does NOT re-stamp the TTL, so spamming one proof for its
+    /// whole freshness window cannot stretch trust by even a second.
+    function test_rotation_identicalResubmission_doesNotRestampTtl() public {
+        verifier.rotate(rotProof, rotClaims);
+        bytes32 kid0 = keccak256(rotClaims[0].kid);
+        uint256 expiry = verifier.expiresAtKid(kid0);
+
+        vm.warp(rotTimestamp + 50 minutes); // still inside the freshness window
+        vm.prank(address(0xBADBAD));
+        verifier.rotate(rotProof, rotClaims);
+
+        assertEq(verifier.expiresAtKid(kid0), expiry, "replay re-stamped the TTL");
+    }
+
+    /// A rotation that hands a kid a NEW key retires the key it used to carry
+    /// immediately — `_verifyAndExtract` resolves by modulus, so leaving the
+    /// old entry would keep a retired key usable for the rest of its TTL.
+    function test_rotation_replacingAKidRetiresItsOldKey() public {
+        uint256 notaryPk = 0xB0B;
+        GoogleOidcVerifier v = _deployWithNotary(vm.addr(notaryPk));
+
+        bytes32 first = _installKid(v, notaryPk, "kid-1", "modulus-one", block.timestamp);
+        assertGt(v.trustedHashExpiresAt(first), 0, "first key trusted");
+
+        bytes32 second = _installKid(v, notaryPk, "kid-1", "modulus-two", block.timestamp + 1);
+        assertGt(v.trustedHashExpiresAt(second), 0, "second key trusted");
+        assertEq(v.trustedHashExpiresAt(first), 0, "the replaced key must lose trust NOW");
+    }
+
+    /// Time alone retires a key, and anyone may then prune the bookkeeping.
+    /// The monotonic `rotatedAtKid` floor survives the prune, so an old
+    /// reading still cannot resurrect what time retired.
+    function test_prune_permissionless_reclaimsExpiredKeys() public {
+        verifier.rotate(rotProof, rotClaims);
+        bytes32 kid0 = keccak256(rotClaims[0].kid);
+        bytes32 mod0 = verifier.modulusOfKid(kid0);
+
+        vm.warp(verifier.expiresAtKid(kid0)); // the stamp is spent
+        vm.prank(address(0xBADBAD));
+        verifier.prune();
+
+        assertEq(verifier.modulusOfKid(kid0), bytes32(0), "kid still tracked");
+        assertEq(verifier.trustedHashExpiresAt(mod0), 0, "spent stamp not cleared");
+        assertEq(verifier.currentRoots().length, 0, "enumeration not reclaimed");
+        assertEq(verifier.rotatedAtKid(kid0), rotTimestamp, "provenance floor lost");
+    }
+
+    /// Pruning is a no-op while the keys are alive.
+    function test_prune_leavesLiveKeysAlone() public {
+        verifier.rotate(rotProof, rotClaims);
+        uint256 before = verifier.currentRoots().length;
+        verifier.prune();
+        assertEq(verifier.currentRoots().length, before, "a live key was pruned");
+    }
+
+    /// What a keeper reads: the whole list in one call, the freshest reading
+    /// mark, and the single needs-rotation bit.
+    function test_keeperViews_describeRotationState() public {
+        assertTrue(verifier.needsRotation(), "an empty list needs a rotation");
+        assertEq(verifier.freshestObservedAt(), 0);
+
+        verifier.rotate(rotProof, rotClaims);
+
+        assertFalse(verifier.needsRotation(), "a fresh rotation buys quiet");
+        assertEq(verifier.freshestObservedAt(), rotTimestamp, "the mark is the reading's timestamp");
+
+        GoogleOidcVerifier.RootInfo[] memory infos = verifier.currentRoots();
+        assertGt(infos.length, 0);
+        for (uint256 i = 0; i < infos.length; i++) {
+            assertEq(infos[i].modulusHash, verifier.modulusOfKid(infos[i].kidHash));
+            assertEq(infos[i].observedAt, rotTimestamp);
+            assertEq(infos[i].expiresAt, verifier.expiresAtKid(infos[i].kidHash));
+        }
+
+        bytes32 kid0 = keccak256(rotClaims[0].kid);
+        vm.warp(verifier.expiresAtKid(kid0) - verifier.RENEWAL_MARGIN());
+        assertTrue(verifier.needsRotation(), "the margin should trip before expiry does");
+    }
+
+    /// The owner's only lever over the key list: removing trust early. It is
+    /// owner-gated, and rotation (which anyone can submit) undoes it.
+    function test_untrustModulus_ownerOnly_removesTrust() public {
+        verifier.rotate(rotProof, rotClaims);
+        bytes32 mod0 = verifier.modulusOfKid(keccak256(rotClaims[0].kid));
+
+        vm.prank(address(0xBADBAD));
+        vm.expectRevert();
+        verifier.untrustModulus(mod0);
+
+        vm.prank(OWNER);
+        verifier.untrustModulus(mod0);
+        assertEq(verifier.trustedHashExpiresAt(mod0), 0, "trust should be gone");
+    }
+
+    // ─── Synthetic-reading helpers (mirror IdentityJwksRoots.t.sol) ──
+
+    /// Install `kid` carrying a key derived from `seed` into `v`, via a full
+    /// synthetic notarized reading signed with `notaryPk` at `provedAt`.
+    function _installKid(
+        GoogleOidcVerifier v,
+        uint256 notaryPk,
+        string memory kid,
+        string memory seed,
+        uint256 provedAt
+    ) internal returns (bytes32) {
+        bytes memory nB64 = _syntheticModulus(seed);
+        bytes memory jwk = abi.encodePacked('{"kid":"', kid, '","n":"', nB64, '"}');
+
+        bytes32 domainLeaf = _syntheticLeaf("domain:", bytes("www.googleapis.com"));
+        bytes32 endpointLeaf = _syntheticLeaf("endpoint:", bytes("/oauth2/v3/certs"));
+        bytes32 jwkLeaf = _syntheticLeaf("recv:", jwk);
+        bytes32 pair = _syntheticHashPair(domainLeaf, endpointLeaf);
+        bytes32 root = _syntheticHashPair(pair, jwkLeaf);
+
+        GoogleOidcVerifier.NotarizedJwksProof memory p;
+        p.domainHash = keccak256(bytes("www.googleapis.com"));
+        p.clientRandom = keccak256("client");
+        p.serverRandom = keccak256("server");
+        p.serverEphemeralKey = bytes("ephemeral-key");
+        p.transcriptRoot = root;
+        p.timestamp = provedAt;
+        p.domainPath = new bytes32[](2);
+        p.domainPath[0] = endpointLeaf;
+        p.domainPath[1] = jwkLeaf;
+        p.endpointPath = new bytes32[](2);
+        p.endpointPath[0] = domainLeaf;
+        p.endpointPath[1] = jwkLeaf;
+        p.notarySignature = _sign(notaryPk, _digest(p));
+
+        GoogleOidcVerifier.JwkClaim[] memory one = new GoogleOidcVerifier.JwkClaim[](1);
+        one[0].jwkBytes = jwk;
+        one[0].jwkPath = new bytes32[](1);
+        one[0].jwkPath[0] = pair;
+        one[0].kid = bytes(kid);
+        one[0].nB64url = nB64;
+
+        vm.warp(provedAt + 1);
+        v.rotate(p, one);
+        return v.modulusOfKid(keccak256(bytes(kid)));
+    }
+
+    /// A 2048-bit modulus written straight in base64url: 342 characters decode
+    /// to exactly the 256 bytes the contract requires.
+    function _syntheticModulus(string memory seed) internal pure returns (bytes memory out) {
+        bytes memory alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        bytes32 filler = keccak256(bytes(seed));
+        out = new bytes(342);
+        for (uint256 i = 0; i < 342; i++) {
+            out[i] = alphabet[uint8(filler[i % 32]) & 0x3f];
+        }
+    }
+
+    function _syntheticLeaf(string memory prefix, bytes memory value) internal pure returns (bytes32) {
+        return keccak256(bytes.concat(keccak256(abi.encodePacked(prefix, value))));
+    }
+
+    function _syntheticHashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+        return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+    }
+
     /// Renouncing ownership is disabled — it would brick the UUPS upgrade path.
     function test_renounceOwnership_disabled() public {
         vm.prank(OWNER);
