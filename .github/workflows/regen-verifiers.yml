@@ -1,0 +1,95 @@
+name: Regenerate verifiers
+
+# Manually dispatched companion to CI's `verifiers` check. After bumping
+# solidity/circuits-version on a branch, run this action on that branch (the
+# UI's branch selector picks the ref): it runs scripts/regen-verifiers.sh
+# --write to regenerate both committed verifiers from the newly pinned
+# libid-circuits release, rebuilds the contracts, re-vendors the Rust
+# artifacts (they embed the verifier bytecode, so a vk change changes them —
+# the ts ABIs are interface-only and unaffected), and pushes the result back
+# to the same branch as one signed-off bot commit. If nothing changed, it
+# says so and exits green.
+#
+# Every third-party action is pinned by commit SHA, with the tag in a
+# comment, so a moved tag cannot change what executes.
+
+on:
+  workflow_dispatch:
+
+# One writer per branch: two dispatches against the same ref queue instead of
+# racing each other's push.
+concurrency:
+  group: regen-verifiers-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  # Keep in sync with FOUNDRY_VERSION in ci.yml — the regenerated files must
+  # format and build under the same forge the CI check uses.
+  FOUNDRY_VERSION: v1.7.1
+
+jobs:
+  regen:
+    name: Regenerate verifiers and push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # persist-credentials so the push step below can use the workflow token;
+      # full history so the branch push is a plain fast-forward regardless of
+      # where the ref sits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: recursive
+
+      # Same key scheme as ci.yml's verifiers job: keyed on the pin file, and
+      # the script reuses a cached bb only when its version matches the
+      # manifest.
+      - name: Cache barretenberg
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bb
+          key: bb-${{ runner.os }}-circuits-${{ hashFiles('solidity/circuits-version') }}
+
+      # Installs forge (and warms the shared artifact cache) via the same
+      # composite the CI jobs use; the post-regeneration build below then only
+      # recompiles what the new verifiers touched.
+      - name: Build contracts
+        uses: ./.github/actions/forge-build
+        with:
+          foundry-version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Regenerate verifiers from the pinned circuits release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/regen-verifiers.sh --write
+
+      # The vendored Rust artifacts embed the verifier bytecode, so they must
+      # roll together with the .sol files in the same commit — otherwise the
+      # rust job's vendor check fails on the very branch this action fixed.
+      - name: Rebuild contracts and re-vendor Rust artifacts
+        run: |
+          set -euo pipefail
+          (cd solidity && forge build)
+          ./scripts/vendor-artifacts.sh
+
+      - name: Commit and push if anything changed
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "::notice::Verifiers already match the pinned circuits release; nothing to commit."
+            exit 0
+          fi
+          tag="$(cat solidity/circuits-version)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git status --short
+          # The Signed-off-by trailer is what the DCO job checks for.
+          git commit \
+            -m "chore: regenerate ZK verifiers for $tag" \
+            -m "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"

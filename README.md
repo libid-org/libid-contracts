@@ -75,6 +75,10 @@ Publishing the release triggers CI's release jobs:
    provenance. A prerelease publishes under its first prerelease identifier
    as the dist-tag (`1.2.0-rc.1` → `rc`); a plain version under `latest`.
 
+To pick up a new circuits release: bump `solidity/circuits-version` on a
+branch, run the "Regenerate verifiers" action on that branch, then review the
+bot commit and merge — CI's verifiers job re-proves the regeneration.
+
 ## License
 
 Dual-licensed under MIT and Apache-2.0; see `LICENSE-MIT`, `LICENSE-APACHE`
