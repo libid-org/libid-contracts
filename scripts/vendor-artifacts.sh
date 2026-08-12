@@ -27,7 +27,7 @@ DEST="$REPO_ROOT/rust/contracts/artifacts"
 ARTIFACTS=(
     # login
     "Registry:Registry"
-    "NotaryRegistry:NotaryRegistry"
+    "Notary:Notary"
     "WalletFactory:WalletFactory"
     "WebWallet:WebWallet"
     "ERC1967Proxy:ERC1967Proxy"

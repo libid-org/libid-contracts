@@ -23,6 +23,7 @@ use libid_contracts::{
             Registry,
             WalletFactory,
         },
+        notary::Notary,
         transfer::{
             Bank,
             IDiamondLoupe,
@@ -32,6 +33,7 @@ use libid_contracts::{
         deploy_behind_proxy,
         deploy_contract,
         load_linked_bytecode,
+        upgrade_uups,
     },
     diamond::{
         deploy_bank_diamond,
@@ -48,8 +50,9 @@ async fn default_signer(provider: &impl Provider) -> Address {
     provider.get_accounts().await.expect("accounts")[0]
 }
 
-/// (a) The login stack: WebWallet impl + WalletFactory behind ERC1967 proxy +
-/// Registry behind proxy, wired together, then a view call.
+/// (a) The login stack: Notary behind ERC1967 proxy first, then WebWallet
+/// impl + WalletFactory behind proxy + Registry behind proxy pointing at the
+/// Notary, wired together, then view calls.
 #[tokio::test]
 async fn deploys_the_login_stack_behind_proxies() {
     let provider = test_provider();
@@ -57,6 +60,19 @@ async fn deploys_the_login_stack_behind_proxies() {
     let deployer = default_signer(&provider).await;
     let notary = Address::repeat_byte(0x11);
     let backend = Address::repeat_byte(0x22);
+
+    let notary_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "Notary",
+        &Notary::initializeCall {
+            owner_: deployer,
+            notary_: notary,
+        },
+        None,
+    )
+    .await
+    .unwrap();
 
     let wallet_impl = deploy_contract(
         &provider,
@@ -85,7 +101,7 @@ async fn deploys_the_login_stack_behind_proxies() {
         &artifacts,
         "Registry",
         &IRegistryAdmin::initializeCall {
-            _notary: notary,
+            _notaryContract: notary_proxy,
             _backend: backend,
             _walletFactory: factory_proxy,
             _owner: deployer,
@@ -106,6 +122,11 @@ async fn deploys_the_login_stack_behind_proxies() {
         .unwrap();
 
     let registry = Registry::new(registry_proxy, &provider);
+    // notaryContract() is the pointer; notary() reads THROUGH it.
+    assert_eq!(
+        registry.notaryContract().call().await.unwrap(),
+        notary_proxy
+    );
     assert_eq!(registry.notary().call().await.unwrap(), notary);
     assert_eq!(registry.backend().call().await.unwrap(), backend);
     assert_eq!(
@@ -187,13 +208,26 @@ async fn deploys_the_identity_stack() {
     .await
     .unwrap();
 
+    let notary_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "Notary",
+        &Notary::initializeCall {
+            owner_: deployer,
+            notary_: Address::repeat_byte(0x11),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
     let github_proxy = deploy_behind_proxy(
         &provider,
         &artifacts,
         "GitHubIdentityVerifier",
         &GitHubIdentityVerifier::initializeCall {
             owner_: deployer,
-            notary_: Address::repeat_byte(0x11),
+            notaryContract_: notary_proxy,
             backend_: Address::repeat_byte(0x22),
             shape_: GitHubIdentityVerifier::ResponseShape {
                 endpoint: "/user".into(),
@@ -293,4 +327,64 @@ async fn deploys_the_x_honk_verifier_via_library_linking() {
         .await
         .unwrap();
     assert!(!provider.get_code_at(addr).await.unwrap().is_empty());
+}
+
+/// (e) The Notary lifecycle: deploy behind a proxy, rotate the signer with
+/// `setNotary`, upgrade the proxy to a freshly deployed implementation via
+/// `upgrade_uups`, and check the rotated state survives the upgrade.
+#[tokio::test]
+async fn rotates_and_upgrades_the_notary() {
+    let provider = test_provider();
+    let artifacts = Artifacts::embedded();
+    let deployer = default_signer(&provider).await;
+    let first = Address::repeat_byte(0x11);
+    let rotated = Address::repeat_byte(0x33);
+
+    let notary_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "Notary",
+        &Notary::initializeCall {
+            owner_: deployer,
+            notary_: first,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let notary = Notary::new(notary_proxy, &provider);
+    assert_eq!(notary.notary().call().await.unwrap(), first);
+
+    // A garbage proof answers false rather than reverting.
+    assert!(!notary
+        .verify(keccak256(b"digest"), vec![0u8; 65].into())
+        .call()
+        .await
+        .unwrap());
+
+    // Rotate the signer.
+    notary
+        .setNotary(rotated)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(notary.notary().call().await.unwrap(), rotated);
+
+    // Upgrade the proxy to a re-deployed implementation; state survives.
+    let new_impl = upgrade_uups(
+        &provider,
+        &artifacts,
+        notary_proxy,
+        "Notary",
+        Default::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_ne!(new_impl, notary_proxy);
+    assert_eq!(notary.notary().call().await.unwrap(), rotated);
 }

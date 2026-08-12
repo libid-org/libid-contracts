@@ -116,13 +116,15 @@ mod x_verifier_inner {
 
             function initialize(
                 address owner_,
-                address notary_,
+                address notaryContract_,
                 address honkVerifier_,
                 ResponseShape calldata shape_
             ) external;
-            function setTrust(address notary_, address honkVerifier_) external;
+            function setHonkVerifier(address honkVerifier_) external;
             function setResponseShape(ResponseShape calldata shape_) external;
 
+            function notaryContract() external view returns (address);
+            function notary() external view returns (address);
             function platformName() external view returns (string memory);
             function endpoint() external view returns (string memory);
             function handlePrefix() external view returns (string memory);
@@ -181,13 +183,14 @@ mod github_verifier_inner {
 
             function initialize(
                 address owner_,
-                address notary_,
+                address notaryContract_,
                 address backend_,
                 ResponseShape calldata shape_
             ) external;
-            function setSigners(address notary_, address backend_) external;
+            function setBackend(address backend_) external;
             function setResponseShape(ResponseShape calldata shape_) external;
 
+            function notaryContract() external view returns (address);
             function notary() external view returns (address);
             function backend() external view returns (address);
             function platformName() external view returns (string memory);
@@ -259,16 +262,14 @@ mod jwks_roots_inner {
                 bytes nB64url;
             }
 
-            function initialize(address owner_, address initialNotary) external;
-            function addNotary(address n) external;
-            function removeNotary(address n) external;
+            function initialize(address owner_, address notaryContract_) external;
             function untrustModulus(bytes32 modulusHash) external;
             function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
             function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
+            function notaryContract() external view returns (address);
+            function notary() external view returns (address);
 
             event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-            event NotaryAdded(address indexed notary);
-            event NotaryRemoved(address indexed notary);
             event ModulusUntrusted(bytes32 indexed modulusHash);
         }
     }

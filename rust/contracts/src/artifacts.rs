@@ -40,7 +40,7 @@ static EMBEDDED: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/artifacts");
 pub const COVERED: &[(&str, &str)] = &[
     // login
     ("Registry", "Registry"),
-    ("NotaryRegistry", "NotaryRegistry"),
+    ("Notary", "Notary"),
     ("WalletFactory", "WalletFactory"),
     ("WebWallet", "WebWallet"),
     ("ERC1967Proxy", "ERC1967Proxy"),
