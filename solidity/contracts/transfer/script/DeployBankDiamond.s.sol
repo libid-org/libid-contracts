@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console} from "forge-std/Script.sol";
 import {BankDiamondDeployer} from "./BankDiamondDeployer.sol";
 
-/// @notice Deploy a fresh Bank diamond against an EXISTING NotaryRegistry +
+/// @notice Deploy a fresh Bank diamond against an EXISTING Notary contract +
 ///         Registry (the migration seeds it afterwards).
 ///
 /// Usage:
@@ -12,7 +12,7 @@ import {BankDiamondDeployer} from "./BankDiamondDeployer.sol";
 ///     --rpc-url $RPC_URL --broadcast --private-key $PRIVATE_KEY
 ///
 /// Env:
-///   NOTARY_REGISTRY_ADDRESS  — NotaryRegistry contract (Bank verifies notary sigs).
+///   NOTARY_CONTRACT_ADDRESS  — the shared Notary contract (Bank verifies notary attestations through it).
 ///   BACKEND_ADDRESS          — backend signer address.
 ///   REGISTRY_CONTRACT_ADDRESS — Registry contract (identity resolution).
 contract DeployBankDiamond is Script, BankDiamondDeployer {
@@ -23,12 +23,12 @@ contract DeployBankDiamond is Script, BankDiamondDeployer {
         uint256 deployerKey = vm.parseUint(keyHex);
         address deployer = vm.addr(deployerKey);
 
-        address notaryRegistry = vm.envAddress("NOTARY_REGISTRY_ADDRESS");
+        address notaryContract = vm.envAddress("NOTARY_CONTRACT_ADDRESS");
         address backend = vm.envOr("BACKEND_ADDRESS", deployer);
         address registry = vm.envAddress("REGISTRY_CONTRACT_ADDRESS");
 
         vm.startBroadcast(deployerKey);
-        address diamond = deployBankDiamond(deployer, notaryRegistry, backend, registry);
+        address diamond = deployBankDiamond(deployer, notaryContract, backend, registry);
         vm.stopBroadcast();
 
         console.log("=== Bank diamond deployed ===");

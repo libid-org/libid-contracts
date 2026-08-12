@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {IdentityClaim} from "../IIdentityVerifier.sol";
 import {GitHubIdentityVerifier} from "../GitHubIdentityVerifier.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 /// The GitHub verifier reads the naming system's own notarized proof and
 /// reports the account it names. It holds its own keys and its own response
@@ -13,6 +15,7 @@ import {GitHubIdentityVerifier} from "../GitHubIdentityVerifier.sol";
 /// in for a wallet contract.
 contract GitHubIdentityVerifierTest is Test {
     GitHubIdentityVerifier internal adapter;
+    Notary internal notaryContract;
 
     uint256 internal constant NOTARY_PK = 0xA001;
     uint256 internal constant BACKEND_PK = 0xB002;
@@ -31,6 +34,7 @@ contract GitHubIdentityVerifierTest is Test {
     function setUp() public {
         notary = vm.addr(NOTARY_PK);
         backend = vm.addr(BACKEND_PK);
+        notaryContract = deployNotary(owner, notary);
 
         GitHubIdentityVerifier impl = new GitHubIdentityVerifier();
         adapter = GitHubIdentityVerifier(
@@ -39,7 +43,9 @@ contract GitHubIdentityVerifierTest is Test {
                     address(impl),
                     // GitHub's id is a bare number ending at a comma, where X
                     // quotes its own — the difference this shape is here to say.
-                    abi.encodeCall(GitHubIdentityVerifier.initialize, (owner, notary, backend, _githubShape()))
+                    abi.encodeCall(
+                        GitHubIdentityVerifier.initialize, (owner, address(notaryContract), backend, _githubShape())
+                    )
                 )
             )
         );
@@ -190,11 +196,12 @@ contract GitHubIdentityVerifierTest is Test {
     // ─── What it refuses ────────────────────────────────────────────
 
     /// Two independent signatures have to agree. This platform is the strict
-    /// one: forging a name needs both keys.
+    /// one: forging a name needs both keys. The notary key now rotates on the
+    /// shared Notary contract, and this consumer follows it.
     function test_aNotarySignatureFromAnotherKeyIsRefused() public {
         bytes memory payload = _payload(_defaults());
         vm.prank(owner);
-        adapter.setSigners(makeAddr("someone else"), backend);
+        notaryContract.setNotary(makeAddr("someone else"));
 
         vm.expectRevert(GitHubIdentityVerifier.NotaryVerificationFailed.selector);
         adapter.verify(payload);
@@ -205,7 +212,7 @@ contract GitHubIdentityVerifierTest is Test {
     function test_aBackendSignatureFromAnotherKeyIsRefused() public {
         bytes memory payload = _payload(_defaults());
         vm.prank(owner);
-        adapter.setSigners(notary, makeAddr("other backend"));
+        adapter.setBackend(makeAddr("other backend"));
 
         vm.expectRevert(GitHubIdentityVerifier.InvalidBackendSignature.selector);
         adapter.verify(payload);
@@ -277,12 +284,20 @@ contract GitHubIdentityVerifierTest is Test {
         adapter.setResponseShape(GitHubIdentityVerifier.ResponseShape(ENDPOINT, "", ID_PREFIX, ID_SUFFIX));
     }
 
-    /// Rotating one key and not the other would accept a proof half of which
-    /// nobody current signed.
+    /// A zero backend key would accept a proof half of which nobody signed.
     function test_aZeroSignerIsRefused() public {
         vm.prank(owner);
         vm.expectRevert(GitHubIdentityVerifier.ZeroSigner.selector);
-        adapter.setSigners(address(0), backend);
+        adapter.setBackend(address(0));
+    }
+
+    /// The adapter reads the notary through the shared Notary contract.
+    function test_theNotaryIsReadThroughTheNotaryContract() public {
+        assertEq(address(adapter.notaryContract()), address(notaryContract));
+        assertEq(adapter.notary(), notary);
+        vm.prank(owner);
+        notaryContract.setNotary(makeAddr("rotated"));
+        assertEq(adapter.notary(), makeAddr("rotated"));
     }
 
     function test_aStaleProofIsRefused() public {

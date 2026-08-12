@@ -8,6 +8,8 @@ import {WalletFactory} from "../../WalletFactory.sol";
 import {WebWallet} from "../../WebWallet.sol";
 import {XZkVerifier, IHonkVerifier} from "../XZkVerifier.sol";
 import {IZkSessionVerifier} from "../IZkSessionVerifier.sol";
+import {Notary} from "../../../notary/Notary.sol";
+import {deployNotary} from "../../../notary/test/DeployNotary.sol";
 
 /// Mock honk verifier — always returns the configured value. Lets us
 /// exercise XZkVerifier wiring without a real Honk proof.
@@ -40,6 +42,7 @@ contract XZkVerifierBindingsTest is Test {
 
     uint256 constant NOTARY_PK = 0xA001;
     address NOTARY;
+    Notary notaryContract;
     address constant OWNER = address(0xA11CE);
     string constant PLATFORM = "api.x.com";
     string constant ENDPOINT = "/2/users/me";
@@ -48,6 +51,7 @@ contract XZkVerifierBindingsTest is Test {
 
     function setUp() public {
         NOTARY = vm.addr(NOTARY_PK);
+        notaryContract = deployNotary(OWNER, NOTARY);
 
         WebWallet walletImpl = new WebWallet();
         WalletFactory fImpl = new WalletFactory();
@@ -64,7 +68,9 @@ contract XZkVerifierBindingsTest is Test {
             address(
                 new ERC1967Proxy(
                     address(rImpl),
-                    abi.encodeCall(Registry.initialize, (NOTARY, address(0xBE), address(factory), OWNER))
+                    abi.encodeCall(
+                        Registry.initialize, (address(notaryContract), address(0xBE), address(factory), OWNER)
+                    )
                 )
             )
         );
@@ -80,7 +86,15 @@ contract XZkVerifierBindingsTest is Test {
                     address(xImpl),
                     abi.encodeCall(
                         XZkVerifier.initialize,
-                        (OWNER, NOTARY, IHonkVerifier(address(honk)), X_CLIENT_ID, ENDPOINT, HANDLE_PREFIX, PLATFORM)
+                        (
+                            OWNER,
+                            address(notaryContract),
+                            IHonkVerifier(address(honk)),
+                            X_CLIENT_ID,
+                            ENDPOINT,
+                            HANDLE_PREFIX,
+                            PLATFORM
+                        )
                     )
                 )
             )

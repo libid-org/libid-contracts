@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {HonkVerifier} from "../../oidc/Verifier.sol";
 import {GoogleOidcVerifier} from "../../oidc/GoogleOidcVerifier.sol";
+import {deployNotary} from "../../../notary/test/DeployNotary.sol";
 
 /// End-to-end: TLSN-notarized JWKS rotation, then a Honk-proof JWT
 /// validation through the GoogleOidcVerifier.
@@ -54,7 +55,10 @@ contract GoogleOidcVerifierFlowTest is Test {
         verifier = GoogleOidcVerifier(
             address(
                 new ERC1967Proxy(
-                    address(impl), abi.encodeCall(GoogleOidcVerifier.initialize, (honk, OWNER, NOTARY, CLIENT_ID))
+                    address(impl),
+                    abi.encodeCall(
+                        GoogleOidcVerifier.initialize, (honk, OWNER, address(deployNotary(OWNER, NOTARY)), CLIENT_ID)
+                    )
                 )
             )
         );
@@ -266,7 +270,10 @@ contract GoogleOidcVerifierFlowTest is Test {
         return GoogleOidcVerifier(
             address(
                 new ERC1967Proxy(
-                    address(impl), abi.encodeCall(GoogleOidcVerifier.initialize, (honk, OWNER, notary_, CLIENT_ID))
+                    address(impl),
+                    abi.encodeCall(
+                        GoogleOidcVerifier.initialize, (honk, OWNER, address(deployNotary(OWNER, notary_)), CLIENT_ID)
+                    )
                 )
             )
         );

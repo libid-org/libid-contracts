@@ -44,7 +44,8 @@ import {
 } from "../bank/BankErrors.sol";
 import {LibString} from "../bank/libraries/LibString.sol";
 import {BankDiamondDeployer} from "../script/BankDiamondDeployer.sol";
-import {NotaryRegistry} from "../../login/NotaryRegistry.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 import {WalletFactory} from "../../login/WalletFactory.sol";
 import {WebWallet} from "../../login/WebWallet.sol";
 import {MockERC20} from "../MockERC20.sol";
@@ -105,20 +106,19 @@ contract IntegrationTest is Test, BankDiamondDeployer {
             )
         );
 
+        Notary notaryReg = deployNotary(owner, NOTARY);
+
         registry = Registry(
             address(
                 new ERC1967Proxy(
-                    address(rImpl), abi.encodeCall(Registry.initialize, (NOTARY, BACKEND, address(factory), owner))
+                    address(rImpl),
+                    abi.encodeCall(Registry.initialize, (address(notaryReg), BACKEND, address(factory), owner))
                 )
             )
         );
 
         factory.setRegistry(address(registry));
 
-        NotaryRegistry nrImpl = new NotaryRegistry();
-        NotaryRegistry notaryReg = NotaryRegistry(
-            address(new ERC1967Proxy(address(nrImpl), abi.encodeCall(NotaryRegistry.initialize, (owner, NOTARY))))
-        );
         // Bank is now an EIP-2535 diamond (BankInit seeds the same templates/prefixes).
         bank = IBank(deployBankDiamond(owner, address(notaryReg), BACKEND, address(registry)));
 

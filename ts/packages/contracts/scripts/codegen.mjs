@@ -26,7 +26,7 @@ const abisDir = join(packageDir, 'src', 'abis')
 // answers to, and the facet ABIs exist for anyone wiring cuts by hand.
 const contracts = [
   { file: 'Registry.sol', name: 'Registry', exportName: 'registryAbi' },
-  { file: 'NotaryRegistry.sol', name: 'NotaryRegistry', exportName: 'notaryRegistryAbi' },
+  { file: 'Notary.sol', name: 'Notary', exportName: 'notaryAbi' },
   { file: 'WalletFactory.sol', name: 'WalletFactory', exportName: 'walletFactoryAbi' },
   { file: 'WebWallet.sol', name: 'WebWallet', exportName: 'webWalletAbi' },
   { file: 'IBank.sol', name: 'IBank', exportName: 'bankAbi' },

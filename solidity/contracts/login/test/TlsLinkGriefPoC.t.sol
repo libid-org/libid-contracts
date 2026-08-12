@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Registry} from "../Registry.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 import {WalletFactory} from "../WalletFactory.sol";
 import {WebWallet} from "../WebWallet.sol";
 
@@ -54,7 +55,10 @@ contract TlsLinkGriefPoC is Test {
             address(
                 new ERC1967Proxy(
                     address(rImpl),
-                    abi.encodeCall(Registry.initialize, (notaryAddr, backendAddr, address(factory), address(this)))
+                    abi.encodeCall(
+                        Registry.initialize,
+                        (address(deployNotary(address(this), notaryAddr)), backendAddr, address(factory), address(this))
+                    )
                 )
             )
         );

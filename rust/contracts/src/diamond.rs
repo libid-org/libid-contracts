@@ -58,13 +58,14 @@ pub mod facet_cut_action {
 /// `BankInit.init(notary, backend, registry)` to seed the trusted-party
 /// pointers, ERC-165 ids, templates, and prefixes.
 ///
-/// `notary` is the NotaryRegistry address; `backend` and `registry` come from
-/// the login deploy. All three must be nonzero or the init reverts.
+/// `notary` is the shared Notary contract's proxy address; `backend` and
+/// `registry` come from the login deploy. All three must be nonzero or the
+/// init reverts.
 pub async fn deploy_bank_diamond<P: Provider>(
     provider: &P,
     artifacts: &Artifacts,
     owner: Address,
-    notary_registry: Address,
+    notary_contract: Address,
     backend: Address,
     registry: Address,
 ) -> Result<Address> {
@@ -99,7 +100,7 @@ pub async fn deploy_bank_diamond<P: Provider>(
             .await?;
 
     let init_calldata: Bytes = BankInit::initCall {
-        notary: notary_registry,
+        notary: notary_contract,
         backend,
         registry,
     }

@@ -22,7 +22,7 @@ import {BankInit} from "../bank/BankInit.sol";
 abstract contract BankDiamondDeployer is CommonBase {
     /// @notice Deploy every facet, cut them into a new diamond, and run `BankInit`.
     /// @param owner    Diamond owner (ERC-173).
-    /// @param notary   NotaryRegistry contract (verifies notary signatures).
+    /// @param notary   The shared Notary contract (verifies notary attestations).
     /// @param backend  Backend signer address.
     /// @param registry Registry contract (identity resolution).
     function deployBankDiamond(address owner, address notary, address backend, address registry)

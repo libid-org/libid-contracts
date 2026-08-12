@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
+import {INotary} from "../notary/INotary.sol";
 
 interface IHonkVerifier {
     function verify(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
@@ -135,8 +135,9 @@ contract XIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgradeable,
     /// format is spoken.
     bytes32 internal constant OP_ME_ATTEST = keccak256("XZkVerifier.me.v1");
 
-    /// @notice The notary key whose attestations this accepts.
-    address public notary;
+    /// @notice The Notary contract whose attestations this accepts. The digests
+    ///         still bind `address(this)`; only the check itself is shared.
+    INotary public notaryContract;
 
     /// @notice The circuit's on-chain verifier.
     IHonkVerifier public honkVerifier;
@@ -189,20 +190,30 @@ contract XIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgradeable,
         _disableInitializers();
     }
 
-    function initialize(address owner_, address notary_, address honkVerifier_, ResponseShape calldata shape_)
+    /// @param notaryContract_ The shared Notary contract (INotary). Notary key
+    ///        rotation happens THERE; this contract holds only the pointer.
+    function initialize(address owner_, address notaryContract_, address honkVerifier_, ResponseShape calldata shape_)
         external
         initializer
     {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
-        _setTrust(notary_, honkVerifier_);
+        if (notaryContract_ == address(0)) revert ZeroSigner();
+        notaryContract = INotary(notaryContract_);
+        _setHonkVerifier(honkVerifier_);
         _setResponseShape(shape_);
     }
 
-    /// @notice Rotate the notary key or replace the circuit verifier.
-    function setTrust(address notary_, address honkVerifier_) external onlyOwner {
-        _setTrust(notary_, honkVerifier_);
+    /// @notice Replace the circuit verifier. The notary side rotates on the
+    ///         Notary contract, for every consumer at once.
+    function setHonkVerifier(address honkVerifier_) external onlyOwner {
+        _setHonkVerifier(honkVerifier_);
+    }
+
+    /// @notice The current notary signer, read through the Notary contract.
+    function notary() external view returns (address) {
+        return notaryContract.notary();
     }
 
     /// @notice Follow a change in X's response.
@@ -210,9 +221,8 @@ contract XIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgradeable,
         _setResponseShape(shape_);
     }
 
-    function _setTrust(address notary_, address honkVerifier_) private {
-        if (notary_ == address(0) || honkVerifier_ == address(0)) revert ZeroSigner();
-        notary = notary_;
+    function _setHonkVerifier(address honkVerifier_) private {
+        if (honkVerifier_ == address(0)) revert ZeroSigner();
         honkVerifier = IHonkVerifier(honkVerifier_);
     }
 
@@ -472,8 +482,7 @@ contract XIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgradeable,
                 uint256(att.timestamp)
             )
         );
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        if (ECDSA.recover(ethHash, att.notarySignature) != notary) revert NotaryVerificationFailed();
+        if (!notaryContract.verify(digest, att.notarySignature)) revert NotaryVerificationFailed();
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}

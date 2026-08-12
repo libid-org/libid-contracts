@@ -14,10 +14,7 @@ import {
     MerklePathTooLong,
     DomainHashMismatch
 } from "../BankErrors.sol";
-
-interface INotaryRegistry {
-    function isNotary(address account) external view returns (bool);
-}
+import {INotary} from "../../../notary/INotary.sol";
 
 /// @title LibProof — TLS-notary proof + backend-signature verification.
 /// @dev Merkle-leaf membership (recv / domain / endpoint), the notary attestation
@@ -53,9 +50,10 @@ library LibProof {
         verifyLeaf(path, root, abi.encodePacked("endpoint:", endpoint));
     }
 
-    /// @dev Verify the notary attestation signature over the TLS-session digest.
+    /// @dev Verify the notary attestation over the TLS-session digest.
     ///      Binds `block.chainid` + the current `registry` so a proof can't cross
-    ///      chains or survive a Registry migration. Signer must be a known notary.
+    ///      chains or survive a Registry migration. The shared Notary contract
+    ///      (`cs.notary`) owns the attestation check itself.
     function verifyNotarySignature(NotaryTlsProof calldata proof) internal view {
         LibCoreStorage.CoreStorage storage cs = LibCoreStorage.store();
         bytes32 digest = keccak256(
@@ -70,8 +68,7 @@ library LibProof {
                 proof.timestamp
             )
         );
-        address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(digest), proof.notarySig);
-        if (!INotaryRegistry(cs.notary).isNotary(signer)) revert InvalidNotarySignature();
+        if (!INotary(cs.notary).verify(digest, proof.notarySig)) revert InvalidNotarySignature();
     }
 
     /// @dev Verify the backend authorization signature. `receiverUserId` is signed

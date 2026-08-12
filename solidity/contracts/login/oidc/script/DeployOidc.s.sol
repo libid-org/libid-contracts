@@ -19,10 +19,13 @@ interface IRegistrySetOidc {
  * Usage:
  *   FOUNDRY_PROFILE=oidc forge script contracts/login/oidc/script/DeployOidc.s.sol \
  *       --rpc-url $RPC_URL --broadcast \
- *       --sig "run(address,address)" $REGISTRY $OIDC_NOTARY_ADDR
+ *       --sig "run(address,address)" $REGISTRY $NOTARY_CONTRACT_ADDR
+ *
+ * The second argument is the shared Notary CONTRACT (the proxy every
+ * consumer points at), not a raw signer key.
  */
 contract DeployOidc is Script {
-    function run(address registry, address oidcNotary) external {
+    function run(address registry, address notaryContract) external {
         // DEPLOYER_KEY may arrive with or without a `0x` prefix (dev-start
         // stores it stripped in .env; --private-key injects 64 bare hex
         // chars). Normalize before parsing so `vm.parseUint` accepts it.
@@ -41,7 +44,7 @@ contract DeployOidc is Script {
         require(bytes(gmailClientId).length > 0, "set GMAIL_CLIENT_ID (the accepted Google OAuth client id)");
         console.log("Deployer:   ", deployer);
         console.log("Registry:   ", registry);
-        console.log("OIDC notary:", oidcNotary);
+        console.log("Notary contract:", notaryContract);
         console.log("Gmail client id:", gmailClientId);
 
         vm.startBroadcast(deployerKey);
@@ -52,7 +55,7 @@ contract DeployOidc is Script {
         ERC1967Proxy googleProxy = new ERC1967Proxy(
             address(googleImpl),
             abi.encodeCall(
-                GoogleOidcVerifier.initialize, (IVerifier(address(honk)), deployer, oidcNotary, gmailClientId)
+                GoogleOidcVerifier.initialize, (IVerifier(address(honk)), deployer, notaryContract, gmailClientId)
             )
         );
         GoogleOidcVerifier google = GoogleOidcVerifier(address(googleProxy));

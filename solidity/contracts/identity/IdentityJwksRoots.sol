@@ -5,6 +5,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
+import {INotary} from "../notary/INotary.sol";
+
 /// @title IdentityJwksRoots - which Google signing keys the naming system
 ///        trusts, and until when.
 ///
@@ -21,9 +23,10 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 ///      **The rotation proof names no contract.** Its digest is over the TLS
 ///      session alone — domain, randoms, transcript root, timestamp — so the
 ///      same notarized reading of Google's JWKS is valid anywhere the notary is
-///      trusted. That is why this contract can duplicate the wallet product's
-///      trust list without sharing anything with it: the state is its own, the
-///      notary allowlist is its own, and no address ties the two together.
+///      trusted. That cross-deployment replay is a feature, and the digest
+///      shape must not grow a chain id or a verifying-contract binding. Which
+///      key is trusted lives in the shared Notary contract; the digest itself
+///      stays this contract's own.
 ///
 ///      **Why a contract of its own.** A verifier should verify. Rotation is a
 ///      separate concern with a separate caller set and a separate key list,
@@ -32,14 +35,12 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     bytes32 private constant EXPECTED_DOMAIN_HASH = keccak256(bytes("www.googleapis.com"));
     bytes private constant EXPECTED_DOMAIN = bytes("www.googleapis.com");
     bytes private constant EXPECTED_ENDPOINT = bytes("/oauth2/v3/certs");
-    bytes32 private constant SECP256K1_HALF_N = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
-
     uint256 public constant FRESHNESS_WINDOW = 1 hours;
     uint256 public constant CLOCK_SKEW_GRACE = 5 minutes;
     uint256 public constant DEFAULT_MODULUS_TTL = 30 days;
 
-    /// @notice Keys allowed to sign a rotation.
-    mapping(address => bool) public isNotary;
+    /// @notice The Notary contract a rotation's attestation is checked with.
+    INotary public notaryContract;
 
     /// @notice kid keccak -> the limb-keccak the circuit produces.
     mapping(bytes32 => bytes32) public modulusOfKid;
@@ -61,8 +62,6 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     uint256[50] private __gap;
 
     event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-    event NotaryAdded(address indexed notary);
-    event NotaryRemoved(address indexed notary);
     event ModulusUntrusted(bytes32 indexed modulusHash);
 
     error ZeroAddress();
@@ -77,8 +76,6 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     error InvalidModulusLength();
     error InvalidB64Char();
     error InvalidB64Length();
-    error MalleableSignature();
-    error InvalidSignatureV();
 
     /// One notarized reading of Google's JWKS endpoint.
     struct NotarizedJwksProof {
@@ -106,24 +103,19 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         _disableInitializers();
     }
 
-    function initialize(address owner_, address initialNotary) external initializer {
+    /// @param notaryContract_ The shared Notary contract (INotary). Notary key
+    ///        rotation happens THERE; this contract holds only the pointer.
+    function initialize(address owner_, address notaryContract_) external initializer {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
-        if (initialNotary == address(0)) revert ZeroAddress();
-        isNotary[initialNotary] = true;
-        emit NotaryAdded(initialNotary);
+        if (notaryContract_ == address(0)) revert ZeroAddress();
+        notaryContract = INotary(notaryContract_);
     }
 
-    function addNotary(address n) external onlyOwner {
-        if (n == address(0)) revert ZeroAddress();
-        isNotary[n] = true;
-        emit NotaryAdded(n);
-    }
-
-    function removeNotary(address n) external onlyOwner {
-        isNotary[n] = false;
-        emit NotaryRemoved(n);
+    /// @notice The current notary signer, read through the Notary contract.
+    function notary() external view returns (address) {
+        return notaryContract.notary();
     }
 
     /// @notice Stop trusting a key before anything replaces it.
@@ -149,9 +141,11 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     }
 
     function _rotate(NotarizedJwksProof memory p, JwkClaim[] memory claims) internal {
+        // The digest deliberately names no chain and no contract (see the
+        // contract comment); the Notary contract checks the attestation over
+        // it — EIP-191 + recover + signer compare today.
         bytes32 digest = _notaryDigest(p);
-        address signer = _ecrecoverEth191(digest, p.notarySignature);
-        if (!isNotary[signer]) revert UnknownNotary();
+        if (!notaryContract.verify(digest, p.notarySignature)) revert UnknownNotary();
 
         if (p.timestamp > block.timestamp + CLOCK_SKEW_GRACE) revert FutureProof();
         if (block.timestamp > p.timestamp + FRESHNESS_WINDOW) revert StaleProof();
@@ -232,23 +226,6 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
 
     function _hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
         return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
-    }
-
-    function _ecrecoverEth191(bytes32 digest, bytes memory sig) internal pure returns (address) {
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        require(sig.length == 65, "sig: bad length");
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
-        }
-        if (v < 27) v += 27;
-        if (v != 27 && v != 28) revert InvalidSignatureV();
-        if (uint256(s) > uint256(SECP256K1_HALF_N)) revert MalleableSignature();
-        return ecrecover(ethHash, v, r, s);
     }
 
     function _containsKeyValue(bytes memory haystack, bytes memory key, bytes memory value)

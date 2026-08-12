@@ -1,6 +1,5 @@
 //! Bindings for the login stack: `Registry`, `WebWallet`, `WalletFactory`,
-//! `NotaryRegistry`, and the X ZK verifier. Mirrors
-//! `solidity/contracts/login/`.
+//! and the X ZK verifier. Mirrors `solidity/contracts/login/`.
 
 /// Bindings for `login/Registry.sol`.
 ///
@@ -79,6 +78,9 @@ mod registry_inner {
             function getPlatform(string calldata domain) external view returns (string memory endpoint, string memory handlePrefix);
             function zkVerifierOf(string calldata domain) external view returns (address);
             function oidcVerifierOf(string calldata platform) external view returns (address);
+            /// The shared Notary contract the Registry routes attestation checks through.
+            function notaryContract() external view returns (address);
+            /// The current notary signer, read through the Notary contract.
             function notary() external view returns (address);
             function backend() external view returns (address);
             function walletFactory() external view returns (address);
@@ -102,7 +104,7 @@ mod registry_admin_inner {
     sol! {
         #[sol(rpc)]
         interface IRegistryAdmin {
-            function initialize(address _notary, address _backend, address _walletFactory, address _owner) external;
+            function initialize(address _notaryContract, address _backend, address _walletFactory, address _owner) external;
             function setPlatform(
                 string calldata domain,
                 string calldata endpoint,
@@ -113,7 +115,6 @@ mod registry_admin_inner {
             function removePlatform(string calldata domain) external;
             function setZkVerifier(string calldata domain, address verifier) external;
             function setOidcVerifier(string calldata platform, address verifier) external;
-            function setNotary(address _notary) external;
             function setBackend(address _backend) external;
             function pause() external;
             function unpause() external;
@@ -172,7 +173,7 @@ mod x_zk_verifier_inner {
 
             function initialize(
                 address _owner,
-                address _notary,
+                address _notaryContract,
                 address _honkVerifier,
                 bytes calldata _xClientId,
                 string calldata _endpoint,
@@ -192,6 +193,7 @@ mod x_zk_verifier_inner {
                 );
 
             function platformName() external view returns (string memory);
+            function notaryContract() external view returns (address);
             function notary() external view returns (address);
 
             /// client_id allowlist. An EMPTY allowlist denies every client_id;
@@ -279,26 +281,6 @@ mod factory_inner {
 }
 
 pub use factory_inner::WalletFactory;
-
-/// Bindings for `login/NotaryRegistry.sol`.
-#[allow(clippy::too_many_arguments, unused_attributes)]
-mod notary_registry_inner {
-    use alloy::sol;
-
-    sol! {
-        #[sol(rpc)]
-        interface NotaryRegistry {
-            function initialize(address owner_, address initialNotary) external;
-            function addNotary(address notary) external;
-            function removeNotary(address notary) external;
-
-            event NotaryAdded(address indexed notary);
-            event NotaryRemoved(address indexed notary);
-        }
-    }
-}
-
-pub use notary_registry_inner::NotaryRegistry;
 
 /// Minimal ERC-20 surface (transfer event scanning + balances).
 #[allow(clippy::too_many_arguments, unused_attributes)]

@@ -136,7 +136,7 @@ export const xZkVerifierAbi = [
         "internalType": "address"
       },
       {
-        "name": "_notary",
+        "name": "_notaryContract",
         "type": "address",
         "internalType": "address"
       },
@@ -197,6 +197,19 @@ export const xZkVerifierAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notaryContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract INotary"
       }
     ],
     "stateMutability": "view"
@@ -320,19 +333,6 @@ export const xZkVerifierAbi = [
         "name": "_v",
         "type": "address",
         "internalType": "contract IHonkVerifier"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNotary",
-    "inputs": [
-      {
-        "name": "_v",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -577,33 +577,6 @@ export const xZkVerifierAbi = [
     "type": "error",
     "name": "ClientIdNotAllowed",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignature",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureS",
-    "inputs": [
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",

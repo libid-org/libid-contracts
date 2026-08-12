@@ -10,7 +10,7 @@ library LibCoreStorage {
     bytes32 internal constant STORAGE_POSITION = keccak256("dyaka.bank.core.v1");
 
     struct CoreStorage {
-        address notary; // NotaryRegistry proxy
+        address notary; // the shared Notary contract (INotary proxy)
         address backend; // backend signer
         address registry; // Registry (resolves WebWallet by id)
         mapping(bytes32 => bool) usedTransfers; // replay protection by uid

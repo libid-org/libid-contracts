@@ -32,31 +32,29 @@ mod inner {
             }
 
             /// `_verifier` is the deployed Honk circuit verifier
-            /// (`Verifier.sol:HonkVerifier`); `initialAud` seeds the audience
-            /// allowlist — without it the verifier is fail-closed and rejects
-            /// every proof.
+            /// (`Verifier.sol:HonkVerifier`); `notaryContract_` is the shared
+            /// Notary contract; `initialAud` seeds the audience allowlist —
+            /// without it the verifier is fail-closed and rejects every proof.
             function initialize(
                 address _verifier,
                 address _owner,
-                address initialNotary,
+                address notaryContract_,
                 string calldata initialAud
             ) external;
 
             function setExpectedAudience(string calldata clientId) external;
             function setExpectedAudienceHash(bytes32 audienceHash) external;
             function setRegistry(address r) external;
-            function addNotary(address n) external;
-            function removeNotary(address n) external;
 
             function modulusOfKid(bytes32 kidHash) external view returns (bytes32);
             function expiresAtKid(bytes32 kidHash) external view returns (uint256);
             function platformName() external view returns (string memory);
+            function notaryContract() external view returns (address);
+            function notary() external view returns (address);
 
             function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
 
             event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-            event NotaryAdded(address indexed notary);
-            event NotaryRemoved(address indexed notary);
             event AudienceConfigured(bytes32 indexed audienceHash, string clientId);
         }
     }

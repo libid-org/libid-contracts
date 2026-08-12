@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {BankDiamondDeployer} from "../script/BankDiamondDeployer.sol";
 import {ResourceInfo, SenderInfo, BackendSig, NotaryTlsProof} from "../bank/BankTypes.sol";
@@ -12,16 +13,17 @@ import {IRegistry} from "../../login/IRegistry.sol";
 import {MockERC20} from "../MockERC20.sol";
 import {InvalidMerkleProof, NoTemplateMatch} from "../bank/BankErrors.sol";
 
-/// @dev Minimal notary registry — the signer address is the one known notary.
-contract MockNotaryRegistry {
-    address public immutable signer;
+/// @dev Minimal Notary — accepts an EIP-191 signature from the one signer.
+contract MockNotary {
+    address public immutable notary;
 
     constructor(address signer_) {
-        signer = signer_;
+        notary = signer_;
     }
 
-    function isNotary(address a) external view returns (bool) {
-        return a == signer;
+    function verify(bytes32 digest, bytes calldata proof) external view returns (bool) {
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
+        return ECDSA.recover(ethHash, proof) == notary;
     }
 }
 
@@ -61,7 +63,7 @@ contract MockRegistry is IRegistry {
 /// @title BankDiamondHonorTest — end-to-end honor flow on the assembled diamond.
 /// @dev Validates the ported TransferFacet orchestration (LibProof + LibTemplate +
 ///      LibEscrow) with real notary/backend signatures + Merkle proofs, using mock
-///      Registry/NotaryRegistry so the identity layer needs no proof harness. Proof
+///      Registry/Notary so the identity layer needs no proof harness. Proof
 ///      math mirrors Integration.t.sol's `_buildBankProofWithId`.
 contract BankDiamondHonorTest is Test, BankDiamondDeployer {
     uint256 constant NOTARY_KEY = 0xA11CE;
@@ -74,7 +76,7 @@ contract BankDiamondHonorTest is Test, BankDiamondDeployer {
     MockERC20 token;
 
     function setUp() public {
-        MockNotaryRegistry notaryReg = new MockNotaryRegistry(vm.addr(NOTARY_KEY));
+        MockNotary notaryReg = new MockNotary(vm.addr(NOTARY_KEY));
         registry = new MockRegistry();
         diamond = deployBankDiamond(address(this), address(notaryReg), vm.addr(BACKEND_KEY), address(registry));
 

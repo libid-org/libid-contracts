@@ -12,6 +12,7 @@ import {WalletFactory} from "./WalletFactory.sol";
 import {WebWallet} from "./WebWallet.sol";
 import {IZkSessionVerifier} from "./zk/IZkSessionVerifier.sol";
 import {IOidcVerifier} from "./oidc/IOidcVerifier.sol";
+import {INotary} from "../notary/INotary.sol";
 
 /// @title Registry — session registration and identity linking with 2-of-2 proof verification.
 contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, PausableUpgradeable, IRegistry {
@@ -46,7 +47,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
 
     /// @custom:storage-location erc7201:dyaka.storage.Registry
     struct RegistryStorage {
-        address notary; // NotaryRegistry signer
+        INotary notaryContract; // the shared Notary contract (verifies notary attestations)
         address backend; // backend signer
         WalletFactory walletFactory;
         /// Replay protection: sessionAddress to already used (flat, globally unique).
@@ -86,8 +87,15 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
 
     // ─── Storage reads (the ABI the public variables gave) ─────────
 
+    /// @notice The Notary contract this Registry routes attestation checks through.
+    function notaryContract() external view returns (address) {
+        return address(_s().notaryContract);
+    }
+
+    /// @notice The current notary signer, read through the Notary contract.
+    ///         Kept so observers keep the read they had when the key was local.
     function notary() external view returns (address) {
-        return _s().notary;
+        return _s().notaryContract.notary();
     }
 
     function backend() external view returns (address) {
@@ -190,6 +198,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
 
     error InvalidMerkleProof();
     error SessionKeyAlreadyUsed();
+    error InvalidNotarySignature();
     error InvalidBackendSignature();
     error StaleProof();
     error FutureProof();
@@ -215,7 +224,9 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
         _disableInitializers();
     }
 
-    function initialize(address _notary, address _backend, address _walletFactory, address _owner)
+    /// @param _notaryContract The shared Notary contract (INotary) every
+    ///        attestation check routes through.
+    function initialize(address _notaryContract, address _backend, address _walletFactory, address _owner)
         external
         initializer
     {
@@ -223,10 +234,10 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
         __Pausable_init();
-        require(_notary != address(0), "zero _s().notary");
+        require(_notaryContract != address(0), "zero notary contract");
         require(_backend != address(0), "zero _s().backend");
         require(_walletFactory != address(0), "zero factory");
-        _s().notary = _notary;
+        _s().notaryContract = INotary(_notaryContract);
         _s().backend = _backend;
         _s().walletFactory = WalletFactory(_walletFactory);
     }
@@ -244,11 +255,6 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
     }
 
     // ─── Admin ─────────────────────────────────────────────────────
-
-    function setNotary(address _notary) external onlyOwner {
-        require(_notary != address(0), "zero _s().notary");
-        _s().notary = _notary;
-    }
 
     function setBackend(address _backend) external onlyOwner {
         require(_backend != address(0), "zero _s().backend");
@@ -293,7 +299,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
     // ─── Session registration ──────────────────────────────────────
 
     /// @notice Register a session address for a social identity. The session
-    ///         key is `proof.userAddress` (_s().notary + _s().backend signed). No
+    ///         key is `proof.userAddress` (notary + backend signed). No
     ///         loose `sessionAddr` parameter -- a previous version of this
     ///         function let a mempool front-runner substitute the session
     ///         key without invalidating the signatures.
@@ -304,7 +310,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
         string calldata userId,
         string calldata endpoint
     ) external whenNotPaused {
-        // Session key is proof.userAddress (_s().notary + _s().backend signed); no loose
+        // Session key is proof.userAddress (notary + backend signed); no loose
         // sessionAddr param (anti front-run). New identity → walletAddress must
         // be the zero sentinel so the factory deploys the wallet.
         if (proof.walletAddress != address(0)) revert WrongWalletAddr();
@@ -318,7 +324,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
 
     /// @notice Register a session via the platform's configured
     ///         `IZkSessionVerifier`. The verifier owns all platform-
-    ///         specific logic (circuit, _s().notary, attestation shape); the
+    ///         specific logic (circuit, notary, attestation shape); the
     ///         Registry only enforces dispatch + global session-key and
     ///         nullifier replay protection, then deploys the wallet and
     ///         registers the session.
@@ -668,8 +674,10 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
     // ─── Internal: signature verification ──────────────────────────
 
     function _verifyNotarySignature(FullTlsProof calldata proof) internal view {
-        // Domain-separated by (chainId, this contract). The _s().notary mirror
-        // is `crypto::compute_notary_digest` in `crates/dyaka-auth`.
+        // Domain-separated by (chainId, this contract). The notary mirror
+        // is `crypto::compute_notary_digest` in `crates/dyaka-auth`. The
+        // Notary contract owns the attestation check itself (EIP-191 +
+        // recover + signer compare today).
         bytes32 proofDigest = keccak256(
             abi.encode(
                 block.chainid,
@@ -682,10 +690,7 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
                 proof.timestamp
             )
         );
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", proofDigest));
-        // OZ ECDSA.recover rejects low-s malleability + zero-address recoveries.
-        address signer = ECDSA.recover(ethHash, proof.notarySignature);
-        require(signer == _s().notary, "invalid _s().notary sig");
+        if (!_s().notaryContract.verify(proofDigest, proof.notarySignature)) revert InvalidNotarySignature();
     }
 
     function _verifyBackendSignature(FullTlsProof calldata proof) internal view {

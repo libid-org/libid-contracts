@@ -21,7 +21,8 @@ import {
     NativeSentWithErc20,
     InsufficientAllowance
 } from "../bank/BankErrors.sol";
-import {NotaryRegistry} from "../../login/NotaryRegistry.sol";
+import {Notary} from "../../notary/Notary.sol";
+import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -224,14 +225,7 @@ contract BankEdgeCases is EdgeBase {
         mockRegistryContract.setResolve("tiktok", "alice", address(aliceWallet));
 
         {
-            NotaryRegistry nrImpl = new NotaryRegistry();
-            NotaryRegistry notaryReg = NotaryRegistry(
-                address(
-                    new ERC1967Proxy(
-                        address(nrImpl), abi.encodeCall(NotaryRegistry.initialize, (address(this), notaryAddr))
-                    )
-                )
-            );
+            Notary notaryReg = deployNotary(address(this), notaryAddr);
             bank = IBank(deployBankDiamond(address(this), address(notaryReg), backendAddr, mockRegistry));
         }
         bank.registerToken("USDC", address(usdc));
@@ -352,14 +346,7 @@ contract BankEdgeCases is EdgeBase {
         MockRegistryForEdge freshRegistry = new MockRegistryForEdge();
         IBank freshBank;
         {
-            NotaryRegistry nrImpl2 = new NotaryRegistry();
-            NotaryRegistry notaryReg2 = NotaryRegistry(
-                address(
-                    new ERC1967Proxy(
-                        address(nrImpl2), abi.encodeCall(NotaryRegistry.initialize, (address(this), notaryAddr))
-                    )
-                )
-            );
+            Notary notaryReg2 = deployNotary(address(this), notaryAddr);
             freshBank =
                 IBank(deployBankDiamond(address(this), address(notaryReg2), backendAddr, address(freshRegistry)));
         }
