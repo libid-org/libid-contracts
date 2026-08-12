@@ -98,20 +98,39 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      differently depending on which version last wrote. That is a split
     ///      namespace wearing the costume of a config option.
     ///
-    ///      **The account-id namespace is the other half of that agreement,
-    ///      and this contract cannot enforce it.** `bind` keys on
-    ///      `idNode(platformId, claim.userId)` whatever the version, so every
-    ///      verifier the owner installs for a platform MUST report `userId` in
-    ///      the same namespace the platform's other versions do. If a later
-    ///      version reported, say, an OIDC `sub` where the first reported X's
-    ///      numeric account id, then two different accounts would collide on
-    ///      one id node and the newer observation would take it — and, before
-    ///      any attack, the same human's binding would stop superseding its own
-    ///      earlier one, which is the whole point of the id mapping.
+    ///      **The account id follows from what a version is.** A version is
+    ///      another way to prove the SAME account — a notarized session, an
+    ///      OIDC token — not another account space. The account did not change,
+    ///      so its id did not change, and `bind` keys every version on the same
+    ///      `idNode(platformId, claim.userId)`.
     ///
-    ///      A string carries no provenance, so nothing on chain can check this.
-    ///      It sits with "do not install a dishonest verifier" on the owner's
-    ///      side of the trust boundary, and `setVerifier` states it again.
+    ///      Read that as a test, not as a rule to remember: a proof format that
+    ///      reports a different id is not proving the same account, so it is
+    ///      not a version of this platform. It is a second platform, and it
+    ///      wants its own `platformId` and its own keyspace.
+    ///
+    ///      **The id reaches the key verbatim.** A handle passes through
+    ///      `rules` on the way in; an account id does not, and must not — any
+    ///      normalization risks folding two accounts into one, which is worse
+    ///      than the drift it would fix. So a verifier has to report the id
+    ///      exactly as the provider issues it, down to the byte: a stray quote,
+    ///      a prefix or a space writes a different node.
+    ///
+    ///      The trap is not exotic. A provider often has two immutable ids for
+    ///      one account — GitHub's REST `id` (`20213174`) and its GraphQL
+    ///      `node_id` (`MDQ6VXNlcjIwMjEzMTc0`) — and a verifier built on the
+    ///      other API picks up the other one without anybody making a mistake.
+    ///
+    ///      The usual cost is not a stolen name; those two never collide. It is
+    ///      that one person now owns two id nodes: neither binding supersedes
+    ///      the other, a rename through one leaves the handle held under the
+    ///      other resolving, and `resolveId` answers differently depending on
+    ///      which id the caller happens to hold.
+    ///
+    ///      A string carries no provenance, so nothing on chain can catch this.
+    ///      It is settled where a verifier is reviewed, next to "does it lie
+    ///      about the account" — not in configuration, which sees an address
+    ///      and nothing else.
     ///
     /// @param rules         How this platform's handles normalize.
     /// @param latestVersion The version plain `bind` uses. Zero means the
@@ -366,10 +385,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      is the callers who name no version, not the verifier itself. Do not
     ///      install a verifier here that must not be used yet.
     ///
-    ///      **The verifier MUST report `userId` in the namespace this
-    ///      platform's other versions use.** See `Platform` — a version that
-    ///      changes the id namespace collides two accounts on one node, and
-    ///      nothing on chain can catch it.
+    ///      **The verifier proves the same accounts this platform's other
+    ///      versions do, and reports the same ids for them.** A format that
+    ///      reports different ids is proving different accounts, which makes it
+    ///      a second platform rather than a version of this one — see
+    ///      `Platform`. Nothing on chain can catch the mistake.
     ///
     ///      Re-registering an existing version replaces its verifier, which is
     ///      the repair path for a verifier found to be wrong.
