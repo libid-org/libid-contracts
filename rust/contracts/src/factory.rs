@@ -77,7 +77,7 @@ pub const CREATE2_DEPLOYER_INSTALL_TX: &str = "0xf8a58085174876e800830186a08080b
 /// PLACEHOLDER until the owner substitutes the protocol-admin KMS address.
 /// Keep in sync with `solidity/contracts/factory/FactoryGenesis.sol`.
 pub const FACTORY_GENESIS_ADMIN: Address =
-    address!("1111111111111111111111111111111111111111");
+    address!("5bb76B0f81F028de363150602cC6d0Ca929E3C31");
 
 /// The 16-byte CREATE3 proxy init code (`Create3.PROXY_INITCODE`). Constant
 /// forever — its hash feeds every predicted address.

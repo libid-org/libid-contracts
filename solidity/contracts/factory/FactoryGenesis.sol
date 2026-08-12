@@ -22,4 +22,4 @@ pragma solidity ^0.8.20;
 //
 // Keep in sync with `FACTORY_GENESIS_ADMIN` in `rust/contracts/src/factory.rs`.
 // ─────────────────────────────────────────────────────────────────────────
-address constant FACTORY_GENESIS_ADMIN = 0x1111111111111111111111111111111111111111;
+address constant FACTORY_GENESIS_ADMIN = 0x5bb76B0f81F028de363150602cC6d0Ca929E3C31;
