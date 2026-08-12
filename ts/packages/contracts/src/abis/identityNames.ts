@@ -111,7 +111,7 @@ export const identityNamesAbi = [
     "name": "byHandle",
     "inputs": [
       {
-        "name": "",
+        "name": "handleNode",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -140,7 +140,7 @@ export const identityNamesAbi = [
     "name": "byId",
     "inputs": [
       {
-        "name": "",
+        "name": "idNode",
         "type": "bytes32",
         "internalType": "bytes32"
       }

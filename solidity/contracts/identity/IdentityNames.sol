@@ -71,6 +71,13 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      proofs of one handle are ordered by when the platform said it, not
     ///      by when somebody got around to submitting.
     ///
+    ///      It is that moment on the scale every version of the platform
+    ///      shares: what the verifier reported, less that version's future
+    ///      allowance. The nodes are shared by all versions, so raw values
+    ///      would compare two clocks and the looser one would win — see
+    ///      `_onSharedScale`. Recover what the verifier stated by adding back
+    ///      the allowance of `version`.
+    ///
     ///      `version` is what makes retiring an old proof format possible. The
     ///      owner may only stop accepting a version once nobody depends on it,
     ///      and this is the on-chain record of who still does. It rides in the
@@ -90,6 +97,21 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      one handle on two nodes, and `resolveHandle` would answer
     ///      differently depending on which version last wrote. That is a split
     ///      namespace wearing the costume of a config option.
+    ///
+    ///      **The account-id namespace is the other half of that agreement,
+    ///      and this contract cannot enforce it.** `bind` keys on
+    ///      `idNode(platformId, claim.userId)` whatever the version, so every
+    ///      verifier the owner installs for a platform MUST report `userId` in
+    ///      the same namespace the platform's other versions do. If a later
+    ///      version reported, say, an OIDC `sub` where the first reported X's
+    ///      numeric account id, then two different accounts would collide on
+    ///      one id node and the newer observation would take it — and, before
+    ///      any attack, the same human's binding would stop superseding its own
+    ///      earlier one, which is the whole point of the id mapping.
+    ///
+    ///      A string carries no provenance, so nothing on chain can check this.
+    ///      It sits with "do not install a dishonest verifier" on the owner's
+    ///      side of the trust boundary, and `setVerifier` states it again.
     ///
     /// @param rules         How this platform's handles normalize.
     /// @param latestVersion The version plain `bind` uses. Zero means the
@@ -124,40 +146,81 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     // ─── State ──────────────────────────────────────────────────────
 
-    /// @notice idNode -> the wallet that proved that account id.
-    mapping(bytes32 => Binding) public byId;
+    /// @custom:storage-location erc7201:libid.storage.IdentityNames
+    struct IdentityNamesStorage {
+        /// idNode -> the wallet that proved that account id.
+        mapping(bytes32 => Binding) byId;
+        /// handleNode -> the wallet that last proved that handle.
+        mapping(bytes32 => Binding) byHandle;
+        /// wallet -> platformId -> the handle it published, if it chose to.
+        ///
+        /// A node cannot be turned back into a string, so the reverse direction
+        /// needs the string itself. Publishing is optional: the event carries
+        /// the plaintext either way, so an indexer never needs this, and only a
+        /// contract that must display a name does.
+        mapping(address => mapping(bytes32 => string)) published;
+        /// platformId -> its keyspace: handle rules and current version.
+        mapping(bytes32 => Platform) platforms;
+        /// idNode -> the handle node that account last proved, and back.
+        ///
+        /// An account holds one handle at a time. When it proves a new one the
+        /// old one has to stop resolving, or a payment meant for whoever holds
+        /// that handle now would keep going to the wallet that renamed away
+        /// from it. The reverse map answers "is this node still the one this
+        /// account wrote", so a second account that took the handle in the
+        /// meantime keeps it.
+        mapping(bytes32 => bytes32) handleOfId;
+        mapping(bytes32 => bytes32) idOfHandle;
+        /// platformId -> version -> the verifier that reads that format.
+        ///
+        /// Retiring a version is `delete` on one entry here. The keyspace and
+        /// every name already bound under it are untouched: a name does not
+        /// belong to the proof that established it.
+        mapping(bytes32 => mapping(uint32 => VerifierSlot)) verifiers;
+    }
 
-    /// @notice handleNode -> the wallet that last proved that handle.
-    mapping(bytes32 => Binding) public byHandle;
+    // keccak256(abi.encode(uint256(keccak256("libid.storage.IdentityNames")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant IDENTITY_NAMES_STORAGE =
+        0x064503501234cc9c6e116cf4a84c07475158dabb6a3dcee437a89227e23bf200;
 
-    /// @notice wallet -> platformId -> the handle it published, if it chose to.
+    /// @dev All state of this contract sits under one namespaced root, the way
+    ///      `Registry` does. Three things follow.
     ///
-    /// @dev A node cannot be turned back into a string, so the reverse
-    ///      direction needs the string itself. Publishing is optional: the
-    ///      event carries the plaintext either way, so an indexer never needs
-    ///      this, and only a contract that must display a name does.
-    mapping(address => mapping(bytes32 => string)) private _published;
-
-    /// @notice platformId -> its keyspace: handle rules and current version.
-    mapping(bytes32 => Platform) private _platforms;
-
-    /// @notice platformId -> version -> the verifier that reads that format.
+    ///      It cannot collide with the ERC-7201 namespaces of the OpenZeppelin
+    ///      upgradeable bases, so this contract owns its slots outright and
+    ///      needs no reserved gap.
     ///
-    /// @dev Retiring a version is `delete` on one entry here. The keyspace and
-    ///      every name already bound under it are untouched: a name does not
-    ///      belong to the proof that established it.
-    mapping(bytes32 => mapping(uint32 => VerifierSlot)) private _verifiers;
-
-    /// @notice idNode -> the handle node that account last proved, and back.
+    ///      A field may be APPENDED on upgrade without slot arithmetic. Do not
+    ///      reorder or remove one: both would make an upgraded proxy read every
+    ///      stored value out of the wrong bytes, and a struct read from the
+    ///      wrong bytes does not revert — it answers.
     ///
-    /// @dev An account holds one handle at a time. When it proves a new one the
-    ///      old one has to stop resolving, or a payment meant for whoever holds
-    ///      that handle now would keep going to the wallet that renamed away
-    ///      from it. The reverse map answers "is this node still the one this
-    ///      account wrote", so a second account that took the handle in the
-    ///      meantime keeps it.
-    mapping(bytes32 => bytes32) private _handleOfId;
-    mapping(bytes32 => bytes32) private _idOfHandle;
+    ///      And moving here from sequential slots abandons the old ones, so a
+    ///      proxy upgraded onto this without re-running `setPlatform` reads a
+    ///      root that has never been written: every platform comes back
+    ///      unconfigured and every resolver reverts `UnknownPlatform`. Loud and
+    ///      uniform, rather than one platform silently answering with rules
+    ///      parsed out of an address.
+    function _s() private pure returns (IdentityNamesStorage storage $) {
+        assembly {
+            $.slot := IDENTITY_NAMES_STORAGE
+        }
+    }
+
+    // ─── Storage reads (the ABI the public variables gave) ─────────
+
+    /// @notice The wallet that proved this account id, when it proved it, and
+    ///         under which proof version.
+    function byId(bytes32 idNode) external view returns (address owner, uint64 observedAt, uint32 version) {
+        Binding storage b = _s().byId[idNode];
+        return (b.owner, b.observedAt, b.version);
+    }
+
+    /// @notice The same for a handle node.
+    function byHandle(bytes32 handleNode) external view returns (address owner, uint64 observedAt, uint32 version) {
+        Binding storage b = _s().byHandle[handleNode];
+        return (b.owner, b.observedAt, b.version);
+    }
 
     // ─── Events ─────────────────────────────────────────────────────
 
@@ -228,13 +291,13 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     error NoObservationTime();
     /// The proof names no account id. A binding is anchored on the id.
     error NoUserId();
-    /// A platform needs a verifier. The zero address would remove one.
+    /// A version needs a real verifier. Removing one is `retireVerifier`.
     error NoVerifier();
-    /// The allowance for future observations is larger than any platform needs.
+    /// The allowance for future observations is larger than any version needs.
     error AllowanceTooLarge(uint64 allowance, uint64 max);
     /// A newer proof already wrote one of these nodes.
     error StaleProof(uint64 observedAt, uint64 known);
-    /// The proof claims an observation further ahead than the platform allows.
+    /// The proof claims an observation further ahead than its version allows.
     error ObservedInTheFuture(uint64 observedAt, uint64 limit);
 
     // ─── Setup ──────────────────────────────────────────────────────
@@ -250,14 +313,14 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         __UUPSUpgradeable_init();
     }
 
-    /// @notice The largest allowance a platform may carry.
+    /// @notice The largest allowance a version may carry.
     ///
-    /// @dev Two jobs. It keeps the allowance meaningful — the platforms that
+    /// @dev Two jobs. It keeps the allowance meaningful — the versions that
     ///      need one report an expiry about an hour ahead, so a day is already
     ///      generous and anything past it is a typo. And it keeps
     ///      `_requireNotAhead` from reverting on its own arithmetic: that sum
     ///      is checked, so an allowance near `type(uint64).max` would panic
-    ///      every `bind` for the platform instead of widening its window.
+    ///      every `bind` through that version instead of widening its window.
     uint64 public constant MAX_FUTURE_OBSERVATION = 1 days;
 
     /// @notice The version a platform's first verifier is registered under.
@@ -280,7 +343,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      than a platform whose versions have all been retired: that one
     ///      still resolves what it holds and merely accepts nothing new.
     function setPlatform(bytes32 platformId, HandleNormalizer.Rules calldata rules) external onlyOwner {
-        Platform storage platform = _platforms[platformId];
+        Platform storage platform = _s().platforms[platformId];
         platform.rules = rules;
         platform.configured = true;
         emit PlatformConfigured(platformId);
@@ -290,11 +353,23 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///
     /// @dev This is how a new proof format arrives. Registering it does NOT
     ///      redirect anybody: `bind` keeps using `latestVersion` until the
-    ///      owner moves it, so a version can be deployed, exercised against the
-    ///      real chain, and only then made the default. The exception is the
-    ///      first version a platform gets, where there is nothing to protect
-    ///      and requiring two calls would only invite a half-configured
+    ///      owner moves it, so existing clients carry on unchanged while the
+    ///      new format is exercised by callers that name it. The exception is
+    ///      the first version a platform gets, where there is nothing to
+    ///      protect and requiring two calls would only invite a half-configured
     ///      platform.
+    ///
+    ///      **Installed means live for anyone who asks for it by version.**
+    ///      There is no staging state: `bindAtVersion` accepts any version with
+    ///      a verifier, which is what makes it possible to exercise a new
+    ///      format against the real chain at all. What `latestVersion` protects
+    ///      is the callers who name no version, not the verifier itself. Do not
+    ///      install a verifier here that must not be used yet.
+    ///
+    ///      **The verifier MUST report `userId` in the namespace this
+    ///      platform's other versions use.** See `Platform` — a version that
+    ///      changes the id namespace collides two accounts on one node, and
+    ///      nothing on chain can catch it.
     ///
     ///      Re-registering an existing version replaces its verifier, which is
     ///      the repair path for a verifier found to be wrong.
@@ -307,10 +382,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         if (maxFutureObservation > MAX_FUTURE_OBSERVATION) {
             revert AllowanceTooLarge(maxFutureObservation, MAX_FUTURE_OBSERVATION);
         }
-        Platform storage platform = _platforms[platformId];
+        Platform storage platform = _s().platforms[platformId];
         if (!platform.configured) revert UnknownPlatform(platformId);
 
-        _verifiers[platformId][version] = VerifierSlot({verifier: verifier, maxFutureObservation: maxFutureObservation});
+        _s().verifiers[platformId][version] =
+            VerifierSlot({verifier: verifier, maxFutureObservation: maxFutureObservation});
         emit VerifierConfigured(platformId, version, address(verifier), maxFutureObservation);
 
         if (platform.latestVersion == 0) {
@@ -325,11 +401,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      — this only decides which one a caller that names no version gets.
     function setLatestVersion(bytes32 platformId, uint32 version) external onlyOwner {
         if (version == 0) revert ZeroVersion();
-        if (!_platforms[platformId].configured) revert UnknownPlatform(platformId);
-        if (address(_verifiers[platformId][version].verifier) == address(0)) {
+        if (!_s().platforms[platformId].configured) revert UnknownPlatform(platformId);
+        if (address(_s().verifiers[platformId][version].verifier) == address(0)) {
             revert UnknownVersion(platformId, version);
         }
-        _platforms[platformId].latestVersion = version;
+        _s().platforms[platformId].latestVersion = version;
         emit LatestVersionChanged(platformId, version);
     }
 
@@ -347,24 +423,24 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      calling this: every `IdentityBound` carries the version, and
     ///      `byId`/`byHandle` record it per binding.
     function retireVerifier(bytes32 platformId, uint32 version) external onlyOwner {
-        if (address(_verifiers[platformId][version].verifier) == address(0)) {
+        if (address(_s().verifiers[platformId][version].verifier) == address(0)) {
             revert UnknownVersion(platformId, version);
         }
-        if (_platforms[platformId].latestVersion == version) {
+        if (_s().platforms[platformId].latestVersion == version) {
             revert VersionInUseAsLatest(platformId, version);
         }
-        delete _verifiers[platformId][version];
+        delete _s().verifiers[platformId][version];
         emit VerifierRetired(platformId, version);
     }
 
     /// @notice The verifier for one version of a platform, or the zero address.
     function verifierOf(bytes32 platformId, uint32 version) external view returns (IIdentityVerifier) {
-        return _verifiers[platformId][version].verifier;
+        return _s().verifiers[platformId][version].verifier;
     }
 
     /// @notice The version plain `bind` uses, or zero if the platform has none.
     function latestVersionOf(bytes32 platformId) external view returns (uint32) {
-        return _platforms[platformId].latestVersion;
+        return _s().platforms[platformId].latestVersion;
     }
 
     // ─── Binding ────────────────────────────────────────────────────
@@ -377,7 +453,10 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///                    read the reverse direction on chain. The event
     ///                    carries the plaintext either way.
     function bind(bytes32 platformId, bytes calldata proof, bool publishName) external {
-        _bind(platformId, _platforms[platformId].latestVersion, proof, publishName);
+        // Zero means "whichever version this platform defaults to". `_bind`
+        // resolves it from the record it has to load anyway, so the default
+        // path — the one every unpinned client takes — reads the platform once.
+        _bind(platformId, 0, proof, publishName);
     }
 
     /// @notice Prove an identity with a named proof version.
@@ -395,14 +474,18 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///
     /// @param version Which proof format `proof` is written in.
     function bindAtVersion(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) external {
+        // Zero is `bind`'s private shorthand for the default, and letting it
+        // through here would make "name a version" and "name none" the same
+        // call with different spellings.
+        if (version == 0) revert ZeroVersion();
         _bind(platformId, version, proof, publishName);
     }
 
     function _bind(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) private {
-        Platform memory platform = _platforms[platformId];
-        if (!platform.configured) revert UnknownPlatform(platformId);
+        Platform memory platform = _requireUsable(platformId);
+        if (version == 0) version = platform.latestVersion;
 
-        VerifierSlot memory slot = _verifiers[platformId][version];
+        VerifierSlot memory slot = _s().verifiers[platformId][version];
         if (address(slot.verifier) == address(0)) revert UnknownVersion(platformId, version);
 
         IdentityClaim memory claim = slot.verifier.verify(proof);
@@ -419,6 +502,24 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         if (bytes(claim.userId).length == 0) revert NoUserId();
         _requireNotAhead(claim.observedAt, slot.maxFutureObservation);
 
+        // Put the observation on the scale every version of this platform
+        // shares, BEFORE it is compared with or written to a node.
+        //
+        // Versions read different clocks: a notary states wall-clock time,
+        // while an OIDC claim carries the token's `exp` and runs about an hour
+        // ahead. The nodes are shared by every version, so comparing the raw
+        // values compares two clocks — and the looser one wins every time. A
+        // user who bound through the OIDC version could not re-prove through
+        // the notary version until the hour it borrowed had passed, because
+        // their honest wall-clock observation read as stale against a watermark
+        // dated in the future.
+        //
+        // The allowance already states how far ahead a version's clock reads,
+        // so subtracting it recovers the moment the observation describes.
+        // Ordering inside one version is untouched: every claim shifts by the
+        // same amount.
+        uint64 observedAt = _onSharedScale(claim.observedAt, slot.maxFutureObservation);
+
         // Normalize here rather than trusting the verifier or the caller. The
         // key has to come from the same transform every reader uses.
         string memory handle = HandleNormalizer.normalize(claim.handle, platform.rules);
@@ -432,28 +533,28 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         //
         // Checking the handle node too is the load-bearing half: after somebody
         // else proves this handle, an older proof of it must not take it back.
-        _requireNewer(claim.observedAt, byId[idKey].observedAt);
-        _requireNewer(claim.observedAt, byHandle[handleKey].observedAt);
+        _requireNewer(observedAt, _s().byId[idKey].observedAt);
+        _requireNewer(observedAt, _s().byHandle[handleKey].observedAt);
 
-        byId[idKey] = Binding({owner: msg.sender, observedAt: claim.observedAt, version: version});
-        byHandle[handleKey] = Binding({owner: msg.sender, observedAt: claim.observedAt, version: version});
+        _s().byId[idKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
+        _s().byHandle[handleKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
 
         _retirePreviousHandle(platformId, idKey, handleKey);
-        _handleOfId[idKey] = handleKey;
-        _idOfHandle[handleKey] = idKey;
+        _s().handleOfId[idKey] = handleKey;
+        _s().idOfHandle[handleKey] = idKey;
 
         // Publishing follows the wallet's own name, rather than the flag's
         // default. A caller that re-proves after a rename must not keep
         // displaying the handle it no longer holds, and `publishName: false`
         // must not silently withdraw the display either — so an existing
         // publication is refreshed, and only `unpublish` removes one.
-        bool published = publishName || bytes(_published[msg.sender][platformId]).length != 0;
+        bool published = publishName || bytes(_s().published[msg.sender][platformId]).length != 0;
         if (published) {
-            _published[msg.sender][platformId] = handle;
+            _s().published[msg.sender][platformId] = handle;
         }
 
         emit IdentityBound(
-            msg.sender, idKey, handleKey, platformId, claim.userId, handle, claim.observedAt, published, version
+            msg.sender, idKey, handleKey, platformId, claim.userId, handle, observedAt, published, version
         );
     }
 
@@ -476,11 +577,17 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      proof older than the one just retired take it — the exact ordering
     ///      `_requireNewer` exists to enforce.
     function _retirePreviousHandle(bytes32 platformId, bytes32 idKey, bytes32 handleKey) private {
-        bytes32 previous = _handleOfId[idKey];
+        bytes32 previous = _s().handleOfId[idKey];
         if (previous == bytes32(0) || previous == handleKey) return;
-        if (_idOfHandle[previous] != idKey) return;
+        if (_s().idOfHandle[previous] != idKey) return;
 
-        byHandle[previous].owner = address(0);
+        // The version goes with the owner. `retireVerifier` tells an operator
+        // to answer "is anybody still on this format" from these records, and a
+        // node nobody holds is not anybody — leaving the version set would
+        // report a dependency that cannot exist and postpone the retirement
+        // indefinitely.
+        _s().byHandle[previous].owner = address(0);
+        _s().byHandle[previous].version = 0;
         emit HandleRetired(platformId, previous, msg.sender);
     }
 
@@ -498,8 +605,32 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      carried the plaintext is already public and always will be. Read
     ///      this as "stop displaying it here", not as erasure.
     function unpublish(bytes32 platformId) external {
-        delete _published[msg.sender][platformId];
+        delete _s().published[msg.sender][platformId];
         emit NameUnpublished(msg.sender, platformId);
+    }
+
+    /// @dev Recover the moment an observation describes, from a clock that
+    ///      may run ahead of it.
+    ///
+    ///      Saturates at zero rather than reverting. Reaching it needs a
+    ///      provider timestamp below one day, which no live chain will see, and
+    ///      a zero cannot beat any watermark — so the degenerate case fails
+    ///      closed instead of wrapping into a huge one.
+    function _onSharedScale(uint64 observedAt, uint64 allowance) private pure returns (uint64) {
+        return observedAt > allowance ? observedAt - allowance : 0;
+    }
+
+    /// @dev A platform answers once it has both halves: a keyspace and at
+    ///      least one verifier. `configured` alone is not enough — between
+    ///      `setPlatform` and `setVerifier` a platform owns a keyspace and can
+    ///      verify nothing, and answering `address(0)` there would tell a
+    ///      caller "nobody holds this name" about a platform that is not wired
+    ///      yet. `latestVersion` only ever leaves zero when a verifier lands,
+    ///      and `retireVerifier` refuses to take the last one away, so it stays
+    ///      the honest test for the whole life of the platform.
+    function _requireUsable(bytes32 platformId) private view returns (Platform memory platform) {
+        platform = _s().platforms[platformId];
+        if (!platform.configured || platform.latestVersion == 0) revert UnknownPlatform(platformId);
     }
 
     function _requireNewer(uint64 observedAt, uint64 known) private pure {
@@ -515,12 +646,17 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      name bound by somebody else, so it must not be possible to take
     ///      that remedy away.
     ///
-    ///      The allowance is per platform because the platforms report on
-    ///      different scales. A notary states wall-clock time, so its proofs
-    ///      are never ahead. Google's circuit exposes no `iat`, so an OIDC
-    ///      claim carries the token's `exp` — roughly an hour ahead of
-    ///      issuance. One number for both would either reject every Google
-    ///      binding or hand X a griefing window it never needed.
+    ///      The allowance belongs to the VERSION because that is where the
+    ///      clock differs. A notary states wall-clock time, so its proofs are
+    ///      never ahead. An OIDC circuit exposes no `iat`, so the claim carries
+    ///      the token's `exp` — roughly an hour ahead of issuance. One number
+    ///      for both would either reject every OIDC binding or hand the notary
+    ///      version a griefing window it never needed, and the two can now be
+    ///      versions of ONE platform rather than two platforms.
+    ///
+    ///      What is checked here is the raw value the verifier reported. What
+    ///      is stored and compared is that value less this allowance — see
+    ///      `_onSharedScale`.
     function _requireNotAhead(uint64 observedAt, uint64 allowance) private view {
         uint64 limit = uint64(block.timestamp) + allowance;
         if (observedAt > limit) revert ObservedInTheFuture(observedAt, limit);
@@ -535,8 +671,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      owns this" to a question that was never asked — the platform is not
     ///      wired — and a caller cannot tell the two apart from a zero.
     function resolveId(bytes32 platformId, string calldata userId) external view returns (address) {
-        if (!_platforms[platformId].configured) revert UnknownPlatform(platformId);
-        return byId[IdentityNodes.idNode(platformId, userId)].owner;
+        _requireUsable(platformId);
+        return _s().byId[IdentityNodes.idNode(platformId, userId)].owner;
     }
 
     /// @notice The wallet that last proved this handle, or the zero address.
@@ -551,10 +687,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      apart from `UnknownPlatform`. An unwired platform still reverts,
     ///      because that question was never asked.
     function resolveHandle(bytes32 platformId, string calldata handle) external view returns (address) {
-        Platform memory platform = _platforms[platformId];
-        if (!platform.configured) revert UnknownPlatform(platformId);
+        Platform memory platform = _requireUsable(platformId);
         (bool ok, bytes32 handleKey) = _handleKey(platformId, handle, platform.rules);
-        return ok ? byHandle[handleKey].owner : address(0);
+        return ok ? _s().byHandle[handleKey].owner : address(0);
     }
 
     /// @dev The node a handle keys to under the platform's current rules, or
@@ -573,7 +708,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @dev May name a handle that now belongs to somebody else. Use
     ///      `primaryOf` unless you are doing the forward check yourself.
     function reverseOf(address wallet, bytes32 platformId) external view returns (string memory) {
-        return _published[wallet][platformId];
+        return _s().published[wallet][platformId];
     }
 
     /// @notice The handle a wallet published, but only while it still resolves
@@ -590,11 +725,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      as-is would reach a node the forward resolver can no longer name,
     ///      and this would keep handing out a name `resolveHandle` refuses.
     function primaryOf(address wallet, bytes32 platformId) external view returns (string memory) {
-        string memory published = _published[wallet][platformId];
+        string memory published = _s().published[wallet][platformId];
         if (bytes(published).length == 0) return "";
-        (bool ok, bytes32 handleKey) = _handleKey(platformId, published, _platforms[platformId].rules);
+        (bool ok, bytes32 handleKey) = _handleKey(platformId, published, _s().platforms[platformId].rules);
         if (!ok) return "";
-        if (byHandle[handleKey].owner != wallet) return "";
+        if (_s().byHandle[handleKey].owner != wallet) return "";
         return published;
     }
 
@@ -616,13 +751,12 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         view
         returns (address wallet, bool idAgrees)
     {
-        Platform memory platform = _platforms[platformId];
-        if (!platform.configured) revert UnknownPlatform(platformId);
+        Platform memory platform = _requireUsable(platformId);
 
         (bool ok, bytes32 handleKey) = _handleKey(platformId, handle, platform.rules);
-        wallet = ok ? byHandle[handleKey].owner : address(0);
+        wallet = ok ? _s().byHandle[handleKey].owner : address(0);
 
-        address idOwner = byId[IdentityNodes.idNode(platformId, userId)].owner;
+        address idOwner = _s().byId[IdentityNodes.idNode(platformId, userId)].owner;
         // An unknown id does not agree either. A caller holding an id the chain
         // has never seen is exactly as uninformed as one holding a stale id.
         idAgrees = wallet != address(0) && idOwner == wallet;

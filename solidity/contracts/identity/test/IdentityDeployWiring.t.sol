@@ -69,27 +69,9 @@ contract IdentityDeployWiringTest is Test {
         address gVerifier = makeAddr("google verifier");
 
         vm.startPrank(owner);
-        names.setPlatform(HandleVectors.PLATFORM_X, HandleVectors.rulesFor(HandleVectors.PLATFORM_X));
-        names.setVerifier(
-            HandleVectors.PLATFORM_X,
-            names.INITIAL_VERSION(),
-            IIdentityVerifier(xVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X)
-        );
-        names.setPlatform(HandleVectors.PLATFORM_GITHUB, HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB));
-        names.setVerifier(
-            HandleVectors.PLATFORM_GITHUB,
-            names.INITIAL_VERSION(),
-            IIdentityVerifier(ghVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB)
-        );
-        names.setPlatform(HandleVectors.PLATFORM_GOOGLE, HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE));
-        names.setVerifier(
-            HandleVectors.PLATFORM_GOOGLE,
-            names.INITIAL_VERSION(),
-            IIdentityVerifier(gVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE)
-        );
+        _wireIdentityPlatform(HandleVectors.PLATFORM_X, xVerifier);
+        _wireIdentityPlatform(HandleVectors.PLATFORM_GITHUB, ghVerifier);
+        _wireIdentityPlatform(HandleVectors.PLATFORM_GOOGLE, gVerifier);
         vm.stopPrank();
 
         assertEq(address(names.verifierOf(HandleVectors.PLATFORM_X, names.INITIAL_VERSION())), xVerifier);
@@ -125,5 +107,17 @@ contract IdentityDeployWiringTest is Test {
     /// library call.
     function allowanceForExternally(bytes32 platformId) external pure returns (uint64) {
         return HandleVectors.futureAllowanceFor(platformId);
+    }
+
+    /// The deploy script's wiring, mirrored. Both sides call one helper so this
+    /// test cannot drift from the script it exists to prove.
+    function _wireIdentityPlatform(bytes32 platformId, address verifier) internal {
+        names.setPlatform(platformId, HandleVectors.rulesFor(platformId));
+        names.setVerifier(
+            platformId,
+            names.INITIAL_VERSION(),
+            IIdentityVerifier(verifier),
+            HandleVectors.futureAllowanceFor(platformId)
+        );
     }
 }

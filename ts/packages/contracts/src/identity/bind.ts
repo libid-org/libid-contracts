@@ -183,6 +183,17 @@ export interface Call {
 /// an indexer never needs it — say true only when something on chain must
 /// display the name. For Google the handle is an email address, which is worth
 /// a thought before publishing it.
+///
+/// **The proof version is resolved on chain, at the moment the call lands** —
+/// not when this calldata is built. The day the owner moves a platform's
+/// default, this call starts handing the proof to the new format's verifier.
+/// That is right for a client that builds its proof fresh from this package
+/// each time, because both sides move together.
+///
+/// It is wrong for a client pinned to one format: a shipped wallet that still
+/// encodes version 1 would hand version-1 bytes to a version-2 verifier, and
+/// the best case is an opaque revert. Such a client wants
+/// `bindAtVersionCall`.
 export function bindCall(names: Address, platformId: Hex, proof: Hex, publishName: boolean): Call {
   return {
     to: names,

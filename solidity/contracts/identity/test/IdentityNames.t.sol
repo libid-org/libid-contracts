@@ -743,6 +743,139 @@ contract IdentityNamesTest is Test {
         assertEq(names.resolveHandle(X, "alice"), alice);
     }
 
+    /// The nodes are shared by every version, so two versions reading
+    /// different clocks would compare two clocks — and the looser one would win
+    /// every time. A user who bound through the lenient version could not
+    /// re-prove through the strict one until the borrowed hour had passed.
+    function test_aLenientVersionCannotLockOutAStrictOne() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+
+        // v2 reads a clock an hour ahead — an OIDC token's `exp`.
+        uint64 ahead = uint64(block.timestamp) + 1 hours;
+        v2.stage("123", "alice", alice, ahead);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        // v1 states wall-clock time and is never ahead. Alice re-proves
+        // through the client she has, a minute later.
+        vm.warp(block.timestamp + 1 minutes);
+        verifier.stage("123", "alice2", alice, uint64(block.timestamp));
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+
+        assertEq(names.resolveHandle(X, "alice2"), alice, "the strict version was locked out");
+        assertEq(names.resolveHandle(X, "alice"), address(0), "and the rename took effect");
+    }
+
+    /// Ordering inside one version is untouched: every claim shifts by the same
+    /// amount, so an older token still loses to a newer one.
+    function test_orderingInsideAVersionSurvivesTheShift() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+        uint64 later = uint64(block.timestamp) + 1 hours;
+
+        v2.stage("123", "alice", alice, later);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        // A token issued earlier, so expiring earlier.
+        v2.stage("123", "alice", alice, later - 10 minutes);
+        vm.prank(alice);
+        vm.expectRevert();
+        names.bindAtVersion(X, 2, hex"", false);
+    }
+
+    /// What is stored is the observation on the shared scale, so a consumer
+    /// comparing two bindings compares like with like.
+    function test_theStoredObservationIsOnTheSharedScale() public {
+        MockIdentityVerifier v2 = _addVersion(2, 2 hours);
+        uint64 reported = uint64(block.timestamp) + 1 hours;
+
+        v2.stage("123", "alice", alice, reported);
+        vm.prank(alice);
+        names.bindAtVersion(X, 2, hex"", false);
+
+        (, uint64 stored,) = names.byId(IdentityNodes.idNode(X, "123"));
+        assertEq(stored, reported - 2 hours, "the version's allowance was not taken off");
+    }
+
+    // ─── A platform is not usable until it can verify ───────────────
+
+    /// Between `setPlatform` and `setVerifier` a platform owns a keyspace and
+    /// can verify nothing. Answering `address(0)` there would tell a caller
+    /// "nobody holds this name" about a platform that is not wired yet.
+    function test_aPlatformWithoutAVerifierDoesNotResolve() public {
+        bytes32 fresh = keccak256("dyaka.identity.platform.fresh");
+        vm.prank(owner);
+        names.setPlatform(fresh, HandleVectors.rulesFor(X));
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolveId(fresh, "123");
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolveHandle(fresh, "alice");
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.resolvePair(fresh, "alice", "123");
+    }
+
+    /// And binding says the same thing, rather than naming a version the
+    /// caller never chose.
+    function test_bindingAPlatformWithoutAVerifierNamesThePlatform() public {
+        bytes32 fresh = keccak256("dyaka.identity.platform.fresh");
+        vm.prank(owner);
+        names.setPlatform(fresh, HandleVectors.rulesFor(X));
+
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
+        names.bind(fresh, hex"", false);
+    }
+
+    /// `bindAtVersion(id, 0, …)` is not a spelling of `bind`.
+    function test_bindAtVersionRefusesTheZeroSentinel() public {
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        vm.expectRevert(IdentityNames.ZeroVersion.selector);
+        names.bindAtVersion(X, 0, hex"", false);
+    }
+
+    /// `setPlatform` writes field-wise now, so a rules change must leave the
+    /// installed verifiers and the default version exactly where they were.
+    /// Reintroducing the whole-struct assignment would unwire every platform.
+    function test_changingTheRulesLeavesTheVersionsWired() public {
+        _addVersion(2, NO_FUTURE_ALLOWANCE);
+        vm.startPrank(owner);
+        names.setLatestVersion(X, 2);
+
+        HandleNormalizer.Rules memory narrowed = HandleVectors.rulesFor(X);
+        narrowed.maxLength = 12;
+        names.setPlatform(X, narrowed);
+        vm.stopPrank();
+
+        assertEq(names.latestVersionOf(X), 2, "the default was reset");
+        assertEq(address(names.verifierOf(X, V1)), address(verifier), "v1 was unwired");
+        assertTrue(address(names.verifierOf(X, 2)) != address(0), "v2 was unwired");
+
+        // And v1 still binds, which is the thing a caller pinned to it would
+        // notice. `_bind` goes through the default, which is v2 now.
+        verifier.stage("123", "alice", alice, 100);
+        vm.prank(alice);
+        names.bindAtVersion(X, V1, hex"", false);
+        assertEq(names.resolveHandle(X, "alice"), alice);
+    }
+
+    /// A node nobody holds is not a dependency on its proof format. Leaving
+    /// the version set would report one that cannot exist and postpone the
+    /// retirement the field exists to enable.
+    function test_aRetiredHandleReportsNoVersion() public {
+        _bind(alice, "123", "alice", 100);
+        _bind(alice, "123", "alice2", 200);
+
+        (address ownerOf,, uint32 version) = names.byHandle(IdentityNodes.handleNode(X, "alice"));
+        assertEq(ownerOf, address(0), "the handle was retired");
+        assertEq(version, 0, "but it still claims a version");
+    }
+
     // ─── Version configuration ──────────────────────────────────────
 
     /// Zero is the "no verifier" sentinel — an unconfigured platform reads
