@@ -388,3 +388,134 @@ async fn rotates_and_upgrades_the_notary() {
     assert_ne!(new_impl, notary_proxy);
     assert_eq!(notary.notary().call().await.unwrap(), rotated);
 }
+
+/// (f) The deterministic factory, from truly nothing: anvil is started
+/// WITHOUT its predeployed CREATE2 deployer, so `ensure_factory` must
+/// install it via the keyless presigned transaction (funding the one-time
+/// signer first), then deploy the factory impl + proxy at their canonical
+/// addresses. Then a Notary proxy goes through the factory at its
+/// name-derived CREATE3 address.
+#[tokio::test]
+async fn bootstraps_the_deterministic_factory_and_deploys_through_it() {
+    use alloy::{
+        primitives::Bytes,
+        sol_types::{
+            SolCall,
+            SolValue,
+        },
+    };
+    use libid_contracts::{
+        bindings::factory::LibidFactory,
+        factory::{
+            ensure_factory,
+            factory_deploy,
+            predict_address,
+            predict_factory_address,
+            CREATE2_DEPLOYER,
+            FACTORY_GENESIS_ADMIN,
+        },
+    };
+
+    let provider = ProviderBuilder::new()
+        .connect_anvil_with_wallet_and_config(|anvil| {
+            anvil.arg("--disable-default-create2-deployer")
+        })
+        .expect("anvil spawns");
+    let artifacts = Artifacts::embedded();
+    let deployer0 = default_signer(&provider).await;
+
+    // Truly bare chain: no CREATE2 deployer.
+    assert!(provider
+        .get_code_at(CREATE2_DEPLOYER)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let factory = ensure_factory(&provider, &artifacts).await.unwrap();
+    assert_eq!(factory, predict_factory_address(&artifacts).unwrap());
+    assert!(!provider.get_code_at(factory).await.unwrap().is_empty());
+
+    // The instant the proxy exists it is owned by the baked genesis admin —
+    // initialization was atomic with deployment.
+    let factory_contract = LibidFactory::new(factory, &provider);
+    assert_eq!(
+        factory_contract.owner().call().await.unwrap(),
+        FACTORY_GENESIS_ADMIN
+    );
+
+    // Rerun = read-only no-op.
+    assert_eq!(
+        ensure_factory(&provider, &artifacts).await.unwrap(),
+        factory
+    );
+
+    // Hand ownership to the test signer: impersonate the genesis admin
+    // (a placeholder address nobody holds a key for) through anvil.
+    provider
+        .raw_request::<_, serde_json::Value>(
+            "anvil_setBalance".into(),
+            (FACTORY_GENESIS_ADMIN, "0xde0b6b3a7640000"),
+        )
+        .await
+        .unwrap();
+    provider
+        .raw_request::<_, serde_json::Value>(
+            "anvil_impersonateAccount".into(),
+            (FACTORY_GENESIS_ADMIN,),
+        )
+        .await
+        .unwrap();
+    let transfer = LibidFactory::transferOwnershipCall {
+        newOwner: deployer0,
+    }
+    .abi_encode();
+    provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": FACTORY_GENESIS_ADMIN,
+                "to": factory,
+                "data": Bytes::from(transfer),
+            }),),
+        )
+        .await
+        .unwrap();
+    factory_contract
+        .acceptOwnership()
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(factory_contract.owner().call().await.unwrap(), deployer0);
+
+    // A Notary PROXY through the factory: impl via plain CREATE (its address
+    // doesn't matter), proxy creation code = ERC1967Proxy ++ (impl, initData).
+    let notary_signer = Address::repeat_byte(0x11);
+    let notary_impl = deploy_contract(
+        &provider,
+        artifacts.bytecode("Notary").unwrap(),
+        "Notary (impl)",
+    )
+    .await
+    .unwrap();
+    let init_data = Notary::initializeCall {
+        owner_: deployer0,
+        notary_: notary_signer,
+    }
+    .abi_encode();
+    let mut creation_code = artifacts.bytecode("ERC1967Proxy").unwrap().to_vec();
+    creation_code
+        .extend_from_slice(&(notary_impl, Bytes::from(init_data)).abi_encode_params());
+
+    let predicted = predict_address(factory, "libid.notary");
+    let deployed =
+        factory_deploy(&provider, factory, "libid.notary", creation_code.into())
+            .await
+            .unwrap();
+    assert_eq!(deployed, predicted);
+
+    let notary = Notary::new(deployed, &provider);
+    assert_eq!(notary.notary().call().await.unwrap(), notary_signer);
+}
