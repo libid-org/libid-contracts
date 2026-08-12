@@ -190,8 +190,6 @@ mod github_verifier_inner {
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
             struct FullTlsProof {
                 bytes notarySignature;
-                // No `backendSignature`/`userAddress`: the countersignature was
-                // removed from GitHubIdentityVerifier — see its header comment.
                 address walletAddress;
                 bytes32 domainHash;
                 bytes32 clientRandom;

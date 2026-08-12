@@ -265,9 +265,8 @@ contract GitHubIdentityVerifierTest is Test {
     }
 
     /// A zero Notary contract would leave every attestation unchecked, so
-    /// initialization refuses one. This used to cover `setBackend(address(0))`
-    /// as well; the backend key is gone, and the notary pointer is now the only
-    /// signer address this contract holds.
+    /// initialization refuses one. The notary pointer is the only signer address
+    /// this contract holds.
     function test_aZeroSignerIsRefused() public {
         GitHubIdentityVerifier impl = new GitHubIdentityVerifier();
         vm.expectRevert(GitHubIdentityVerifier.ZeroSigner.selector);
@@ -278,16 +277,14 @@ contract GitHubIdentityVerifierTest is Test {
 
     /// CHARACTERIZATION OF A KNOWN GAP, not an endorsement of it.
     ///
-    /// The notary digest does not cover `walletAddress`, and the backend
-    /// countersignature that used to is gone — so a proof can be re-pointed at
-    /// any wallet and still verifies. `verify` is a view and proofs arrive as
-    /// public calldata, so in practice an attacker copies a successful claim out
-    /// of a block, swaps this field, and submits it themselves to satisfy
-    /// `IdentityNames`' `msg.sender` check.
+    /// Nothing authenticates `walletAddress`: the notary digest does not cover it,
+    /// so a proof re-pointed at any wallet still verifies. In practice an attacker
+    /// copies a successful claim out of a block, swaps this field, and submits it
+    /// themselves to satisfy `IdentityNames`' `msg.sender` check.
     ///
-    /// This test exists so the gap cannot be forgotten: when the wallet is bound
-    /// into the notarised transcript (see the contract's header comment), this
-    /// will start failing, and that failure is the signal to delete it.
+    /// This test exists so the gap cannot be forgotten: once the wallet is bound
+    /// into the notarised transcript (see the contract header), it will start
+    /// failing, and that failure is the signal to delete it.
     function test_KNOWN_GAP_aProofCanBeRedirectedToAnotherWallet() public {
         ProofArgs memory a = _defaults();
         a.walletAddress = makeAddr("attacker");

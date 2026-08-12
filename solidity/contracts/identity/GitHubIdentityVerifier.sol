@@ -30,30 +30,18 @@ import {INotary} from "../notary/INotary.sol";
 ///
 ///      **The notary is the only trust root here**, as it is for X and Google.
 ///
-///      There used to be a second one: the OAuth backend countersigned
-///      `(userAddress, walletAddress, transcriptRoot, timestamp)` and this
-///      contract checked it, which read as "forging a name needs two keys". It
-///      did not. The backend IS that signer, so a compromised backend signed
-///      whichever pairing it liked — and it holds the user's OAuth access token
-///      and runs the MPC-TLS session besides, so it could equally obtain a
-///      GENUINE transcript naming its own wallet. The second signature never
-///      constrained the party it appeared to constrain, while costing a key, an
-///      IAM grant and a rotation story.
+///      **`walletAddress` is NOT authenticated.** The notary digest does not
+///      cover it, so a proof can be re-pointed at any address and still verifies.
+///      `verify` is a view and proofs arrive as public calldata, so a successful
+///      claim can be copied out of a block, its wallet swapped, and resubmitted by
+///      the attacker to satisfy `IdentityNames`' `msg.sender` check.
 ///
-///      What it did do is stop a THIRD PARTY replaying someone else's proof.
-///      `verify` is a view and proofs arrive as public calldata, so every
-///      successful claim is readable on-chain: without the countersignature an
-///      attacker can copy one, set `walletAddress` to their own address, submit
-///      it themselves so `IdentityNames`' `msg.sender` check passes, and take
-///      the handle. **That hole is open as of this commit.** It is a protocol
-///      problem rather than a contract one, and the fix belongs in the proof:
-///      bind the wallet into the notarised transcript, which needs no new
-///      machinery because the notary already commits the request path as an
-///      `endpoint:` leaf — a request to `/user?bind=0x…` puts the wallet inside
-///      notarised data, and this contract can then check that leaf against
-///      `walletAddress` the way it already checks the handle. Moving GitHub
-///      proving into the browser, as X and Google already do, removes the
-///      backend from the trust model altogether.
+///      Closing it belongs in the proof and needs no new machinery: the notary
+///      commits the request path as an `endpoint:` leaf, so a request to
+///      `/user?bind=0x…` puts the wallet inside notarised data, and this contract
+///      can check that leaf against `walletAddress` the way it already checks the
+///      handle. Moving GitHub proving into the browser, as X and Google do, takes
+///      the OAuth backend out of the trust model entirely.
 ///
 ///      **No OAuth-app pinning, and none to drop.** The MPC proof carries no
 ///      client_id claim.
@@ -72,10 +60,6 @@ contract GitHubIdentityVerifier is IIdentityVerifier, Initializable, UUPSUpgrade
     /// One notarized TLS session.
     struct FullTlsProof {
         bytes notarySignature;
-        // No `userAddress`. It existed only to be covered by the backend
-        // countersignature; with that gone nothing read it, and a proof field
-        // nothing checks is worse than no field — it reads as though it were
-        // verified.
         address walletAddress;
         bytes32 domainHash;
         bytes32 clientRandom;

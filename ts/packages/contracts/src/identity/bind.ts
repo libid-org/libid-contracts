@@ -28,11 +28,9 @@ export interface TlsProof {
   notarySignature: Hex
   /// The address the proof is made out to. `IdentityNames` refuses a zero.
   ///
-  /// NOTE this field is NOT covered by the notary signature. It used to be
-  /// covered by a backend countersignature, which has been removed — see the
-  /// header comment on GitHubIdentityVerifier.sol. Until the wallet is bound
-  /// into the notarised transcript, a proof can be re-pointed at another
-  /// address and still verifies on-chain.
+  /// NOT authenticated: nothing in the proof covers this field, so a proof
+  /// re-pointed at another address still verifies on-chain. See the header
+  /// comment on GitHubIdentityVerifier.sol.
   walletAddress: Address
   domainHash: Hex
   clientRandom: Hex
