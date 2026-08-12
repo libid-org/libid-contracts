@@ -28,21 +28,6 @@ import {INotary} from "../notary/INotary.sol";
 ///      wallet. A duplicated pipeline costs a second attestation; a shared one
 ///      costs the independence the naming system is for.
 ///
-///      **The notary is the only trust root here**, as it is for X and Google.
-///
-///      **`walletAddress` is NOT authenticated.** The notary digest does not
-///      cover it, so a proof can be re-pointed at any address and still verifies.
-///      `verify` is a view and proofs arrive as public calldata, so a successful
-///      claim can be copied out of a block, its wallet swapped, and resubmitted by
-///      the attacker to satisfy `IdentityNames`' `msg.sender` check.
-///
-///      Closing it belongs in the proof and needs no new machinery: the notary
-///      commits the request path as an `endpoint:` leaf, so a request to
-///      `/user?bind=0x…` puts the wallet inside notarised data, and this contract
-///      can check that leaf against `walletAddress` the way it already checks the
-///      handle. Moving GitHub proving into the browser, as X and Google do, takes
-///      the OAuth backend out of the trust model entirely.
-///
 ///      **No OAuth-app pinning, and none to drop.** The MPC proof carries no
 ///      client_id claim.
 ///

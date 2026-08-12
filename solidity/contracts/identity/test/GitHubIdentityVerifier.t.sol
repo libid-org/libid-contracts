@@ -264,9 +264,6 @@ contract GitHubIdentityVerifierTest is Test {
         adapter.setResponseShape(GitHubIdentityVerifier.ResponseShape(ENDPOINT, "", ID_PREFIX, ID_SUFFIX));
     }
 
-    /// A zero Notary contract would leave every attestation unchecked, so
-    /// initialization refuses one. The notary pointer is the only signer address
-    /// this contract holds.
     function test_aZeroSignerIsRefused() public {
         GitHubIdentityVerifier impl = new GitHubIdentityVerifier();
         vm.expectRevert(GitHubIdentityVerifier.ZeroSigner.selector);
@@ -275,16 +272,6 @@ contract GitHubIdentityVerifierTest is Test {
         );
     }
 
-    /// CHARACTERIZATION OF A KNOWN GAP, not an endorsement of it.
-    ///
-    /// Nothing authenticates `walletAddress`: the notary digest does not cover it,
-    /// so a proof re-pointed at any wallet still verifies. In practice an attacker
-    /// copies a successful claim out of a block, swaps this field, and submits it
-    /// themselves to satisfy `IdentityNames`' `msg.sender` check.
-    ///
-    /// This test exists so the gap cannot be forgotten: once the wallet is bound
-    /// into the notarised transcript (see the contract header), it will start
-    /// failing, and that failure is the signal to delete it.
     function test_KNOWN_GAP_aProofCanBeRedirectedToAnotherWallet() public {
         ProofArgs memory a = _defaults();
         a.walletAddress = makeAddr("attacker");
