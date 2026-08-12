@@ -67,6 +67,8 @@ pub const COVERED: &[(&str, &str)] = &[
     ("GoogleIdentityVerifier", "GoogleIdentityVerifier"),
     ("XIdentityVerifier", "XIdentityVerifier"),
     ("IdentityJwksRoots", "IdentityJwksRoots"),
+    // factory
+    ("LibidFactory", "LibidFactory"),
 ];
 
 enum Source {

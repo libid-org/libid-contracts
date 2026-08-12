@@ -16,6 +16,10 @@
 //!   alloy [`Provider`](alloy::providers::Provider): plain deploys, constructor
 //!   args, ERC1967 proxies, library linking, UUPS upgrades, and the Bank
 //!   EIP-2535 diamond deploy/facet-replace flows.
+//! - [`factory`] — the deterministic-factory bootstrap: predict the canonical
+//!   cross-network factory address, install it (and the keyless CREATE2
+//!   deployer it hangs off) where missing, and deploy protocol proxies
+//!   through it at name-derived CREATE3 addresses.
 //!
 //! Signing is the consumer's concern: every helper takes a provider you have
 //! already wired with a wallet.
@@ -25,6 +29,7 @@ pub mod bindings;
 pub mod deploy;
 pub mod diamond;
 mod error;
+pub mod factory;
 
 pub use artifacts::Artifacts;
 pub use error::{

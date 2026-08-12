@@ -55,6 +55,8 @@ ARTIFACTS=(
     "GoogleIdentityVerifier:GoogleIdentityVerifier"
     "XIdentityVerifier:XIdentityVerifier"
     "IdentityJwksRoots:IdentityJwksRoots"
+    # factory
+    "LibidFactory:LibidFactory"
 )
 
 MODE="vendor"
