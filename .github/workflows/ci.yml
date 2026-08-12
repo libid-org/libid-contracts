@@ -609,6 +609,26 @@ jobs:
 
       # From the package directory, not `pnpm -C` — same pnpm 10 flag-mangling
       # noted in publish-check.
+      #
+      # Auth is token-first with OIDC fallback. When the org-level NPM_TOKEN
+      # secret is set (a granular token scoped to @libid with create-package
+      # rights), it authenticates the publish — that is what lets a brand-new
+      # package publish before any trusted publisher exists for it. When the
+      # secret is absent, npm falls back to OIDC trusted publishing, which
+      # needs the per-package trusted publisher (org libid-org, this repo,
+      # workflow ci.yml, environment npm-deploy). Provenance attests on both
+      # paths — it signs with the runner's OIDC identity regardless of how
+      # the registry authenticated the publish.
       - name: pnpm publish
         working-directory: ts/packages/contracts
-        run: pnpm publish --access public --no-git-checks --tag "${{ steps.dist-tag.outputs.dist-tag }}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN}" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
+            echo "Authenticating with the org npm token"
+          else
+            echo "No NPM_TOKEN secret; relying on OIDC trusted publishing"
+          fi
+          pnpm publish --access public --no-git-checks --tag "${{ steps.dist-tag.outputs.dist-tag }}"
