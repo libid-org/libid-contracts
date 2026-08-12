@@ -75,17 +75,6 @@ Publishing the release triggers CI's release jobs:
    provenance. A prerelease publishes under its first prerelease identifier
    as the dist-tag (`1.2.0-rc.1` → `rc`); a plain version under `latest`.
 
-One-time setup (repo admin):
-
-- Repo secret `CARGO_REGISTRY_TOKEN`: a crates.io API token with publish
-  rights for `libid-contracts`.
-- GitHub environment `npm-deploy` (Settings → Environments). Optionally add
-  required reviewers to make npm publishing a manually approved gate.
-- npmjs.com trusted publisher for `@libid/contracts`: package Settings →
-  Trusted Publisher → GitHub Actions, with organization `libid-org`,
-  repository `libid-contracts`, workflow filename `ci.yml`, environment
-  `npm-deploy`.
-
 ## License
 
 Dual-licensed under MIT and Apache-2.0; see `LICENSE-MIT`, `LICENSE-APACHE`
