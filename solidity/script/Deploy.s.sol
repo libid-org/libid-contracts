@@ -197,7 +197,6 @@ contract Deploy is Script, BankDiamondDeployer {
                     (
                         deployer,
                         address(notaryContract),
-                        backendAddr,
                         // GitHub's id is a bare number ending at a comma.
                         GitHubIdentityVerifier.ResponseShape("/user", "\"login\":\"", "\"id\":", ",")
                     )

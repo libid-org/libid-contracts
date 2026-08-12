@@ -26,9 +26,13 @@ import { identityNamesAbi } from '../abis/identityNames.js'
 /// One notarized TLS session, as `GitHubIdentityVerifier` takes it.
 export interface TlsProof {
   notarySignature: Hex
-  backendSignature: Hex
-  userAddress: Address
   /// The address the proof is made out to. `IdentityNames` refuses a zero.
+  ///
+  /// NOTE this field is NOT covered by the notary signature. It used to be
+  /// covered by a backend countersignature, which has been removed — see the
+  /// header comment on GitHubIdentityVerifier.sol. Until the wallet is bound
+  /// into the notarised transcript, a proof can be re-pointed at another
+  /// address and still verifies on-chain.
   walletAddress: Address
   domainHash: Hex
   clientRandom: Hex
@@ -86,8 +90,6 @@ export interface GoogleProof {
 
 const tlsProofComponents = [
   { name: 'notarySignature', type: 'bytes' },
-  { name: 'backendSignature', type: 'bytes' },
-  { name: 'userAddress', type: 'address' },
   { name: 'walletAddress', type: 'address' },
   { name: 'domainHash', type: 'bytes32' },
   { name: 'clientRandom', type: 'bytes32' },

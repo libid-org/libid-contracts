@@ -18,12 +18,9 @@ contract GitHubIdentityVerifierTest is Test {
     Notary internal notaryContract;
 
     uint256 internal constant NOTARY_PK = 0xA001;
-    uint256 internal constant BACKEND_PK = 0xB002;
     address internal notary;
-    address internal backend;
     address internal owner = makeAddr("owner");
     address internal wallet = makeAddr("wallet");
-    address internal session = makeAddr("session");
 
     string internal constant DOMAIN = "api.github.com";
     string internal constant ENDPOINT = "/user";
@@ -33,7 +30,6 @@ contract GitHubIdentityVerifierTest is Test {
 
     function setUp() public {
         notary = vm.addr(NOTARY_PK);
-        backend = vm.addr(BACKEND_PK);
         notaryContract = deployNotary(owner, notary);
 
         GitHubIdentityVerifier impl = new GitHubIdentityVerifier();
@@ -43,9 +39,7 @@ contract GitHubIdentityVerifierTest is Test {
                     address(impl),
                     // GitHub's id is a bare number ending at a comma, where X
                     // quotes its own — the difference this shape is here to say.
-                    abi.encodeCall(
-                        GitHubIdentityVerifier.initialize, (owner, address(notaryContract), backend, _githubShape())
-                    )
+                    abi.encodeCall(GitHubIdentityVerifier.initialize, (owner, address(notaryContract), _githubShape()))
                 )
             )
         );
@@ -121,7 +115,6 @@ contract GitHubIdentityVerifierTest is Test {
         bytes32 root = _hashPair(hDU, hEId);
 
         GitHubIdentityVerifier.FullTlsProof memory t;
-        t.userAddress = session;
         t.walletAddress = a.walletAddress;
         t.domainHash = keccak256(bytes(pf.domain));
         t.clientRandom = keccak256("client");
@@ -161,8 +154,6 @@ contract GitHubIdentityVerifierTest is Test {
                 )
             )
         );
-        t.backendSignature =
-            _sign(BACKEND_PK, keccak256(abi.encode(t.userAddress, t.walletAddress, t.transcriptRoot, t.timestamp)));
 
         return abi.encode(
             GitHubIdentityVerifier.GitHubProof({
@@ -204,17 +195,6 @@ contract GitHubIdentityVerifierTest is Test {
         notaryContract.setNotary(makeAddr("someone else"));
 
         vm.expectRevert(GitHubIdentityVerifier.NotaryVerificationFailed.selector);
-        adapter.verify(payload);
-    }
-
-    /// Isolated from the notary check: the notary key is left in place, so the
-    /// notary digest still verifies and only the backend key moves.
-    function test_aBackendSignatureFromAnotherKeyIsRefused() public {
-        bytes memory payload = _payload(_defaults());
-        vm.prank(owner);
-        adapter.setBackend(makeAddr("other backend"));
-
-        vm.expectRevert(GitHubIdentityVerifier.InvalidBackendSignature.selector);
         adapter.verify(payload);
     }
 
@@ -284,11 +264,35 @@ contract GitHubIdentityVerifierTest is Test {
         adapter.setResponseShape(GitHubIdentityVerifier.ResponseShape(ENDPOINT, "", ID_PREFIX, ID_SUFFIX));
     }
 
-    /// A zero backend key would accept a proof half of which nobody signed.
+    /// A zero Notary contract would leave every attestation unchecked, so
+    /// initialization refuses one. This used to cover `setBackend(address(0))`
+    /// as well; the backend key is gone, and the notary pointer is now the only
+    /// signer address this contract holds.
     function test_aZeroSignerIsRefused() public {
-        vm.prank(owner);
+        GitHubIdentityVerifier impl = new GitHubIdentityVerifier();
         vm.expectRevert(GitHubIdentityVerifier.ZeroSigner.selector);
-        adapter.setBackend(address(0));
+        new ERC1967Proxy(
+            address(impl), abi.encodeCall(GitHubIdentityVerifier.initialize, (owner, address(0), _githubShape()))
+        );
+    }
+
+    /// CHARACTERIZATION OF A KNOWN GAP, not an endorsement of it.
+    ///
+    /// The notary digest does not cover `walletAddress`, and the backend
+    /// countersignature that used to is gone — so a proof can be re-pointed at
+    /// any wallet and still verifies. `verify` is a view and proofs arrive as
+    /// public calldata, so in practice an attacker copies a successful claim out
+    /// of a block, swaps this field, and submits it themselves to satisfy
+    /// `IdentityNames`' `msg.sender` check.
+    ///
+    /// This test exists so the gap cannot be forgotten: when the wallet is bound
+    /// into the notarised transcript (see the contract's header comment), this
+    /// will start failing, and that failure is the signal to delete it.
+    function test_KNOWN_GAP_aProofCanBeRedirectedToAnotherWallet() public {
+        ProofArgs memory a = _defaults();
+        a.walletAddress = makeAddr("attacker");
+        IdentityClaim memory claim = adapter.verify(_payload(a));
+        assertEq(claim.target, makeAddr("attacker"), "re-pointed proof still verifies");
     }
 
     /// The adapter reads the notary through the shared Notary contract.
