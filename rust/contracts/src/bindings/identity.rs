@@ -24,15 +24,36 @@ mod names_inner {
             }
 
             function initialize(address owner_) external;
-            function setPlatform(
-                bytes32 platformId,
-                address verifier,
-                uint64 maxFutureObservation,
-                Rules calldata rules
-            ) external;
 
-            function verifierOf(bytes32 platformId) external view returns (address);
+            /// The keyspace half: what a handle on this platform means. It
+            /// does not vary by proof version — two versions normalizing
+            /// differently would put one handle on two nodes.
+            function setPlatform(bytes32 platformId, Rules calldata rules) external;
+
+            /// One proof format for one platform. The first version installed
+            /// becomes the platform's default; later ones do not move it, so a
+            /// format can be deployed and exercised before anybody is sent to
+            /// it.
+            function setVerifier(
+                bytes32 platformId,
+                uint32 version,
+                address verifier,
+                uint64 maxFutureObservation
+            ) external;
+            function setLatestVersion(bytes32 platformId, uint32 version) external;
+            function retireVerifier(bytes32 platformId, uint32 version) external;
+
+            function verifierOf(bytes32 platformId, uint32 version) external view returns (address);
+            function latestVersionOf(bytes32 platformId) external view returns (uint32);
+            function INITIAL_VERSION() external view returns (uint32);
+
             function bind(bytes32 platformId, bytes calldata proof, bool publishName) external;
+            function bindAtVersion(
+                bytes32 platformId,
+                uint32 version,
+                bytes calldata proof,
+                bool publishName
+            ) external;
             function unpublish(bytes32 platformId) external;
             function resolveId(bytes32 platformId, string calldata userId) external view returns (address);
             function resolveHandle(bytes32 platformId, string calldata handle) external view returns (address);
@@ -40,8 +61,30 @@ mod names_inner {
             function reverseOf(address wallet, bytes32 platformId) external view returns (string memory);
             function primaryOf(address wallet, bytes32 platformId) external view returns (string memory);
 
+            /// Carries the proof version that established the binding, which
+            /// is how an operator learns whether a format is still in use
+            /// before retiring it.
+            event IdentityBound(
+                address indexed owner,
+                bytes32 indexed idNode,
+                bytes32 indexed handleNode,
+                bytes32 platformId,
+                string userId,
+                string handle,
+                uint64 observedAt,
+                bool published,
+                uint32 version
+            );
             event HandleRetired(bytes32 indexed platformId, bytes32 indexed handleNode, address indexed owner);
-            event PlatformConfigured(bytes32 indexed platformId, address verifier);
+            event PlatformConfigured(bytes32 indexed platformId);
+            event VerifierConfigured(
+                bytes32 indexed platformId,
+                uint32 indexed version,
+                address verifier,
+                uint64 maxFutureObservation
+            );
+            event VerifierRetired(bytes32 indexed platformId, uint32 indexed version);
+            event LatestVersionChanged(bytes32 indexed platformId, uint32 indexed version);
             event NameUnpublished(address indexed owner, bytes32 indexed platformId);
         }
     }

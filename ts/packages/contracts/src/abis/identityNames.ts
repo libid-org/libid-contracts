@@ -11,6 +11,19 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "INITIAL_VERSION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_FUTURE_OBSERVATION",
     "inputs": [],
     "outputs": [
@@ -67,6 +80,34 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "bindAtVersion",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "publishName",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "byHandle",
     "inputs": [
       {
@@ -85,6 +126,11 @@ export const identityNamesAbi = [
         "name": "observedAt",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -109,6 +155,11 @@ export const identityNamesAbi = [
         "name": "observedAt",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -125,6 +176,25 @@ export const identityNamesAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "latestVersionOf",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -280,6 +350,24 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "retireVerifier",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "reverseOf",
     "inputs": [
       {
@@ -304,7 +392,7 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "setPlatform",
+    "name": "setLatestVersion",
     "inputs": [
       {
         "name": "platformId",
@@ -312,14 +400,22 @@ export const identityNamesAbi = [
         "internalType": "bytes32"
       },
       {
-        "name": "verifier",
-        "type": "address",
-        "internalType": "contract IIdentityVerifier"
-      },
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPlatform",
+    "inputs": [
       {
-        "name": "maxFutureObservation",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "rules",
@@ -352,6 +448,34 @@ export const identityNamesAbi = [
             "internalType": "bool"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVerifier",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "verifier",
+        "type": "address",
+        "internalType": "contract IIdentityVerifier"
+      },
+      {
+        "name": "maxFutureObservation",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -409,6 +533,11 @@ export const identityNamesAbi = [
         "name": "platformId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -496,6 +625,12 @@ export const identityNamesAbi = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -509,6 +644,25 @@ export const identityNamesAbi = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LatestVersionChanged",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -579,12 +733,6 @@ export const identityNamesAbi = [
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
-      },
-      {
-        "name": "verifier",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -598,6 +746,56 @@ export const identityNamesAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerifierConfigured",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "verifier",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "maxFutureObservation",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerifierRetired",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -796,5 +994,42 @@ export const identityNamesAbi = [
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownVersion",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VersionInUseAsLatest",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroVersion",
+    "inputs": []
   }
 ] as const satisfies Abi

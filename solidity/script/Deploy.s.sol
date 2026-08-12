@@ -182,11 +182,12 @@ contract Deploy is Script, BankDiamondDeployer {
                 )
             )
         );
-        names.setPlatform(
+        names.setPlatform(HandleVectors.PLATFORM_X, HandleVectors.rulesFor(HandleVectors.PLATFORM_X));
+        names.setVerifier(
             HandleVectors.PLATFORM_X,
+            names.INITIAL_VERSION(),
             IIdentityVerifier(xIdentityAddr),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_X)
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X)
         );
 
         // The naming system's own GitHub verifier. It holds its own keys and
@@ -209,11 +210,12 @@ contract Deploy is Script, BankDiamondDeployer {
                 )
             )
         );
-        names.setPlatform(
+        names.setPlatform(HandleVectors.PLATFORM_GITHUB, HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB));
+        names.setVerifier(
             HandleVectors.PLATFORM_GITHUB,
+            names.INITIAL_VERSION(),
             IIdentityVerifier(githubIdentityAddr),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB)
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB)
         );
 
         // Google needs the circuit's Honk verifier, which the OIDC script
@@ -238,11 +240,12 @@ contract Deploy is Script, BankDiamondDeployer {
                     abi.encodeCall(GoogleIdentityVerifier.initialize, (deployer, googleHonkAddr, jwksRootsAddr))
                 )
             );
-            names.setPlatform(
+            names.setPlatform(HandleVectors.PLATFORM_GOOGLE, HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE));
+            names.setVerifier(
                 HandleVectors.PLATFORM_GOOGLE,
+                names.INITIAL_VERSION(),
                 IIdentityVerifier(googleIdentityAddr),
-                HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),
-                HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE)
+                HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE)
             );
         }
 

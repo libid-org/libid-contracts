@@ -69,29 +69,32 @@ contract IdentityDeployWiringTest is Test {
         address gVerifier = makeAddr("google verifier");
 
         vm.startPrank(owner);
-        names.setPlatform(
+        names.setPlatform(HandleVectors.PLATFORM_X, HandleVectors.rulesFor(HandleVectors.PLATFORM_X));
+        names.setVerifier(
             HandleVectors.PLATFORM_X,
+            names.INITIAL_VERSION(),
             IIdentityVerifier(xVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_X)
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X)
         );
-        names.setPlatform(
+        names.setPlatform(HandleVectors.PLATFORM_GITHUB, HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB));
+        names.setVerifier(
             HandleVectors.PLATFORM_GITHUB,
+            names.INITIAL_VERSION(),
             IIdentityVerifier(ghVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_GITHUB)
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB)
         );
-        names.setPlatform(
+        names.setPlatform(HandleVectors.PLATFORM_GOOGLE, HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE));
+        names.setVerifier(
             HandleVectors.PLATFORM_GOOGLE,
+            names.INITIAL_VERSION(),
             IIdentityVerifier(gVerifier),
-            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),
-            HandleVectors.rulesFor(HandleVectors.PLATFORM_GOOGLE)
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE)
         );
         vm.stopPrank();
 
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_X)), xVerifier);
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GITHUB)), ghVerifier);
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GOOGLE)), gVerifier);
+        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_X, names.INITIAL_VERSION())), xVerifier);
+        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GITHUB, names.INITIAL_VERSION())), ghVerifier);
+        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GOOGLE, names.INITIAL_VERSION())), gVerifier);
 
         assertGt(
             HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),

@@ -194,6 +194,33 @@ export function bindCall(names: Address, platformId: Hex, proof: Hex, publishNam
   }
 }
 
+/// Bind with a named proof version.
+///
+/// A platform's proof can change shape while the account behind it does not —
+/// X gaining OIDC, say — so several formats are accepted at once while users
+/// migrate. `bindCall` uses whichever version the platform currently defaults
+/// to, which is what a client building its proof fresh each time wants.
+///
+/// Use this when the client is pinned to a format: a proof built for version 1
+/// keeps binding on the day the default moves to 2, and stops only when the
+/// owner retires version 1 outright.
+export function bindAtVersionCall(
+  names: Address,
+  platformId: Hex,
+  version: number,
+  proof: Hex,
+  publishName: boolean,
+): Call {
+  return {
+    to: names,
+    data: encodeFunctionData({
+      abi: identityNamesAbi,
+      functionName: 'bindAtVersion',
+      args: [platformId, version, proof, publishName],
+    }),
+  }
+}
+
 /// Withdraw a published handle. The binding itself stays: this stops the chain
 /// displaying the string, and needs no proof, because withdrawing what you
 /// chose to show must not depend on being able to log in again.
