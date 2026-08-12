@@ -117,7 +117,7 @@ export const xIdentityVerifierAbi = [
         "internalType": "address"
       },
       {
-        "name": "notary_",
+        "name": "notaryContract_",
         "type": "address",
         "internalType": "address"
       },
@@ -171,6 +171,19 @@ export const xIdentityVerifierAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notaryContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract INotary"
       }
     ],
     "stateMutability": "view"
@@ -236,6 +249,19 @@ export const xIdentityVerifierAbi = [
   },
   {
     "type": "function",
+    "name": "setHonkVerifier",
+    "inputs": [
+      {
+        "name": "honkVerifier_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setResponseShape",
     "inputs": [
       {
@@ -269,24 +295,6 @@ export const xIdentityVerifierAbi = [
             "internalType": "string"
           }
         ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTrust",
-    "inputs": [
-      {
-        "name": "notary_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "honkVerifier_",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -443,33 +451,6 @@ export const xIdentityVerifierAbi = [
     "type": "error",
     "name": "BearerHashMismatch",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignature",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureS",
-    "inputs": [
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",

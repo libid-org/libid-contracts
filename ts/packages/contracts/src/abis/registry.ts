@@ -243,7 +243,7 @@ export const registryAbi = [
     "name": "initialize",
     "inputs": [
       {
-        "name": "_notary",
+        "name": "_notaryContract",
         "type": "address",
         "internalType": "address"
       },
@@ -434,6 +434,19 @@ export const registryAbi = [
   {
     "type": "function",
     "name": "notary",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notaryContract",
     "inputs": [],
     "outputs": [
       {
@@ -876,19 +889,6 @@ export const registryAbi = [
     "inputs": [
       {
         "name": "_backend",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNotary",
-    "inputs": [
-      {
-        "name": "_notary",
         "type": "address",
         "internalType": "address"
       }
@@ -1390,6 +1390,11 @@ export const registryAbi = [
   {
     "type": "error",
     "name": "InvalidMerkleProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidNotarySignature",
     "inputs": []
   },
   {

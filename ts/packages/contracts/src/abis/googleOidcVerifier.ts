@@ -96,19 +96,6 @@ export const googleOidcVerifierAbi = [
   },
   {
     "type": "function",
-    "name": "addNotary",
-    "inputs": [
-      {
-        "name": "n",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "expectedAudienceHash",
     "inputs": [],
     "outputs": [
@@ -154,7 +141,7 @@ export const googleOidcVerifierAbi = [
         "internalType": "address"
       },
       {
-        "name": "initialNotary",
+        "name": "notaryContract_",
         "type": "address",
         "internalType": "address"
       },
@@ -166,25 +153,6 @@ export const googleOidcVerifierAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "isNotary",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -201,6 +169,32 @@ export const googleOidcVerifierAbi = [
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notary",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notaryContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract INotary"
       }
     ],
     "stateMutability": "view"
@@ -269,19 +263,6 @@ export const googleOidcVerifierAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "removeNotary",
-    "inputs": [
-      {
-        "name": "n",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -671,32 +652,6 @@ export const googleOidcVerifierAbi = [
   },
   {
     "type": "event",
-    "name": "NotaryAdded",
-    "inputs": [
-      {
-        "name": "notary",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NotaryRemoved",
-    "inputs": [
-      {
-        "name": "notary",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "OwnershipTransferStarted",
     "inputs": [
       {
@@ -825,17 +780,7 @@ export const googleOidcVerifierAbi = [
   },
   {
     "type": "error",
-    "name": "InvalidSignatureV",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "JwtExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MalleableSignature",
     "inputs": []
   },
   {

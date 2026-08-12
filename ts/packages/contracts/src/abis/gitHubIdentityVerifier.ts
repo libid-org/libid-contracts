@@ -78,7 +78,7 @@ export const gitHubIdentityVerifierAbi = [
         "internalType": "address"
       },
       {
-        "name": "notary_",
+        "name": "notaryContract_",
         "type": "address",
         "internalType": "address"
       },
@@ -127,6 +127,19 @@ export const gitHubIdentityVerifierAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "notaryContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract INotary"
       }
     ],
     "stateMutability": "view"
@@ -192,6 +205,19 @@ export const gitHubIdentityVerifierAbi = [
   },
   {
     "type": "function",
+    "name": "setBackend",
+    "inputs": [
+      {
+        "name": "backend_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setResponseShape",
     "inputs": [
       {
@@ -220,24 +246,6 @@ export const gitHubIdentityVerifierAbi = [
             "internalType": "string"
           }
         ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setSigners",
-    "inputs": [
-      {
-        "name": "notary_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "backend_",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
