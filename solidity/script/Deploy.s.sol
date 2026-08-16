@@ -20,6 +20,9 @@ import {XIdentityVerifier} from "../contracts/identity/XIdentityVerifier.sol";
 import {GitHubIdentityVerifier} from "../contracts/identity/GitHubIdentityVerifier.sol";
 import {GoogleIdentityVerifier} from "../contracts/identity/GoogleIdentityVerifier.sol";
 import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
+import {INativePriceSource} from "../contracts/identity/price/INativePriceSource.sol";
+import {ChainlinkNativePriceSource, IAggregatorV3} from "../contracts/identity/price/ChainlinkNativePriceSource.sol";
+import {OwnerPushedNativePriceSource} from "../contracts/identity/price/OwnerPushedNativePriceSource.sol";
 
 /// @notice Deploy full stack to any EVM chain.
 ///
@@ -32,6 +35,18 @@ import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
 /// Optional env:
 ///   NOTARY_ADDRESS   — notary signing key address.
 ///   BACKEND_ADDRESS  — backend signing key address.
+///   BIND_FEE_USD     — what a first bind costs, with 8 decimals. `100000000`
+///                      is one dollar. Absent or zero means binds are free and
+///                      no price source is deployed.
+///   NATIVE_PRICE_FEED           — a Chainlink USD feed for the native token.
+///                                 Without it the owner-pushed source is used.
+///   NATIVE_PRICE_MAX_STALENESS  — seconds an answer stays usable. Default one
+///                                 day; at most a year.
+///   NATIVE_PRICE_USD            — USD per native token, 8 decimals, for the
+///                                 owner-pushed source. Required to enable the
+///                                 fee on a chain with no feed: without it the
+///                                 source is deployed and the fee stays off.
+///   BIND_FEE_RECIPIENT          — who receives the fee. Default the deployer.
 contract Deploy is Script, BankDiamondDeployer {
     function run() external {
         string memory deployerKeyHex = vm.envOr("DEPLOYER_KEY", vm.envOr("PRIVATE_KEY", string("")));
@@ -230,6 +245,15 @@ contract Deploy is Script, BankDiamondDeployer {
             _wireIdentityPlatform(names, HandleVectors.PLATFORM_GOOGLE, googleIdentityAddr);
         }
 
+        // 15. The first-bind fee, off unless BIND_FEE_USD says otherwise.
+        //
+        //     Off by default, because the fee needs a price for the chain's own
+        //     token and only the operator knows where that comes from. A chain
+        //     with a Chainlink feed names it in NATIVE_PRICE_FEED; a chain
+        //     without one — Eden and TIA — gets the owner-pushed source, which
+        //     refuses to price a bind until the owner pushes a first price.
+        address priceSourceAddr = _configureBindFee(names, deployer);
+
         vm.stopBroadcast();
 
         console.log("=== Deployment complete ===");
@@ -247,6 +271,11 @@ contract Deploy is Script, BankDiamondDeployer {
         console.log("GITHUB_IDENTITY_VERIFIER_ADDRESS= ", githubIdentityAddr);
         console.log("GOOGLE_IDENTITY_VERIFIER_ADDRESS= ", googleIdentityAddr);
         console.log("IDENTITY_JWKS_ROOTS_ADDRESS= ", jwksRootsAddr);
+        console.log("NATIVE_PRICE_SOURCE_ADDRESS= ", priceSourceAddr);
+        if (priceSourceAddr != address(0) && vm.envOr("NATIVE_PRICE_FEED", address(0)) == address(0)) {
+            console.log("NOTE: the price source is owner-pushed. Call setPrice on it");
+            console.log("      before a first bind can be priced, or binds revert.");
+        }
         if (googleIdentityAddr != address(0)) {
             // Nothing is trusted until a notarized reading of Google's JWKS
             // lands. Until then every Google bind reverts `UntrustedModulus`,
@@ -254,6 +283,50 @@ contract Deploy is Script, BankDiamondDeployer {
             console.log("NOTE: point a JWKS rotation listener at IDENTITY_JWKS_ROOTS_ADDRESS");
             console.log("      before Google names work. The trust list starts empty.");
         }
+    }
+
+    /// @dev Deploy a price source and set the first-bind fee, or do nothing.
+    ///
+    ///      Which source is chosen is the whole of the configuration: a
+    ///      Chainlink feed address means the feed, and no address means the
+    ///      owner-pushed one. There is no third state to get wrong, and neither
+    ///      source holds value.
+    ///
+    /// @return The price source, or the zero address when no fee is set.
+    function _configureBindFee(IdentityNames names, address deployer) internal returns (address) {
+        uint256 feeUsd = vm.envOr("BIND_FEE_USD", uint256(0));
+        if (feeUsd == 0) return address(0);
+
+        address feed = vm.envOr("NATIVE_PRICE_FEED", address(0));
+        // A day: long enough for the slower feeds, short enough that a source
+        // nobody maintains stops pricing rather than quoting a dead number.
+        uint256 maxStaleness = vm.envOr("NATIVE_PRICE_MAX_STALENESS", uint256(1 days));
+        address recipient = vm.envOr("BIND_FEE_RECIPIENT", deployer);
+
+        INativePriceSource source;
+        if (feed != address(0)) {
+            source = INativePriceSource(address(new ChainlinkNativePriceSource(IAggregatorV3(feed), maxStaleness)));
+        } else {
+            // An owner-pushed source starts with NO price, and a source with no
+            // price refuses to answer. Wiring it to the fee without seeding one
+            // would leave a chain where every first bind reverts and a UI
+            // cannot even read "free" — so the price is pushed here, in the
+            // same broadcast, and a deployment that did not state one gets the
+            // source without the fee rather than a broken fee.
+            OwnerPushedNativePriceSource pushed = new OwnerPushedNativePriceSource(deployer, maxStaleness);
+            uint256 priceUsd = vm.envOr("NATIVE_PRICE_USD", uint256(0));
+            if (priceUsd == 0) {
+                console.log("NOTE: BIND_FEE_USD is set but NATIVE_PRICE_USD is not.");
+                console.log("      The price source is deployed and the fee is NOT enabled.");
+                console.log("      Push a price, then call setBindFee, to start charging.");
+                return address(pushed);
+            }
+            pushed.setPrice(priceUsd);
+            source = INativePriceSource(address(pushed));
+        }
+
+        names.setBindFee(source, feeUsd, recipient);
+        return address(source);
     }
 
     /// @dev Give a platform its keyspace and its first verifier.

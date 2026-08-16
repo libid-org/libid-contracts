@@ -3,6 +3,7 @@ import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { b32, GITHUB_FIXTURE, GOOGLE_FIXTURE, NAMES, X_FIXTURE } from './bind.fixtures.js'
 import {
+  bindAtVersionCall,
   bindCall,
   encodeGitHubProof,
   encodeGoogleProof,
@@ -66,5 +67,36 @@ describe('building the call', () => {
     expect(call.data.slice(0, 10)).not.toBe(
       bindCall(NAMES, platform, '0x', false).data.slice(0, 10),
     )
+  })
+
+  /// The fee rides in `value`; the CEILING rides in the calldata, because the
+  /// chain has to enforce it.
+  it('sends the fee as value and encodes the ceiling', () => {
+    const paid = bindCall(NAMES, platform, '0xdead', false, 400000000000000n)
+    const free = bindCall(NAMES, platform, '0xdead', false)
+
+    expect(paid.value).toBe(400000000000000n)
+    expect(free.value).toBe(0n)
+    expect(paid.data).not.toBe(free.data)
+  })
+
+  /// The default ceiling is what was sent — "do not charge me more than I put
+  /// up" — and a buffer is expressed by parting the two.
+  it('defaults the ceiling to the value and lets a buffer cap lower', () => {
+    const exact = bindCall(NAMES, platform, '0xdead', false, 100n)
+    const capped = bindCall(NAMES, platform, '0xdead', false, 120n, 100n)
+
+    expect(exact.value).toBe(100n)
+    expect(capped.value).toBe(120n)
+    // Same ceiling of 100 in both, so the calldata matches.
+    expect(capped.data).toBe(exact.data)
+  })
+
+  /// Every builder sets it, so a wallet that spreads the call never has to
+  /// guess whether the field is there.
+  it('sets a value on every call it builds', () => {
+    expect(unpublishCall(NAMES, platform).value).toBe(0n)
+    expect(bindAtVersionCall(NAMES, platform, 2, '0xdead', false).value).toBe(0n)
+    expect(bindAtVersionCall(NAMES, platform, 2, '0xdead', false, 7n).value).toBe(7n)
   })
 })

@@ -61,7 +61,7 @@ contract IdentityNamesTest is Test {
     function _bind(address who, string memory userId, string memory handle, uint64 at) internal {
         verifier.stage(userId, handle, who, at);
         vm.prank(who);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     // ─── Binding ────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ contract IdentityNamesTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.NotProofTarget.selector, alice, bob));
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     /// A claim naming nobody is one anybody could redirect at themselves.
@@ -89,7 +89,7 @@ contract IdentityNamesTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(IdentityNames.NoTarget.selector);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     function test_anUnconfiguredPlatformIsRefused() public {
@@ -98,7 +98,7 @@ contract IdentityNamesTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, unknown));
-        names.bind(unknown, hex"", false);
+        names.bind(unknown, hex"", false, 0);
     }
 
     /// The handle is normalized on the way in, so the key comes from the same
@@ -125,7 +125,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "shared", alice, 150);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.StaleProof.selector, uint64(150), uint64(200)));
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "shared"), bob, "the handle moved back");
     }
@@ -138,7 +138,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.StaleProof.selector, uint64(100), uint64(100)));
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     /// The attack the future clamp exists for.
@@ -155,7 +155,7 @@ contract IdentityNamesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IdentityNames.ObservedInTheFuture.selector, farAhead, uint64(block.timestamp))
         );
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         // And the node is untouched, so the real owner still binds normally.
         _bind(alice, "123", "alice", uint64(block.timestamp));
@@ -175,14 +175,14 @@ contract IdentityNamesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IdentityNames.ObservedInTheFuture.selector, ahead, uint64(block.timestamp))
         );
-        names.bind(GITHUB, hex"", false);
+        names.bind(GITHUB, hex"", false, 0);
 
         vm.prank(owner);
         names.setVerifier(GITHUB, V1, IIdentityVerifier(address(verifier)), 2 hours);
 
         verifier.stage("123", "alice", alice, ahead);
         vm.prank(alice);
-        names.bind(GITHUB, hex"", false);
+        names.bind(GITHUB, hex"", false, 0);
         assertEq(names.resolveHandle(GITHUB, "alice"), alice);
     }
 
@@ -194,7 +194,7 @@ contract IdentityNamesTest is Test {
         uint64 atLimit = uint64(block.timestamp) + 1 hours;
         verifier.stage("123", "alice", alice, atLimit);
         vm.prank(alice);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
         assertEq(names.resolveId(X, "123"), alice);
     }
 
@@ -236,7 +236,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("456", "alice", bob, 100);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.StaleProof.selector, uint64(100), uint64(200)));
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     /// And a newer proof takes it as usual, so retiring frees the name rather
@@ -255,7 +255,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 0);
         vm.prank(alice);
         vm.expectRevert(IdentityNames.NoObservationTime.selector);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     /// Every shipped verifier refuses an empty id already. This is what keeps
@@ -266,7 +266,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(IdentityNames.NoUserId.selector);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     // ─── Platform configuration ─────────────────────────────────────
@@ -357,7 +357,7 @@ contract IdentityNamesTest is Test {
 
         verifier.stage("123", "alice", alice, 200);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
         assertEq(names.reverseOf(alice, X), "alice");
     }
 
@@ -367,7 +367,7 @@ contract IdentityNamesTest is Test {
     function test_aPublishedNameCanBeWithdrawn() public {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
         assertEq(names.reverseOf(alice, X), "alice");
 
         vm.prank(alice);
@@ -381,7 +381,7 @@ contract IdentityNamesTest is Test {
     function test_withdrawingAPublishedNameKeepsTheBinding() public {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
 
         vm.prank(alice);
         names.unpublish(X);
@@ -398,11 +398,11 @@ contract IdentityNamesTest is Test {
     function test_bindingAgainRefreshesAPublishedNameRatherThanWithdrawingIt() public {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
 
         verifier.stage("123", "alice2", alice, 200);
         vm.prank(alice);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         assertEq(names.reverseOf(alice, X), "alice2", "the display follows the name it holds");
         assertEq(names.primaryOf(alice, X), "alice2", "and it still resolves back");
@@ -423,13 +423,13 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.recordLogs();
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
         assertTrue(_lastBindPublished(), "published");
 
         verifier.stage("456", "bob", bob, 100);
         vm.recordLogs();
         vm.prank(bob);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
         assertFalse(_lastBindPublished(), "not published");
     }
 
@@ -438,12 +438,12 @@ contract IdentityNamesTest is Test {
     function test_theLogSaysPublishedWhenARefreshKeepsTheNameOnDisplay() public {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
 
         verifier.stage("123", "alice2", alice, 200);
         vm.recordLogs();
         vm.prank(alice);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         assertTrue(_lastBindPublished(), "the flag was false, the name is still on display");
     }
@@ -469,7 +469,7 @@ contract IdentityNamesTest is Test {
     function test_withdrawingTouchesOnlyTheCallersRecord() public {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
 
         vm.prank(mallory);
         names.unpublish(X);
@@ -482,7 +482,7 @@ contract IdentityNamesTest is Test {
     function test_primaryOfGoesEmptyOnceTheHandleMovesOn() public {
         verifier.stage("123", "shared", alice, 100);
         vm.prank(alice);
-        names.bind(X, hex"", true);
+        names.bind(X, hex"", true, 0);
         assertEq(names.primaryOf(alice, X), "shared", "it resolves back, so it stands");
 
         // Bob proves the same handle. Alice's published name is now somebody
@@ -530,7 +530,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "ali ce", alice, 100);
         vm.prank(alice);
         vm.expectRevert(HandleNormalizer.BadCharacter.selector);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
     }
 
     /// After the owner narrows a platform's rules, an already-written handle
@@ -541,7 +541,7 @@ contract IdentityNamesTest is Test {
     function test_primaryOfGoesEmptyWhenTheRulesNoLongerAllowTheName() public {
         verifier.stage("123", "octo-cat", alice, 100);
         vm.prank(alice);
-        names.bind(GITHUB, hex"", true);
+        names.bind(GITHUB, hex"", true, 0);
         assertEq(names.primaryOf(alice, GITHUB), "octo-cat");
 
         HandleNormalizer.Rules memory narrowed = HandleVectors.rulesFor(GITHUB);
@@ -578,7 +578,7 @@ contract IdentityNamesTest is Test {
 
         verifier.stage("123", "alice", bob, 100);
         vm.prank(bob);
-        names.bind(GITHUB, hex"", false);
+        names.bind(GITHUB, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "alice"), alice);
         assertEq(names.resolveHandle(GITHUB, "alice"), bob);
@@ -615,11 +615,11 @@ contract IdentityNamesTest is Test {
 
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
 
         v2.stage("456", "bob", bob, 100);
         vm.prank(bob);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "alice"), alice, "the old format still binds");
         assertEq(names.resolveHandle(X, "bob"), bob, "and the new one does too");
@@ -636,7 +636,7 @@ contract IdentityNamesTest is Test {
         // an empty one and revert.
         v2.stage("456", "bob", bob, 100);
         vm.prank(bob);
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "bob"), bob);
         assertEq(names.latestVersionOf(X), 2);
@@ -651,7 +651,7 @@ contract IdentityNamesTest is Test {
 
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "alice"), alice);
     }
@@ -660,7 +660,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, uint32(7)));
-        names.bindAtVersion(X, 7, hex"", false);
+        names.bindAtVersion(X, 7, hex"", false, 0);
     }
 
     /// The end of a migration: the format stops being accepted.
@@ -674,7 +674,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownVersion.selector, X, V1));
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
     }
 
     /// A name belongs to the account that proved it, not to the format the
@@ -709,7 +709,7 @@ contract IdentityNamesTest is Test {
         v2.stage("456", "bob", bob, 100);
         vm.recordLogs();
         vm.prank(bob);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
 
         (,, uint32 idVersion) = names.byId(IdentityNodes.idNode(X, "456"));
         (,, uint32 handleVersion) = names.byHandle(IdentityNodes.handleNode(X, "bob"));
@@ -735,11 +735,11 @@ contract IdentityNamesTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IdentityNames.ObservedInTheFuture.selector, ahead, uint64(block.timestamp))
         );
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
 
         v2.stage("123", "alice", alice, ahead);
         vm.prank(alice);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
         assertEq(names.resolveHandle(X, "alice"), alice);
     }
 
@@ -754,14 +754,14 @@ contract IdentityNamesTest is Test {
         uint64 ahead = uint64(block.timestamp) + 1 hours;
         v2.stage("123", "alice", alice, ahead);
         vm.prank(alice);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
 
         // v1 states wall-clock time and is never ahead. Alice re-proves
         // through the client she has, a minute later.
         vm.warp(block.timestamp + 1 minutes);
         verifier.stage("123", "alice2", alice, uint64(block.timestamp));
         vm.prank(alice);
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
 
         assertEq(names.resolveHandle(X, "alice2"), alice, "the strict version was locked out");
         assertEq(names.resolveHandle(X, "alice"), address(0), "and the rename took effect");
@@ -775,13 +775,13 @@ contract IdentityNamesTest is Test {
 
         v2.stage("123", "alice", alice, later);
         vm.prank(alice);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
 
         // A token issued earlier, so expiring earlier.
         v2.stage("123", "alice", alice, later - 10 minutes);
         vm.prank(alice);
         vm.expectRevert();
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
     }
 
     /// What is stored is the observation on the shared scale, so a consumer
@@ -792,7 +792,7 @@ contract IdentityNamesTest is Test {
 
         v2.stage("123", "alice", alice, reported);
         vm.prank(alice);
-        names.bindAtVersion(X, 2, hex"", false);
+        names.bindAtVersion(X, 2, hex"", false, 0);
 
         (, uint64 stored,) = names.byId(IdentityNodes.idNode(X, "123"));
         assertEq(stored, reported - 2 hours, "the version's allowance was not taken off");
@@ -828,7 +828,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, fresh));
-        names.bind(fresh, hex"", false);
+        names.bind(fresh, hex"", false, 0);
     }
 
     /// `bindAtVersion(id, 0, …)` is not a spelling of `bind`.
@@ -836,7 +836,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
         vm.expectRevert(IdentityNames.ZeroVersion.selector);
-        names.bindAtVersion(X, 0, hex"", false);
+        names.bindAtVersion(X, 0, hex"", false, 0);
     }
 
     /// `setPlatform` writes field-wise now, so a rules change must leave the
@@ -860,7 +860,7 @@ contract IdentityNamesTest is Test {
         // notice. `_bind` goes through the default, which is v2 now.
         verifier.stage("123", "alice", alice, 100);
         vm.prank(alice);
-        names.bindAtVersion(X, V1, hex"", false);
+        names.bindAtVersion(X, V1, hex"", false, 0);
         assertEq(names.resolveHandle(X, "alice"), alice);
     }
 
@@ -937,7 +937,7 @@ contract IdentityNamesTest is Test {
         verifier.stage("123", "alice", alice, 200);
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.NotProofTarget.selector, alice, owner));
-        names.bind(X, hex"", false);
+        names.bind(X, hex"", false, 0);
 
         assertEq(names.resolveId(X, "123"), alice, "the binding moved");
     }

@@ -11,6 +11,19 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "FEE_USD_DECIMALS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "INITIAL_VERSION",
     "inputs": [],
     "outputs": [
@@ -73,10 +86,15 @@ export const identityNamesAbi = [
         "name": "publishName",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "maxFee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -101,10 +119,75 @@ export const identityNamesAbi = [
         "name": "publishName",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "maxFee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "bindFee",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "contract INativePriceSource"
+      },
+      {
+        "name": "feeUsd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bindFeeWei",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bindFeeWeiFor",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "userId",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -392,6 +475,29 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "setBindFee",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "contract INativePriceSource"
+      },
+      {
+        "name": "feeUsd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLatestVersion",
     "inputs": [
       {
@@ -548,6 +654,68 @@ export const identityNamesAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "BindFeeConfigured",
+    "inputs": [
+      {
+        "name": "priceSource",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "feeUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeRecipient",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BindFeePaid",
+    "inputs": [
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "idNode",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amountWei",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -865,13 +1033,66 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
+    "name": "FeeAboveMax",
+    "inputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "HandleTooLong",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "IncompleteFeeConfig",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientFee",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidInitialization",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NativeTransferFailed",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -954,6 +1175,11 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StaleProof",
     "inputs": [
       {
@@ -1008,6 +1234,17 @@ export const identityNamesAbi = [
         "name": "version",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnusablePrice",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

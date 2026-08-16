@@ -11,12 +11,14 @@ use alloy::{
         Provider,
         ProviderBuilder,
     },
+    sol_types::SolValue,
 };
 use libid_contracts::{
     bindings::{
         identity::{
             GitHubIdentityVerifier,
             IdentityNames,
+            OwnerPushedNativePriceSource,
         },
         login::{
             IRegistryAdmin,
@@ -32,6 +34,7 @@ use libid_contracts::{
     deploy::{
         deploy_behind_proxy,
         deploy_contract,
+        deploy_with_ctor,
         load_linked_bytecode,
         upgrade_uups,
     },
@@ -295,6 +298,95 @@ async fn deploys_the_identity_stack() {
             .await
             .unwrap(),
         Address::ZERO
+    );
+
+    // The first-bind fee, priced by the owner-pushed source — the one a chain
+    // with no Chainlink feed uses. Off until it is configured.
+    assert_eq!(names.bindFeeWei().call().await.unwrap(), U256::ZERO);
+
+    let price_addr = deploy_with_ctor(
+        &provider,
+        &artifacts.bytecode("OwnerPushedNativePriceSource").unwrap(),
+        &(deployer, U256::from(3600)).abi_encode_params(),
+        "OwnerPushedNativePriceSource",
+        None,
+    )
+    .await
+    .unwrap();
+    let price = OwnerPushedNativePriceSource::new(price_addr, &provider);
+
+    // $0.18 for one TIA, on the eight-decimal scale Chainlink reports on. A
+    // real figure for the native token of the chain this source exists for:
+    // Eden has no Chainlink feed, so the owner states the price.
+    price
+        .setPrice(U256::from(18_000_000u64))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // $1.00 a bind.
+    names
+        .setBindFee(price_addr, U256::from(1_00000000u64), deployer)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // $1 at $0.18 a token is 5.555… TIA, truncated.
+    let dollar_in_tia = U256::from(5_555_555_555_555_555_555u64);
+    assert_eq!(names.bindFeeWei().call().await.unwrap(), dollar_in_tia);
+    // The per-account quote agrees while the account is unbound.
+    assert_eq!(
+        names
+            .bindFeeWeiFor(platform_id, "12345".into())
+            .call()
+            .await
+            .unwrap(),
+        dollar_in_tia
+    );
+    // The source reports what was pushed, on the scale it promises.
+    assert_eq!(
+        price.price().call().await.unwrap(),
+        U256::from(18_000_000u64)
+    );
+    assert_eq!(price.DECIMALS().call().await.unwrap(), 8);
+    assert!(price.updatedAt().call().await.unwrap() > U256::ZERO);
+
+    // Past the staleness bound the source refuses, and the quote refuses with
+    // it. A real node, a real clock: the chain is moved forward rather than a
+    // timestamp being staged.
+    provider
+        .raw_request::<_, serde_json::Value>("evm_increaseTime".into(), (3601u64,))
+        .await
+        .unwrap();
+    provider
+        .raw_request::<_, serde_json::Value>("evm_mine".into(), ())
+        .await
+        .unwrap();
+    assert!(
+        names.bindFeeWei().call().await.is_err(),
+        "a stale price still quoted a fee"
+    );
+
+    // A fresh push revives it, which is the operator's whole remedy. The token
+    // halved, so a dollar now costs twice as much of it.
+    price
+        .setPrice(U256::from(9_000_000u64))
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(
+        names.bindFeeWei().call().await.unwrap(),
+        U256::from(11_111_111_111_111_111_111u128),
+        "the quote did not follow the new price"
     );
 }
 

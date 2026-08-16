@@ -47,13 +47,44 @@ mod names_inner {
             function latestVersionOf(bytes32 platformId) external view returns (uint32);
             function INITIAL_VERSION() external view returns (uint32);
 
-            function bind(bytes32 platformId, bytes calldata proof, bool publishName) external;
+            /// What a first bind costs, in USD with `FEE_USD_DECIMALS`
+            /// decimals, and where the money goes. A zero `feeUsd` means binds
+            /// are free and no price source is consulted.
+            function setBindFee(address source, uint256 feeUsd, address recipient) external;
+            function bindFee() external view returns (address source, uint256 feeUsd, address recipient);
+            /// The fee in wei right now. Reverts when a fee is set and its
+            /// price source refuses to answer.
+            function bindFeeWei() external view returns (uint256);
+            /// What binding THIS account will cost — zero for one already
+            /// bound, and reached without consulting the price source, so a
+            /// rename can be quoted on a chain whose source has died.
+            function bindFeeWeiFor(bytes32 platformId, string calldata userId)
+                external
+                view
+                returns (uint256);
+            function FEE_USD_DECIMALS() external view returns (uint8);
+
+            /// Payable: the FIRST bind of an account id may cost a fee. Quote
+            /// it with `bindFeeWeiFor`, send at least that much, and the excess
+            /// comes back in the same call. Every later bind of that id is
+            /// free, and value sent on one is returned whole.
+            ///
+            /// `maxFee` is a ceiling, not a payment: the bind is refused when
+            /// the fee at inclusion exceeds it. Zero is right for every bind
+            /// that is not a first one.
+            function bind(
+                bytes32 platformId,
+                bytes calldata proof,
+                bool publishName,
+                uint256 maxFee
+            ) external payable;
             function bindAtVersion(
                 bytes32 platformId,
                 uint32 version,
                 bytes calldata proof,
-                bool publishName
-            ) external;
+                bool publishName,
+                uint256 maxFee
+            ) external payable;
             function unpublish(bytes32 platformId) external;
             function resolveId(bytes32 platformId, string calldata userId) external view returns (address);
             function resolveHandle(bytes32 platformId, string calldata handle) external view returns (address);
@@ -86,11 +117,73 @@ mod names_inner {
             event VerifierRetired(bytes32 indexed platformId, uint32 indexed version);
             event LatestVersionChanged(bytes32 indexed platformId, uint32 indexed version);
             event NameUnpublished(address indexed owner, bytes32 indexed platformId);
+            event BindFeeConfigured(address priceSource, uint256 feeUsd, address feeRecipient);
+            /// `amountWei` is what was forwarded, `feeUsd` what it was meant to
+            /// be worth. Together they record the price the chain used, and
+            /// `recipient` records where it went — the owner may move that at
+            /// any time, so it is stated per payment rather than joined.
+            event BindFeePaid(
+                address indexed payer,
+                bytes32 indexed idNode,
+                address indexed recipient,
+                uint256 amountWei,
+                uint256 feeUsd
+            );
         }
     }
 }
 
 pub use names_inner::IdentityNames;
+
+/// Bindings for `identity/price/` — what one native token is worth in USD,
+/// behind the first-bind fee.
+///
+/// Two implementations of one interface, and the choice is the configuration:
+/// `ChainlinkNativePriceSource` where a feed exists, `OwnerPushedNativePriceSource` where
+/// none does. Neither holds value.
+#[allow(clippy::too_many_arguments, unused_attributes)]
+mod price_inner {
+    use alloy::sol;
+
+    sol! {
+        #[sol(rpc)]
+        interface INativePriceSource {
+            /// Reverts rather than answering with a price it does not stand
+            /// behind, so staleness never reaches the caller as a number.
+            function nativeUsdPrice() external view returns (uint256 price, uint8 decimals);
+        }
+    }
+
+    sol! {
+        #[sol(rpc)]
+        interface OwnerPushedNativePriceSource {
+            /// USD for one whole native token, with `DECIMALS` decimals.
+            function setPrice(uint256 price_) external;
+            function price() external view returns (uint256);
+            function updatedAt() external view returns (uint256);
+            function maxStaleness() external view returns (uint256);
+            function DECIMALS() external view returns (uint8);
+            function nativeUsdPrice() external view returns (uint256 price, uint8 decimals);
+
+            event PricePushed(uint256 price, uint256 updatedAt);
+        }
+    }
+
+    sol! {
+        #[sol(rpc)]
+        interface ChainlinkNativePriceSource {
+            function feed() external view returns (address);
+            function maxStaleness() external view returns (uint256);
+            function nativeUsdPrice() external view returns (uint256 price, uint8 decimals);
+        }
+    }
+}
+
+pub use price_inner::{
+    ChainlinkNativePriceSource,
+    INativePriceSource,
+    OwnerPushedNativePriceSource,
+};
 
 /// The claim every identity verifier returns
 /// (`identity/IIdentityVerifier.sol`).
