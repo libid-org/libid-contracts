@@ -20,6 +20,8 @@ import {XIdentityVerifier} from "../contracts/identity/XIdentityVerifier.sol";
 import {GitHubIdentityVerifier} from "../contracts/identity/GitHubIdentityVerifier.sol";
 import {GoogleIdentityVerifier} from "../contracts/identity/GoogleIdentityVerifier.sol";
 import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
+import {HandleEscrow} from "../contracts/escrow/HandleEscrow.sol";
+import {IIdentityNames} from "../contracts/escrow/IIdentityNames.sol";
 
 /// @notice Deploy full stack to any EVM chain.
 ///
@@ -230,6 +232,19 @@ contract Deploy is Script, BankDiamondDeployer {
             _wireIdentityPlatform(names, HandleVectors.PLATFORM_GOOGLE, googleIdentityAddr);
         }
 
+        // 15. The handle escrow: value sent to a name before anybody claims it.
+        //
+        //     Wired to the naming proxy and never repointed — moving it would
+        //     redirect every entitlement it holds, so there is no setter and
+        //     changing it is an upgrade.
+        HandleEscrow escrowImpl = new HandleEscrow();
+        address handleEscrowAddr = address(
+            new ERC1967Proxy(
+                address(escrowImpl),
+                abi.encodeCall(HandleEscrow.initialize, (deployer, IIdentityNames(identityNamesAddr)))
+            )
+        );
+
         vm.stopBroadcast();
 
         console.log("=== Deployment complete ===");
@@ -247,6 +262,7 @@ contract Deploy is Script, BankDiamondDeployer {
         console.log("GITHUB_IDENTITY_VERIFIER_ADDRESS= ", githubIdentityAddr);
         console.log("GOOGLE_IDENTITY_VERIFIER_ADDRESS= ", googleIdentityAddr);
         console.log("IDENTITY_JWKS_ROOTS_ADDRESS= ", jwksRootsAddr);
+        console.log("HANDLE_ESCROW_ADDRESS= ", handleEscrowAddr);
         if (googleIdentityAddr != address(0)) {
             // Nothing is trusted until a notarized reading of Google's JWKS
             // lands. Until then every Google bind reverts `UntrustedModulus`,

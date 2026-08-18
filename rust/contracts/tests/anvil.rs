@@ -11,9 +11,11 @@ use alloy::{
         Provider,
         ProviderBuilder,
     },
+    sol_types::SolValue,
 };
 use libid_contracts::{
     bindings::{
+        escrow::HandleEscrow,
         identity::{
             GitHubIdentityVerifier,
             IdentityNames,
@@ -295,6 +297,167 @@ async fn deploys_the_identity_stack() {
             .await
             .unwrap(),
         Address::ZERO
+    );
+}
+
+/// (c2) The handle escrow against a real chain: deploy it, pay a handle nobody
+/// has claimed, and watch two spellings land in one slot.
+///
+/// The payout path is covered by the Solidity suite, which stages proofs
+/// through a mock verifier. That mock deliberately does NOT ship in this
+/// crate's artifacts: it reports whatever a caller stages, so a copy reachable
+/// from a deploy tool is a way to mint any identity on a live chain. What is
+/// left for Rust is what Rust owns — the artifact deploys, the binding shapes,
+/// and the slot derivation agreeing with the contract.
+#[tokio::test]
+async fn escrows_value_against_an_unclaimed_handle() {
+    let provider = test_provider();
+    let artifacts = Artifacts::embedded();
+    let deployer = default_signer(&provider).await;
+    let stranger = provider.get_accounts().await.unwrap()[1];
+
+    let names_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "IdentityNames",
+        &IdentityNames::initializeCall { owner_: deployer },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let notary_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "Notary",
+        &Notary::initializeCall {
+            owner_: deployer,
+            notary_: Address::repeat_byte(0x11),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    // A real verifier, so the platform is wired the way a deployment wires it.
+    // Nothing here calls it: the escrow only reads `rulesOf`, which needs the
+    // platform to have one.
+    let github_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "GitHubIdentityVerifier",
+        &GitHubIdentityVerifier::initializeCall {
+            owner_: deployer,
+            notaryContract_: notary_proxy,
+            shape_: GitHubIdentityVerifier::ResponseShape {
+                endpoint: "/user".into(),
+                handlePrefix: "\"login\":\"".into(),
+                idPrefix: "\"id\":".into(),
+                idSuffix: ",".into(),
+            },
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    let platform_id = keccak256(b"dyaka.identity.platform.github");
+    let names = IdentityNames::new(names_proxy, &provider);
+    names
+        .setPlatform(
+            platform_id,
+            IdentityNames::Rules {
+                maxLength: 39,
+                stripLeadingAt: true,
+                isEmail: false,
+                allowUnderscore: false,
+                allowHyphen: true,
+            },
+        )
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    names
+        .setVerifier(platform_id, 1, github_proxy, 300)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let escrow_proxy = deploy_behind_proxy(
+        &provider,
+        &artifacts,
+        "HandleEscrow",
+        &HandleEscrow::initializeCall {
+            owner_: deployer,
+            names_: names_proxy,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let escrow = HandleEscrow::new(escrow_proxy, &provider);
+    assert_eq!(escrow.names().call().await.unwrap(), names_proxy);
+
+    // The slot a client computes off chain has to be the slot the contract
+    // keys on, or an indexer watches the wrong one.
+    let slot_v1 = keccak256(b"libid.escrow.handle-slot.v1");
+    let computed =
+        keccak256((slot_v1, platform_id, keccak256(b"alice-1")).abi_encode_params());
+    assert_eq!(
+        escrow
+            .slotOf(platform_id, " Alice-1 ".into())
+            .call()
+            .await
+            .unwrap(),
+        computed,
+        "Rust and the contract derive different slots"
+    );
+
+    // Two spellings of one handle, paid before anybody holds it.
+    let amount = U256::from(1_000_000_000_000_000_000u64);
+    for spelling in [" Alice-1 ", "alice-1"] {
+        escrow
+            .deposit(platform_id, spelling.into(), Address::ZERO, amount)
+            .value(amount)
+            .send()
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        escrow
+            .escrowed(platform_id, "ALICE-1".into(), Address::ZERO)
+            .call()
+            .await
+            .unwrap(),
+        amount * U256::from(2),
+        "the two spellings did not accumulate in one slot"
+    );
+
+    // Nobody holds the handle, so nobody can take it — including the depositor.
+    let claim = escrow
+        .claim(platform_id, "alice-1".into(), Address::ZERO, stranger)
+        .from(stranger)
+        .send()
+        .await;
+    // The AUTHORIZATION refusal specifically. A bare `is_err` would also pass
+    // on a mistyped platform, an unwired one or an RPC hiccup, so it would
+    // stay green with the holder check removed entirely.
+    let err = claim
+        .expect_err("an unheld handle was claimable")
+        .to_string();
+    assert!(
+        err.contains("NotTheHolder") || err.contains("0xb6bd8e83"),
+        "refused for the wrong reason: {err}"
     );
 }
 
