@@ -167,9 +167,15 @@ export function encodeGoogleProof(p: GoogleProof): Hex {
 }
 
 /// One call, ready to send or to wrap.
+///
+/// `value` is always present, and always meant to be sent. It is required
+/// rather than optional because a wallet that spreads `{...call}` into a
+/// transaction would otherwise send nothing on the one call that can need
+/// value — a first bind, which may carry a fee.
 export interface Call {
   to: Address
   data: Hex
+  value: bigint
 }
 
 /// Bind a proven account to the caller.
@@ -190,14 +196,39 @@ export interface Call {
 /// encodes version 1 would hand version-1 bytes to a version-2 verifier, and
 /// the best case is an opaque revert. Such a client wants
 /// `bindAtVersionCall`.
-export function bindCall(names: Address, platformId: Hex, proof: Hex, publishName: boolean): Call {
+///
+/// **`feeWei` is what the call sends; `maxFee` is the most it may cost.** The
+/// FIRST bind of an account may carry a fee, in the chain's own token but
+/// denominated in USD. Quote it with `bindFee`, send a little more than the
+/// quote, and the excess comes back in the same transaction — the price moves
+/// between the quote and the block, and sending the exact quote would make an
+/// honest bind fail on any upward move.
+///
+/// `maxFee` defaults to `feeWei`, which is the safe reading of "do not charge
+/// me more than I put up". Send a buffer and leave `maxFee` at the quote to
+/// keep the buffer for the price move without making it spendable: a fee above
+/// the ceiling is refused rather than taken. Later binds of that account are
+/// free, so zero is right for a rename or a wallet move.
+///
+/// A wallet that cannot receive native value should send no excess at all —
+/// `feeWei == maxFee == quote` — because the refund is the one case where the
+/// contract calls the address it binds.
+export function bindCall(
+  names: Address,
+  platformId: Hex,
+  proof: Hex,
+  publishName: boolean,
+  feeWei: bigint = 0n,
+  maxFee: bigint = feeWei,
+): Call {
   return {
     to: names,
     data: encodeFunctionData({
       abi: identityNamesAbi,
       functionName: 'bind',
-      args: [platformId, proof, publishName],
+      args: [platformId, proof, publishName, maxFee],
     }),
+    value: feeWei,
   }
 }
 
@@ -211,20 +242,25 @@ export function bindCall(names: Address, platformId: Hex, proof: Hex, publishNam
 /// Use this when the client is pinned to a format: a proof built for version 1
 /// keeps binding on the day the default moves to 2, and stops only when the
 /// owner retires version 1 outright.
+///
+/// `feeWei` works exactly as it does on `bindCall`.
 export function bindAtVersionCall(
   names: Address,
   platformId: Hex,
   version: number,
   proof: Hex,
   publishName: boolean,
+  feeWei: bigint = 0n,
+  maxFee: bigint = feeWei,
 ): Call {
   return {
     to: names,
     data: encodeFunctionData({
       abi: identityNamesAbi,
       functionName: 'bindAtVersion',
-      args: [platformId, version, proof, publishName],
+      args: [platformId, version, proof, publishName, maxFee],
     }),
+    value: feeWei,
   }
 }
 
@@ -239,5 +275,6 @@ export function unpublishCall(names: Address, platformId: Hex): Call {
       functionName: 'unpublish',
       args: [platformId],
     }),
+    value: 0n,
   }
 }

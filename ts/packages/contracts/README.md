@@ -72,8 +72,48 @@ import { bindCall, encodeGitHubProof, platformId, PLATFORM_GITHUB_DOMAIN } from 
 
 const proof = encodeGitHubProof(gitHubProof) // from the notarization flow
 const call = bindCall(IDENTITY_NAMES, platformId(PLATFORM_GITHUB_DOMAIN), proof, true)
-// call = { to, data } — sign and send from the address the proof names.
+// call = { to, data, value } — sign and send from the address the proof names.
 ```
+
+### The first bind may cost a fee
+
+A deployment can charge for the FIRST bind of an account, in the chain's own
+token but priced in USD. Read the quote off the contract and pass it as the
+last argument — it becomes the call's `value`:
+
+```ts
+const feeWei = await client.readContract({
+  address: IDENTITY_NAMES,
+  abi: identityNamesAbi,
+  functionName: 'bindFeeWeiFor',
+  args: [platformId(PLATFORM_GITHUB_DOMAIN), userId], // the id the proof reports
+})
+// Send a buffer, but cap what may be taken at the quote.
+const call = bindCall(
+  IDENTITY_NAMES, platformId(PLATFORM_GITHUB_DOMAIN), proof, true,
+  (feeWei * 12n) / 10n,  // value: the quote plus room for the price to move
+  feeWei,                // maxFee: the most that may actually be charged
+)
+```
+
+`bindFeeWeiFor` answers for **this** account: zero once it is bound, so a rename
+or a wallet move quotes free. `bindFeeWei` answers the general "what does a first
+bind cost" and does not know whose bind it is — prefer the former when the id is
+known, which it is whenever a proof has just been built.
+
+Both **revert** rather than answer when a fee is configured and its price source
+has gone stale. That is deliberate — a fee nobody has confirmed is not charged —
+so a UI reading them must handle the throw.
+
+Send a little more than the quote: the price moves between the quote and the
+block, and the excess comes back in the same transaction. Cap the charge with
+`maxFee`, or the buffer itself becomes spendable by a price move — the call and
+its value sit in the mempool while that move can be arranged. A wallet that
+cannot receive native value should send no buffer at all, since the refund is
+the one case where the contract calls the address it binds. Every later bind of
+that account is free — a rename, a move to another wallet, a re-prove after
+somebody else took the name — so those need no fee and return any value sent.
+`bindFeeWei` answers zero where no fee is configured.
 
 ## Normalizing a handle locally
 

@@ -139,3 +139,21 @@ export async function resolvePair(
 
   return { wallet: wallet === zeroAddress ? null : wallet, idAgrees }
 }
+
+/// What binding this account will cost, in wei. Zero when it is free.
+///
+/// Quote this before building the bind and pass it to `bindCall`. It answers
+/// for THIS account: zero once the account is bound, so a rename or a move to
+/// another wallet costs nothing and reaches that zero without the chain
+/// consulting a price source at all.
+///
+/// **It can throw.** A deployment that charges a fee and whose price source has
+/// gone stale refuses to quote rather than naming a price nobody has confirmed.
+/// Treat the throw as "cannot bind right now", not as zero.
+export function bindFee(
+  reader: NamesReader,
+  platform: `0x${string}`,
+  userId: string,
+): Promise<bigint> {
+  return read<bigint>(reader, 'bindFeeWeiFor', [platform, userId])
+}

@@ -55,6 +55,11 @@ ARTIFACTS=(
     "GoogleIdentityVerifier:GoogleIdentityVerifier"
     "XIdentityVerifier:XIdentityVerifier"
     "IdentityJwksRoots:IdentityJwksRoots"
+    # identity — the native token price, for the first-bind fee. Which one a
+    # chain gets is the whole of the configuration: the Chainlink wrapper where
+    # a feed exists, the owner-pushed one where none does.
+    "ChainlinkNativePriceSource:ChainlinkNativePriceSource"
+    "OwnerPushedNativePriceSource:OwnerPushedNativePriceSource"
     # factory
     "LibidFactory:LibidFactory"
 )

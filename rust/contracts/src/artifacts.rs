@@ -67,6 +67,14 @@ pub const COVERED: &[(&str, &str)] = &[
     ("GoogleIdentityVerifier", "GoogleIdentityVerifier"),
     ("XIdentityVerifier", "XIdentityVerifier"),
     ("IdentityJwksRoots", "IdentityJwksRoots"),
+    // identity — the native token price behind the first-bind fee. A chain
+    // with a Chainlink feed deploys the wrapper; a chain without one — Eden
+    // and TIA — deploys the owner-pushed source.
+    ("ChainlinkNativePriceSource", "ChainlinkNativePriceSource"),
+    (
+        "OwnerPushedNativePriceSource",
+        "OwnerPushedNativePriceSource",
+    ),
     // factory
     ("LibidFactory", "LibidFactory"),
 ];

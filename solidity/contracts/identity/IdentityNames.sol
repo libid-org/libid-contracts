@@ -1,23 +1,35 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+// 0.8.24, not 0.8.20: `ReentrancyGuardTransientUpgradeable` declares
+// ^0.8.24, and transient storage does not exist before it.
+pragma solidity ^0.8.24;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {
+    ReentrancyGuardTransientUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardTransientUpgradeable.sol";
 
 import {HandleNormalizer} from "./HandleNormalizer.sol";
 import {IdentityNodes} from "./IdentityNodes.sol";
 import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
+import {INativePriceSource} from "./price/INativePriceSource.sol";
 
 /// @title IdentityNames - proof-derived names for any wallet.
 ///
 /// @notice Binds two things to a wallet address: a platform's immutable account
 ///         id, and that account's mutable handle. Anyone may resolve either.
 ///
-/// @dev The contract never calls the address it binds, so a target may be an
-///      EOA, a Safe, an ERC-4337 account or a managed wallet. It knows nothing
-///      about any of them, which is what makes it usable by a product that is
-///      not ours.
+/// @dev The contract knows nothing about the address it binds — a target may be
+///      an EOA, a Safe, an ERC-4337 account or a managed wallet — which is what
+///      makes it usable by a product that is not ours.
+///
+///      It calls that address in exactly one case: returning the excess when a
+///      first bind is overpaid. A wallet that cannot receive native value
+///      avoids it by sending no excess — quote the fee, send exactly that, and
+///      pass the same number as `maxFee`, which turns a price move into a
+///      refusal rather than a larger charge. Everything else here still calls
+///      nobody.
 ///
 ///      Authorization is one rule: a proof states the address it was made out
 ///      to, and that address has to be the caller. Nothing else grants a
@@ -60,10 +72,28 @@ import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
 ///      undoing a newer one, and the `observedAt` watermark refuses that. A
 ///      replay carries the same timestamp, so the same rule refuses it too.
 ///
+///      **This contract requires EIP-1153.** The reentrancy guard is the
+///      transient-storage one, so `TSTORE`/`TLOAD` must exist on the chain. It
+///      is the first contract here to need them — every other guard in this
+///      repository is storage-based — so a new target chain has to be checked
+///      before deploying. Eden testnet was: it executes both.
+///
 ///      **There is no pause.** A pause is a lever over other people's names,
 ///      and nothing here needs one: no funds are held, and no address is
 ///      predicted ahead of its deployment.
-contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
+///
+///      **A first bind may cost money, and nothing else does.** The owner may
+///      set a fee in USD, paid in the chain's own token — see `setBindFee`. It
+///      is charged once for an account id, on the bind that first writes it,
+///      and never again: a rename, a wallet move and a re-prove after somebody
+///      else took the name are all free. Proving again is the whole remedy for
+///      a name held by the wrong wallet, so that remedy must stay free and must
+///      not depend on a price source being alive.
+///
+///      The contract still holds no funds. The fee is forwarded inside the same
+///      call and any excess goes back to the caller, so the sentence above
+///      stays true and the pause question stays closed.
+contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, ReentrancyGuardTransientUpgradeable {
     /// @notice A binding, the moment the platform stated it, and the proof
     ///         version that established it.
     ///
@@ -196,6 +226,13 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// every name already bound under it are untouched: a name does not
         /// belong to the proof that established it.
         mapping(bytes32 => mapping(uint32 => VerifierSlot)) verifiers;
+        // ── Appended after the first release. Do not reorder what is above. ──
+        /// What one native token is worth in USD, or the zero address.
+        INativePriceSource priceSource;
+        /// What a first bind costs in USD, with `FEE_USD_DECIMALS` decimals.
+        uint256 bindFeeUsd;
+        /// Where the fee goes, in the same call that collects it.
+        address feeRecipient;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.IdentityNames")) - 1)) & ~bytes32(uint256(0xff))
@@ -292,6 +329,25 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @dev An indexer that mirrors `reverseOf` needs this to stop showing it.
     event NameUnpublished(address indexed owner, bytes32 indexed platformId);
 
+    /// @notice What a first bind costs, and where the money goes.
+    /// @dev A zero `feeUsd` means binds are free again.
+    event BindFeeConfigured(address priceSource, uint256 feeUsd, address feeRecipient);
+
+    /// @notice A first bind paid the fee.
+    ///
+    /// @dev Its own event rather than a field on `IdentityBound`, whose
+    ///      signature indexers already decode. `amountWei` is what was
+    ///      forwarded, `feeUsd` what it was meant to be worth — together they
+    ///      record the price the chain used, which no other log carries.
+    ///
+    ///      `recipient` is stated here rather than left to be joined against
+    ///      the last `BindFeeConfigured` before this block. The owner may move
+    ///      it at any time, so that join is a reconstruction; this is the
+    ///      record. Indexed, so a treasury can filter its own income.
+    event BindFeePaid(
+        address indexed payer, bytes32 indexed idNode, address indexed recipient, uint256 amountWei, uint256 feeUsd
+    );
+
     // ─── Errors ─────────────────────────────────────────────────────
 
     /// This platform has no keyspace configured.
@@ -318,6 +374,16 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     error StaleProof(uint64 observedAt, uint64 known);
     /// The proof claims an observation further ahead than its version allows.
     error ObservedInTheFuture(uint64 observedAt, uint64 limit);
+    /// The call carries less native value than the first bind costs.
+    error InsufficientFee(uint256 required, uint256 provided);
+    /// The fee at this moment is above the ceiling the caller stated.
+    error FeeAboveMax(uint256 fee, uint256 maxFee);
+    /// The price source answered a price no fee can be derived from.
+    error UnusablePrice(address source);
+    /// A fee needs both a price source and somewhere to send the money.
+    error IncompleteFeeConfig();
+    /// The fee or the refund could not be delivered.
+    error NativeTransferFailed(address recipient, uint256 amount);
 
     // ─── Setup ──────────────────────────────────────────────────────
 
@@ -330,6 +396,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuardTransient_init();
     }
 
     /// @notice The largest allowance a version may carry.
@@ -463,20 +530,136 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         return _s().platforms[platformId].latestVersion;
     }
 
+    // ─── The first-bind fee ─────────────────────────────────────────
+
+    /// @notice How many decimal places `bindFeeUsd` carries.
+    /// @dev Eight, which is what Chainlink's USD feeds report, so the fee and
+    ///      the price are on one scale. One dollar is `100000000`.
+    uint8 public constant FEE_USD_DECIMALS = 8;
+
+    /// @notice Set what a first bind costs, or stop charging.
+    ///
+    /// @dev All three together, because none of them means anything alone: a
+    ///      fee with no price source cannot be quoted, and a fee with no
+    ///      recipient would send the money to the zero address.
+    ///
+    ///      A zero `feeUsd` turns the fee off and clears the rest, which is
+    ///      also the escape hatch when a price source dies — see
+    ///      `INativePriceSource`.
+    ///
+    ///      The price source is NOT called here. Requiring a live price to
+    ///      configure a fee would force a deployment to push a price before it
+    ///      can write its config, for a check `_bindFeeWei` makes on every
+    ///      charge anyway.
+    ///
+    /// @param source    Where the native token price comes from.
+    /// @param feeUsd    The fee in USD, with `FEE_USD_DECIMALS` decimals.
+    /// @param recipient Who receives the fee.
+    function setBindFee(INativePriceSource source, uint256 feeUsd, address recipient) external onlyOwner {
+        if (feeUsd == 0) {
+            delete _s().priceSource;
+            delete _s().bindFeeUsd;
+            delete _s().feeRecipient;
+            emit BindFeeConfigured(address(0), 0, address(0));
+            return;
+        }
+        if (address(source) == address(0) || recipient == address(0)) revert IncompleteFeeConfig();
+
+        _s().priceSource = source;
+        _s().bindFeeUsd = feeUsd;
+        _s().feeRecipient = recipient;
+        emit BindFeeConfigured(address(source), feeUsd, recipient);
+    }
+
+    /// @notice What a first bind costs, and where the money goes.
+    function bindFee() external view returns (INativePriceSource source, uint256 feeUsd, address recipient) {
+        IdentityNamesStorage storage $ = _s();
+        return ($.priceSource, $.bindFeeUsd, $.feeRecipient);
+    }
+
+    /// @notice What a first bind costs right now, in wei. Zero when free.
+    ///
+    /// @dev Quote this before sending a bind, and send a little more: the price
+    ///      may move between the quote and the block the bind lands in, and the
+    ///      excess comes back. Reverts when a fee is configured and its price
+    ///      source refuses to answer.
+    function bindFeeWei() external view returns (uint256) {
+        return _bindFeeWei();
+    }
+
+    /// @notice What binding THIS account will cost, in wei. Zero when free.
+    ///
+    /// @dev The quote a client shows. `bindFeeWei` answers "what does a first
+    ///      bind cost", which is not the same question: whether a given bind is
+    ///      a first one depends on the account, and a caller that worked it out
+    ///      itself would be re-deriving `idNode` off chain and drifting from
+    ///      this contract the day either side changes.
+    ///
+    ///      Answers exactly what `bind` will charge, including zero for an
+    ///      account already bound — and it reaches that zero WITHOUT consulting
+    ///      the price source, the same short circuit `_bind` takes, so a rename
+    ///      can still be quoted on a chain whose source has died.
+    ///
+    ///      `userId` is the account id the proof reports, which a client
+    ///      building a proof already holds.
+    function bindFeeWeiFor(bytes32 platformId, string calldata userId) external view returns (uint256) {
+        _requireUsable(platformId);
+        return _s().byId[IdentityNodes.idNode(platformId, userId)].observedAt == 0 ? _bindFeeWei() : 0;
+    }
+
+    /// @dev Zero before the price source is touched, so a chain with no fee
+    ///      never calls one, and a chain whose source has died still binds
+    ///      every name except a first one.
+    function _bindFeeWei() private view returns (uint256) {
+        IdentityNamesStorage storage $ = _s();
+        uint256 feeUsd = $.bindFeeUsd;
+        INativePriceSource source = $.priceSource;
+        if (feeUsd == 0 || address(source) == address(0)) return 0;
+
+        (uint256 price, uint8 decimals) = source.nativeUsdPrice();
+        // The interface says a source reverts rather than answering with a
+        // price it does not stand behind; it does not forbid answering zero.
+        // Refuse it by name — dividing would panic, and a panic reads as a bug
+        // in this contract rather than a source that cannot be used.
+        if (price == 0) revert UnusablePrice(address(source));
+
+        // feeWei = (feeUsd / price) * 1e18, with both sides raised to the same
+        // scale first. Checked arithmetic: an absurd `feeUsd` reverts here
+        // rather than wrapping into a small charge.
+        return (feeUsd * (10 ** decimals) * 1 ether) / (price * (10 ** FEE_USD_DECIMALS));
+    }
+
     // ─── Binding ────────────────────────────────────────────────────
 
     /// @notice Prove an identity and bind it to the caller.
+    ///
+    /// @dev Payable because the FIRST bind of an account id may cost a fee —
+    ///      see `setBindFee`. Quote it with `bindFeeWeiFor`, send at least that
+    ///      much, and the excess comes back in this call. Every other bind
+    ///      costs nothing and any value sent is returned whole.
+    ///
+    ///      `maxFee` is a ceiling, not a payment: the bind is refused when the
+    ///      fee at inclusion is above it. Sending a buffer without one leaves
+    ///      the whole buffer spendable by a price move, and the call sits in
+    ///      the mempool where that move can be arranged.
     ///
     /// @param platformId  Which platform the proof is for.
     /// @param proof       The platform's proof, opaque to this contract.
     /// @param publishName Also store the handle as a string, so a contract can
     ///                    read the reverse direction on chain. The event
     ///                    carries the plaintext either way.
-    function bind(bytes32 platformId, bytes calldata proof, bool publishName) external {
+    /// @param maxFee      The most this caller will pay. Zero is right for
+    ///                    every bind that is not a first one, and refuses a
+    ///                    first bind on a chain that charges.
+    function bind(bytes32 platformId, bytes calldata proof, bool publishName, uint256 maxFee)
+        external
+        payable
+        nonReentrant
+    {
         // Zero means "whichever version this platform defaults to". `_bind`
         // resolves it from the record it has to load anyway, so the default
         // path — the one every unpinned client takes — reads the platform once.
-        _bind(platformId, 0, proof, publishName);
+        _bind(platformId, 0, proof, publishName, maxFee);
     }
 
     /// @notice Prove an identity with a named proof version.
@@ -493,15 +676,20 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      for, and keeps working the day the default moves.
     ///
     /// @param version Which proof format `proof` is written in.
-    function bindAtVersion(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) external {
+    /// @param maxFee  The most this caller will pay — see `bind`.
+    function bindAtVersion(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName, uint256 maxFee)
+        external
+        payable
+        nonReentrant
+    {
         // Zero is `bind`'s private shorthand for the default, and letting it
         // through here would make "name a version" and "name none" the same
         // call with different spellings.
         if (version == 0) revert ZeroVersion();
-        _bind(platformId, version, proof, publishName);
+        _bind(platformId, version, proof, publishName, maxFee);
     }
 
-    function _bind(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) private {
+    function _bind(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName, uint256 maxFee) private {
         Platform memory platform = _requireUsable(platformId);
         if (version == 0) version = platform.latestVersion;
 
@@ -556,6 +744,34 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         _requireNewer(observedAt, _s().byId[idKey].observedAt);
         _requireNewer(observedAt, _s().byHandle[handleKey].observedAt);
 
+        // Read BEFORE the write below, which is what makes it a first bind.
+        //
+        // The fee is per ACCOUNT ID, so a wallet's second account on the same
+        // platform pays again, and every later bind of THIS account is free —
+        // a rename, a wallet move, a re-prove after somebody else took the
+        // name, a bind through a new proof version. Proving again is the only
+        // remedy for a name held by the wrong wallet, and a remedy with a price
+        // on it is not one.
+        //
+        // A free bind never reaches the price source. That is deliberate: it
+        // keeps the remedy working on a chain whose price source has stopped
+        // answering.
+        uint256 fee = _s().byId[idKey].observedAt == 0 ? _bindFeeWei() : 0;
+
+        // Both refusals belong HERE, before a single word is written. The fee
+        // is fully known already, and reverting after the writes would make
+        // the caller pay gas for state the transaction then throws away.
+        //
+        // `maxFee` is the caller's ceiling, and it is what makes the quote
+        // safe to act on. Without it the charge is whatever the price says at
+        // inclusion, up to everything sent — and `bind` calldata and its value
+        // sit in the mempool, so that is front-runnable, not merely unlucky.
+        // It also catches a quote taken for the wrong account: the charge
+        // disagreeing with what the caller priced fails loudly instead of
+        // silently taking more.
+        if (fee > maxFee) revert FeeAboveMax(fee, maxFee);
+        if (msg.value < fee) revert InsufficientFee(fee, msg.value);
+
         _s().byId[idKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
         _s().byHandle[handleKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
 
@@ -576,6 +792,41 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         emit IdentityBound(
             msg.sender, idKey, handleKey, platformId, claim.userId, handle, observedAt, published, version
         );
+
+        _settle(fee, idKey);
+    }
+
+    /// @dev Take the fee and give back the rest, after every state write.
+    ///
+    ///      Forwarded in this call rather than accrued, so the contract holds
+    ///      no funds between calls and needs no withdraw path and no pause.
+    ///
+    ///      The excess is refunded instead of an exact `msg.value` being
+    ///      required. A USD price moves, so an exact match would make an honest
+    ///      bind fail whenever the price changed between the quote and the
+    ///      block. A caller that cannot receive native value sends no excess
+    ///      instead — see the contract comment.
+    ///
+    ///      Refusals happen in `_bind`, before anything is written. By the time
+    ///      this runs the payment is known to cover the fee and to be within
+    ///      the caller's ceiling; all that is left is moving the value.
+    function _settle(uint256 fee, bytes32 idKey) private {
+        if (fee != 0) {
+            address recipient = _s().feeRecipient;
+            // Read BEFORE the transfer. The recipient is owner-configured and
+            // receives all remaining gas, so it can re-enter `setBindFee`;
+            // reading afterwards would log a USD figure that was never charged.
+            uint256 feeUsd = _s().bindFeeUsd;
+            _send(recipient, fee);
+            emit BindFeePaid(msg.sender, idKey, recipient, fee, feeUsd);
+        }
+        uint256 refund = msg.value - fee;
+        if (refund != 0) _send(msg.sender, refund);
+    }
+
+    function _send(address to, uint256 amount) private {
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert NativeTransferFailed(to, amount);
     }
 
     /// @dev Stop resolving the handle this account used to hold.
