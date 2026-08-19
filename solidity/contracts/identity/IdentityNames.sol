@@ -463,6 +463,27 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         return _s().platforms[platformId].latestVersion;
     }
 
+    /// @notice How this platform's handles normalize, as configured right now.
+    ///
+    /// @dev The one part of `Platform` another contract has to be able to read.
+    ///      A contract that keys on handles needs to ask whether some text
+    ///      could be a handle here AT ALL, and `resolveHandle` cannot answer
+    ///      that: it returns the zero address both for a handle nobody holds
+    ///      and for text nobody could ever hold. Without this, such a contract
+    ///      either accepts text that can never resolve, or keeps its own copy
+    ///      of the rules and disagrees with this one the first time `setPlatform`
+    ///      runs.
+    ///
+    ///      Reverts for a platform that is not wired, like the resolvers do.
+    ///
+    ///      What is read here is today's configuration, and the owner may
+    ///      change it. A reader that stores anything derived from these rules
+    ///      inherits the re-keying the contract comment describes, so store the
+    ///      rules-independent form and read this only to validate.
+    function rulesOf(bytes32 platformId) external view returns (HandleNormalizer.Rules memory) {
+        return _requireUsable(platformId).rules;
+    }
+
     // ─── Binding ────────────────────────────────────────────────────
 
     /// @notice Prove an identity and bind it to the caller.

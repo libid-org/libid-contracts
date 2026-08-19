@@ -318,6 +318,31 @@ contract IdentityNamesTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, unwired));
         names.resolvePair(unwired, "alice", "123");
+
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, unwired));
+        names.rulesOf(unwired);
+    }
+
+    /// `rulesOf` reports the configuration as it stands, so another contract
+    /// can ask whether text could be a handle here at all — the question
+    /// `resolveHandle` cannot answer, because it returns the zero address both
+    /// for a handle nobody holds and for text nobody could hold.
+    function test_rulesOfReportsThePlatformsCurrentRules() public {
+        HandleNormalizer.Rules memory rules = names.rulesOf(X);
+        HandleNormalizer.Rules memory expected = HandleVectors.rulesFor(X);
+
+        assertEq(rules.maxLength, expected.maxLength);
+        assertEq(rules.stripLeadingAt, expected.stripLeadingAt);
+        assertEq(rules.isEmail, expected.isEmail);
+        assertEq(rules.allowUnderscore, expected.allowUnderscore);
+        assertEq(rules.allowHyphen, expected.allowHyphen);
+
+        // It follows a reconfiguration, rather than reporting what was set
+        // when the platform was first wired.
+        vm.prank(owner);
+        names.setPlatform(X, HandleVectors.rulesFor(GITHUB));
+
+        assertEq(names.rulesOf(X).allowHyphen, true, "rulesOf did not follow setPlatform");
     }
 
     function test_resolvePairAgreesWhileOneAccountHoldsBoth() public {

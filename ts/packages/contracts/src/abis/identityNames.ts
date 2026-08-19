@@ -392,6 +392,52 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "rulesOf",
+    "inputs": [
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct HandleNormalizer.Rules",
+        "components": [
+          {
+            "name": "maxLength",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "stripLeadingAt",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "isEmail",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowUnderscore",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowHyphen",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setLatestVersion",
     "inputs": [
       {

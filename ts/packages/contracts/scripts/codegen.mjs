@@ -53,6 +53,7 @@ const contracts = [
     name: 'GoogleOidcVerifier',
     exportName: 'googleOidcVerifierAbi',
   },
+  { file: 'HandleEscrow.sol', name: 'HandleEscrow', exportName: 'handleEscrowAbi' },
   { file: 'LibidFactory.sol', name: 'LibidFactory', exportName: 'libidFactoryAbi' },
   { file: 'MockERC20.sol', name: 'MockERC20', exportName: 'mockErc20Abi' },
   { file: 'WTIA9.sol', name: 'WTIA9', exportName: 'wtia9Abi' },

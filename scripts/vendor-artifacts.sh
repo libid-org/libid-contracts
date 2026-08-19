@@ -55,6 +55,8 @@ ARTIFACTS=(
     "GoogleIdentityVerifier:GoogleIdentityVerifier"
     "XIdentityVerifier:XIdentityVerifier"
     "IdentityJwksRoots:IdentityJwksRoots"
+    # escrow — value held against a handle nobody has claimed yet
+    "HandleEscrow:HandleEscrow"
     # factory
     "LibidFactory:LibidFactory"
 )
