@@ -48,6 +48,13 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     error CodeVerifierMismatch();
     error ClientIdentifierNotSerializerSafe(bytes found);
     error CommitmentMismatch(bytes32 proved, bytes32 attested);
+    /// @dev A field was found in no revealed range, or in more than one.
+    error FieldNotUnique(string name, uint256 rangesMatching);
+    /// @dev The first revealed range does not begin the transcript, so nothing
+    ///      says the bytes read as a request line ARE the request line.
+    error RequestLineNotAtOrigin(uint32 start);
+    /// @dev The last revealed range does not reach the signed transcript end.
+    error BodyNotAtTranscriptEnd(uint32 end, uint32 length);
 
     // ─── What a profile supplies ────────────────────────────────────
 
@@ -62,11 +69,62 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _checkTokenBody(bytes memory body) internal pure virtual {}
 
     /// @dev Read the two identity fields from the revealed response bytes.
-    function _readIdentityFields(bytes memory revealed)
+    /// @dev Read the two identity fields. The block is passed whole, NOT
+    ///      concatenated: each field must be found inside a single revealed
+    ///      range, at authenticated offsets.
+    function _readIdentityFields(CeremonyAttestation.DirectionBlock memory block_)
         internal
         pure
         virtual
         returns (string memory userId, string memory handle);
+
+    /// @dev Find a JSON string field in exactly one revealed range.
+    ///
+    ///      Reading from a concatenation of the revealed ranges is what this
+    ///      exists to prevent. Concatenation discards every offset, so a prover
+    ///      revealing disjoint fragments -- the opening of one member, the
+    ///      middle of a display name, the tail of another member -- gets them
+    ///      joined into a document that never existed on the wire, and the
+    ///      duplicate-delimiter check of REQ-COMMON-19A has nothing to fire on
+    ///      because the genuine member is simply not in the buffer.
+    ///
+    ///      Requiring the whole match to sit inside one authenticated range
+    ///      means every byte of it came from one contiguous run the notary
+    ///      signed, at the offsets it signed them at.
+    function _uniqueJsonString(CeremonyAttestation.DirectionBlock memory block_, string memory name)
+        internal
+        pure
+        returns (bytes memory value)
+    {
+        uint256 matches;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonString(block_.revealed[i].value, name);
+            if (found == CeremonyFields.Found.Several) revert FieldNotUnique(name, 2);
+            if (found == CeremonyFields.Found.One) {
+                ++matches;
+                value = v;
+            }
+        }
+        if (matches != 1) revert FieldNotUnique(name, matches);
+    }
+
+    /// @dev The same, for a bare JSON integer.
+    function _uniqueJsonInteger(CeremonyAttestation.DirectionBlock memory block_, string memory name)
+        internal
+        pure
+        returns (bytes memory digits)
+    {
+        uint256 matches;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonInteger(block_.revealed[i].value, name);
+            if (found == CeremonyFields.Found.Several) revert FieldNotUnique(name, 2);
+            if (found == CeremonyFields.Found.One) {
+                ++matches;
+                digits = v;
+            }
+        }
+        if (matches != 1) revert FieldNotUnique(name, matches);
+    }
 
     // ─── The flow ───────────────────────────────────────────────────
 
@@ -120,12 +178,26 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             submission.attestations[0], _platform(), CeremonyProfile.TOKEN_SESSION_TAG, _tokenAuthority(), fee
         );
 
-        if (!_startsWith(_revealedAt(data.sent, 0), _tokenRequestLine())) revert WrongRequestLine();
+        // REQ-COMMON-18A applies to THIS direction too. Without tiling, a
+        // prover reveals two header values it composed itself and this verifier
+        // reads them as the request line and the body -- every field below then
+        // comes from bytes the prover typed rather than from the request the
+        // platform answered.
+        CeremonyAttestation.requireExactCoverage(data.sent, data.sentTranscriptLength);
 
-        // The revealed body. GitHub's `client_secret` is ordered last and
-        // committed, so this is a prefix there and the whole body on X; either
-        // way every field a verifier reads is inside it.
-        bytes memory body = _revealedAt(data.sent, 1);
+        // Range 0 must BEGIN the transcript. Indexing the list is not enough:
+        // the lowest-offset revealed range is wherever the prover put it.
+        if (data.sent.revealed[0].start != 0) {
+            revert RequestLineNotAtOrigin(data.sent.revealed[0].start);
+        }
+        if (!_startsWith(data.sent.revealed[0].value, _tokenRequestLine())) revert WrongRequestLine();
+
+        // The body is the revealed run that reaches the signed transcript end.
+        // GitHub's `client_secret` is ordered last and committed, so its body
+        // range stops at the commitment; X hides no body field, so its runs to
+        // the end. Either way the profile fixes which, and it is anchored to a
+        // signed boundary rather than to a position in a list.
+        bytes memory body = _revealedTail(data.sent, data.sentTranscriptLength);
         _checkTokenBody(body);
 
         // REQ-COMMON-15A. This is the whole binding between the evidence and
@@ -158,7 +230,14 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         );
 
         // REQ-COMMON-21A: the path separates operations on the same server.
-        if (!_startsWith(_revealedAt(data.sent, 0), _identityRequestLine())) {
+        // Anchored at the origin for the same reason as the token request --
+        // the lowest-offset revealed range is wherever the prover put it.
+        if (data.sent.revealed.length == 0 || data.sent.revealed[0].start != 0) {
+            revert RequestLineNotAtOrigin(data.sent.revealed.length == 0
+                    ? type(uint32).max
+                    : data.sent.revealed[0].start);
+        }
+        if (!_startsWith(data.sent.revealed[0].value, _identityRequestLine())) {
             revert WrongRequestLine();
         }
 
@@ -170,7 +249,9 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             CeremonyAttestation.requireBearerHeaderRequest(data.sent, data.sentTranscriptLength);
         _requireCommitmentValue(bearer.commitment, submission.publicInputs, OFF_IDENTITY_COMMITMENT);
 
-        (fields.userId, fields.handle) = _readIdentityFields(_concatRevealed(data.received));
+        // The response direction is tiled too, so no byte of it is invisible.
+        CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
+        (fields.userId, fields.handle) = _readIdentityFields(data.received);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
@@ -187,13 +268,26 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         if (proved != attested) revert CommitmentMismatch(proved, attested);
     }
 
-    function _revealedAt(CeremonyAttestation.DirectionBlock memory block_, uint256 index)
+    /// @dev The revealed run that ends at the signed transcript boundary, or
+    ///      the last one before the profile's committed tail. Anchored to a
+    ///      signed offset rather than to a list position.
+    function _revealedTail(CeremonyAttestation.DirectionBlock memory block_, uint32 length)
         internal
         pure
         returns (bytes memory)
     {
-        if (index >= block_.revealed.length) revert WrongRequestLine();
-        return block_.revealed[index].value;
+        uint256 n = block_.revealed.length;
+        if (n == 0) revert WrongRequestLine();
+        CeremonyAttestation.RevealedRange memory last = block_.revealed[n - 1];
+        if (last.end == length) return last.value;
+
+        // Otherwise the tail is committed -- GitHub's client_secret -- and the
+        // last revealed run must end exactly where that commitment begins.
+        uint256 c = block_.commitments.length;
+        if (c != 0 && block_.commitments[c - 1].end == length && block_.commitments[c - 1].start == last.end) {
+            return last.value;
+        }
+        revert BodyNotAtTranscriptEnd(last.end, length);
     }
 
     function _startsWith(bytes memory data, bytes memory prefix) internal pure returns (bool) {

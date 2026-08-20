@@ -32,6 +32,84 @@ library CeremonyFields {
     /// @dev Leading zeros, a sign, a fraction, an exponent, or no digits at all.
     error NoncanonicalInteger(string name);
 
+    /// @notice What a field lookup found in one range.
+    enum Found {
+        None,
+        One,
+        Several
+    }
+
+    /// @notice `jsonString`, reporting instead of reverting.
+    ///
+    /// @dev A caller searching several revealed ranges needs to distinguish
+    ///      "not in this range" from "malformed", because a field legitimately
+    ///      lives in exactly one of them.
+    function tryJsonString(bytes memory data, string memory name)
+        internal
+        pure
+        returns (Found found, bytes memory value)
+    {
+        bytes memory needle = abi.encodePacked('"', name, '":"');
+        uint256 at;
+        (found, at) = _findUnique(data, needle);
+        if (found != Found.One) return (found, "");
+
+        at += needle.length;
+        uint256 end = at;
+        while (end < data.length && data[end] != '"') {
+            ++end;
+        }
+        // A value with no closing quote inside THIS range has no established
+        // extent, and splicing the rest from a neighbouring range is exactly
+        // what these reads must not do.
+        if (end == data.length) return (Found.None, "");
+
+        value = new bytes(end - at);
+        for (uint256 i = 0; i < value.length; ++i) {
+            value[i] = data[at + i];
+        }
+        return (Found.One, value);
+    }
+
+    /// @notice `jsonInteger`, reporting instead of reverting.
+    function tryJsonInteger(bytes memory data, string memory name)
+        internal
+        pure
+        returns (Found found, bytes memory digits)
+    {
+        bytes memory needle = abi.encodePacked('"', name, '":');
+        uint256 at;
+        (found, at) = _findUnique(data, needle);
+        if (found != Found.One) return (found, "");
+
+        at += needle.length;
+        uint256 end = at;
+        while (end < data.length && data[end] >= "0" && data[end] <= "9") {
+            ++end;
+        }
+        if (end == at) revert NoncanonicalInteger(name);
+        if (end - at > 1 && data[at] == "0") revert NoncanonicalInteger(name);
+        if (end == data.length) return (Found.None, "");
+        if (data[end] != "," && data[end] != "}") revert BadIntegerTerminator(name, data[end]);
+
+        digits = new bytes(end - at);
+        for (uint256 i = 0; i < digits.length; ++i) {
+            digits[i] = data[at + i];
+        }
+        return (Found.One, digits);
+    }
+
+    function _findUnique(bytes memory data, bytes memory needle) private pure returns (Found found, uint256 at) {
+        uint256 hit = type(uint256).max;
+        for (uint256 i = 0; i + needle.length <= data.length; ++i) {
+            if (!_matchesAt(data, needle, i)) continue;
+            if (hit != type(uint256).max) return (Found.Several, 0);
+            hit = i;
+        }
+        if (hit == type(uint256).max) return (Found.None, 0);
+        return (Found.One, hit);
+    }
+
     /// @notice The value of `"name":"value"`, by its full delimiter.
     function jsonString(bytes memory data, string memory name) internal pure returns (bytes memory value) {
         bytes memory needle = abi.encodePacked('"', name, '":"');

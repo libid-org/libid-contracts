@@ -262,7 +262,7 @@ contract GitHubPlatformVerifierTest is Test {
     function test_rejectsAResponseWithNoLogin() public {
         ICeremony.Submission memory s = _submission();
         s.attestations[1] = _identity('{"username":"octocat","id":583231}', CeremonyProfile.AUTHORITY_GITHUB_API);
-        vm.expectPartialRevert(CeremonyFields.FieldNotFound.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
         this.run{value: quote}(s);
     }
 

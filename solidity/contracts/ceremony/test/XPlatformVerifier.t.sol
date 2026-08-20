@@ -433,7 +433,7 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsAResponseNamingTwoUsernames() public {
         ICeremony.Submission memory s = _submission();
         s.attestations[1] = _identityAttestation("2244994945", 'a","username":"b', "");
-        vm.expectPartialRevert(CeremonyFields.AmbiguousField.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
         this.run{value: quote}(s);
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 import {CeremonyFields} from "./CeremonyFields.sol";
 import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {INotaryService} from "./INotaryService.sol";
@@ -81,13 +82,13 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
     /// @dev REQ-PLAT-31. X's `id` is a JSON string, and both fields are read by
     ///      their full `"field":"` delimiters, refusing a transcript where
     ///      either matches twice.
-    function _readIdentityFields(bytes memory revealed)
+    function _readIdentityFields(CeremonyAttestation.DirectionBlock memory block_)
         internal
         pure
         override
         returns (string memory userId, string memory handle)
     {
-        userId = string(CeremonyFields.jsonString(revealed, "id"));
-        handle = string(CeremonyFields.jsonString(revealed, "username"));
+        userId = string(_uniqueJsonString(block_, "id"));
+        handle = string(_uniqueJsonString(block_, "username"));
     }
 }

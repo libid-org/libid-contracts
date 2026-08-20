@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 import {CeremonyFields} from "./CeremonyFields.sol";
 import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {INotaryService} from "./INotaryService.sol";
@@ -91,13 +92,13 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
     ///      member order does not say which of the two closes it.
     ///
     ///      The handle field is `login`, not `username`.
-    function _readIdentityFields(bytes memory revealed)
+    function _readIdentityFields(CeremonyAttestation.DirectionBlock memory block_)
         internal
         pure
         override
         returns (string memory userId, string memory handle)
     {
-        userId = string(CeremonyFields.jsonInteger(revealed, "id"));
-        handle = string(CeremonyFields.jsonString(revealed, "login"));
+        userId = string(_uniqueJsonInteger(block_, "id"));
+        handle = string(_uniqueJsonString(block_, "login"));
     }
 }
