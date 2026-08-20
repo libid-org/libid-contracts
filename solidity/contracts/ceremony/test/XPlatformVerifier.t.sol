@@ -13,6 +13,7 @@ import {ICeremony} from "../ICeremony.sol";
 import {INotaryService} from "../INotaryService.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
+import {TlsNotaryVerifierBase} from "../TlsNotaryVerifierBase.sol";
 import {XPlatformVerifier} from "../XPlatformVerifier.sol";
 
 contract AcceptingHonk is IHonkVerifier {
@@ -285,14 +286,14 @@ contract XPlatformVerifierTest is Test {
     ///      the revealed one no longer matches.
     function test_rejectsAnAttestationRetargetedToAnotherDigest() public {
         ICeremony.Submission memory s = _submission();
-        vm.expectRevert(XPlatformVerifier.CodeVerifierMismatch.selector);
+        vm.expectRevert(TlsNotaryVerifierBase.CodeVerifierMismatch.selector);
         verifier.verify{value: quote}(bytes32(uint256(DIGEST) ^ 1), s);
     }
 
     function test_rejectsAForgedPkceNonce() public {
         ICeremony.Submission memory s = _submission();
         s.pkceNonce = bytes32(uint256(1));
-        vm.expectRevert(XPlatformVerifier.CodeVerifierMismatch.selector);
+        vm.expectRevert(TlsNotaryVerifierBase.CodeVerifierMismatch.selector);
         this.run{value: quote}(s);
     }
 
@@ -316,7 +317,7 @@ contract XPlatformVerifierTest is Test {
         ICeremony.Submission memory s = _submission();
         string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
         s.attestations[0] = _tokenAttestation("authorization_code", "my%2Bapp", v);
-        vm.expectPartialRevert(XPlatformVerifier.ClientIdentifierNotSerializerSafe.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.ClientIdentifierNotSerializerSafe.selector);
         this.run{value: quote}(s);
     }
 
@@ -325,7 +326,7 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsACallerSuppliedClientIdentifier() public {
         ICeremony.Submission memory s = _submission();
         s.clientIdentifier = "attacker";
-        vm.expectRevert(XPlatformVerifier.UnexpectedClientIdentifier.selector);
+        vm.expectRevert(TlsNotaryVerifierBase.UnexpectedClientIdentifier.selector);
         this.run{value: quote}(s);
     }
 
@@ -364,7 +365,7 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsAProofLinkingOtherAttestations() public {
         ICeremony.Submission memory s = _submission();
         s.publicInputs[40] = bytes32(uint256(0xff));
-        vm.expectPartialRevert(XPlatformVerifier.CommitmentMismatch.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.CommitmentMismatch.selector);
         this.run{value: quote}(s);
     }
 
@@ -461,7 +462,7 @@ contract XPlatformVerifierTest is Test {
         for (uint256 i = 0; i < 32; ++i) {
             s.publicInputs[i] = bytes32(uint256(uint8(other[i])));
         }
-        vm.expectPartialRevert(XPlatformVerifier.CommitmentMismatch.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.CommitmentMismatch.selector);
         this.run{value: quote}(s);
     }
 
@@ -473,7 +474,7 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsAForeignIdentityPath() public {
         ICeremony.Submission memory s = _submission();
         s.attestations[1] = _identityAttestationOnPath("GET /2/users/by/username/victim ");
-        vm.expectRevert(XPlatformVerifier.WrongRequestLine.selector);
+        vm.expectRevert(TlsNotaryVerifierBase.WrongRequestLine.selector);
         this.run{value: quote}(s);
     }
 
