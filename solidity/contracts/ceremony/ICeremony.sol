@@ -60,6 +60,26 @@ interface ICeremony {
         bytes clientIdentifier;
     }
 
+    /// @notice What a Platform Verifier returns on acceptance.
+    ///
+    /// @dev An authenticated `userId`, handle and observation time are what the
+    ///      ceremony exists to produce, and the Consumer has no other
+    ///      authenticated source for them (REQ-COMMON-05E). The Proof Verifier
+    ///      adds the operation domain and transaction data to make the
+    ///      `VerifiedClaim` below.
+    ///
+    /// @param clientIdentifier   The exact authenticated bytes, never a digest.
+    /// @param userId             The canonical, immutable platform identifier.
+    /// @param handle             RAW authenticated bytes; the Consumer
+    ///                           normalizes on its own write path.
+    /// @param metadataObservedAt The monotone metadata watermark.
+    struct PlatformFields {
+        bytes clientIdentifier;
+        string userId;
+        string handle;
+        uint64 metadataObservedAt;
+    }
+
     /// @notice What the Proof Verifier returns on acceptance, and nothing but a
     ///         rejection otherwise (REQ-COMMON-06).
     ///
