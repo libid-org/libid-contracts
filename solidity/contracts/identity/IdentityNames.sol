@@ -5,6 +5,9 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
+import {CeremonyAuthorization} from "../ceremony/CeremonyAuthorization.sol";
+import {ICeremony} from "../ceremony/ICeremony.sol";
+import {IPlatformVerifier} from "../ceremony/IPlatformVerifier.sol";
 import {HandleNormalizer} from "./HandleNormalizer.sol";
 import {IdentityNodes} from "./IdentityNodes.sol";
 import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
@@ -102,7 +105,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      another way to prove the SAME account — a notarized session, an
     ///      OIDC token — not another account space. The account did not change,
     ///      so its id did not change, and `bind` keys every version on the same
-    ///      `idNode(platformId, claim.userId)`.
+    ///      `idNode(platformId, attested.userId)`.
     ///
     ///      Read that as a test, not as a rule to remember: a proof format that
     ///      reports a different id is not proving the same account, so it is
@@ -196,6 +199,27 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// every name already bound under it are untouched: a name does not
         /// belong to the proof that established it.
         mapping(bytes32 => mapping(uint32 => VerifierSlot)) verifiers;
+        // ── Appended for the ceremony path. The struct's rule is append-only,
+        //    so these sit after everything above and disturb no stored slot.
+        /// platformId -> Platform Verifier Version -> the verifier for that
+        /// pair. This is the Supported Version Set of REQ-COMMON-05B: more than
+        /// one version of one platform is supported at once, so a deployment
+        /// can run a new one beside the one it replaces while holders migrate.
+        mapping(bytes32 => mapping(uint16 => IPlatformVerifier)) ceremonyVerifiers;
+        /// Every Authorization Digest this Consumer has accepted.
+        ///
+        /// The digest is its own replay nullifier, and recording belongs to the
+        /// party the operation authorizes (REQ-COMMON-03A). Recording it at the
+        /// Proof Verifier instead would let anyone observing a submission call
+        /// first, consume the digest, and leave this contract nothing to apply
+        /// -- a denial of service costing the attacker only a fee.
+        mapping(bytes32 => bool) spentDigests;
+        /// platformId -> how many Platform Verifiers it has registered.
+        ///
+        /// A platform is usable once it can verify by EITHER path. Without this
+        /// a platform wired only for ceremonies would answer "nobody holds this
+        /// name" while it was perfectly able to bind one.
+        mapping(bytes32 => uint256) ceremonyVerifierCount;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.IdentityNames")) - 1)) & ~bytes32(uint256(0xff))
@@ -277,6 +301,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     event PlatformConfigured(bytes32 indexed platformId);
 
     /// @notice A proof version gained or replaced its verifier.
+    /// @notice A Platform Verifier entered or left the Supported Version Set.
+    event CeremonyVerifierConfigured(bytes32 indexed platformId, uint16 indexed version, address verifier);
+
     event VerifierConfigured(
         bytes32 indexed platformId, uint32 indexed version, address verifier, uint64 maxFutureObservation
     );
@@ -299,7 +326,29 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// This platform has no verifier for that proof version, or it was retired.
     error UnknownVersion(bytes32 platformId, uint32 version);
     /// Version zero is the "no version" sentinel and cannot name a verifier.
+    /// @notice The one operation this Consumer owns.
+    ///
+    /// @dev A new operation, or a change to what its transaction data means,
+    ///      takes a NEW domain string rather than another digest field
+    ///      (REQ-COMMON-01A). Note the consequence the specification is candid
+    ///      about: a digest is spendable once at EACH Consumer accepting this
+    ///      domain, so two deployments choosing the same string share a digest
+    ///      space.
+    bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity"));
+
     error ZeroVersion();
+    /// @dev The submission names an operation this Consumer does not own
+    ///      (REQ-COMMON-06A).
+    error ForeignOperationDomain(bytes32 operationDomain);
+    error UnknownCeremonyVersion(bytes32 platformId, uint16 version);
+    /// @dev A digest is spendable once here (REQ-COMMON-03A).
+    error DigestAlreadySpent(bytes32 digest);
+    /// @dev The Authorized Transaction Data of this operation is exactly one
+    ///      address; trailing bytes and other shapes are refused
+    ///      (REQ-COMMON-01F).
+    error BadTransactionData(uint256 length);
+    error WrongClaimValue(uint256 required, uint256 provided);
+    error VerifierPlatformMismatch(bytes32 expected, bytes32 found);
     /// Retiring the version `bind` defaults to would leave the platform unusable.
     error VersionInUseAsLatest(bytes32 platformId, uint32 version);
     /// The proof names a different address than the caller.
@@ -508,20 +557,192 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         VerifierSlot memory slot = _s().verifiers[platformId][version];
         if (address(slot.verifier) == address(0)) revert UnknownVersion(platformId, version);
 
-        IdentityClaim memory claim = slot.verifier.verify(proof);
+        IdentityClaim memory attested = slot.verifier.verify(proof);
 
-        if (claim.target == address(0)) revert NoTarget();
+        if (attested.target == address(0)) revert NoTarget();
         // The one authorization rule. A proof read from the mempool is useless
         // to a reader, because spending it requires being the address it names.
-        if (claim.target != msg.sender) revert NotProofTarget(claim.target, msg.sender);
-        if (claim.observedAt == 0) revert NoObservationTime();
+        if (attested.target != msg.sender) revert NotProofTarget(attested.target, msg.sender);
+        if (attested.observedAt == 0) revert NoObservationTime();
         // Every shipped verifier rejects an empty id before returning, so this
         // is the check that keeps that true for the next one. Without it every
         // account a lax verifier reported would land on the single node
         // `idNode(platformId, "")` and take turns owning it.
-        if (bytes(claim.userId).length == 0) revert NoUserId();
-        _requireNotAhead(claim.observedAt, slot.maxFutureObservation);
+        if (bytes(attested.userId).length == 0) revert NoUserId();
+        _requireNotAhead(attested.observedAt, slot.maxFutureObservation);
 
+        _write(
+            platformId,
+            version,
+            attested.userId,
+            attested.handle,
+            attested.observedAt,
+            slot.maxFutureObservation,
+            publishName,
+            platform
+        );
+    }
+
+    // ─── The ceremony path ──────────────────────────────────────────
+
+    /// @notice Bind an identity from a ceremony submission.
+    ///
+    /// @dev This contract wears two of the four roles of ceremony-common
+    ///      section 5.1. As PROOF VERIFIER it recomputes the Authorization
+    ///      Digest, dispatches on the pair the submission names, quotes and
+    ///      forwards the fees, and takes nothing platform-specific into its own
+    ///      hands. As CONSUMER it decides what the transaction means: it owns
+    ///      the operation domain, records the digest, and enforces the
+    ///      authorization predicate.
+    ///
+    ///      The value attached must equal `quoteClaim` for the same pair. Exact
+    ///      value at every hop needs no refund path, so no partial-failure rule
+    ///      is required and nothing can be captured in transit.
+    function claim(ICeremony.Submission calldata submission, bool publishName) external payable {
+        // ── Consumer: is this operation ours at all? ──────────────────
+        //
+        // The domain travels in the submission and is authenticated by digest
+        // recomputation rather than trusted: a submission naming another domain
+        // produces a different digest, which fails whichever binding check its
+        // profile uses. Checking it first means a submission for someone else's
+        // operation is refused before any fee moves.
+        if (submission.operationDomain != CLAIM_IDENTITY_DOMAIN) {
+            revert ForeignOperationDomain(submission.operationDomain);
+        }
+
+        Platform memory platform = _requireConfigured(submission.platformId);
+
+        IPlatformVerifier verifier = _s().ceremonyVerifiers[submission.platformId][submission.version];
+        if (address(verifier) == address(0)) {
+            revert UnknownCeremonyVersion(submission.platformId, submission.version);
+        }
+
+        // ── Proof Verifier: recompute the digest ──────────────────────
+        //
+        // The Chain ID comes from the chain this contract is executing on, and
+        // never from the submission -- there is nothing there for a caller to
+        // choose (REQ-COMMON-06C). The version comes from the submission, and
+        // cannot disagree with the dispatched one because dispatch read it from
+        // there in the first place.
+        bytes32 digest = CeremonyAuthorization.digest(
+            submission.operationDomain,
+            submission.version,
+            chainId(),
+            submission.authorizationNonce,
+            submission.transactionData
+        );
+
+        // ── Consumer: spend the digest before any effect ──────────────
+        if (_s().spentDigests[digest]) revert DigestAlreadySpent(digest);
+        _s().spentDigests[digest] = true;
+
+        // ── Consumer: the authorization predicate ─────────────────────
+        //
+        // The Authorized Transaction Data of this operation is one address: the
+        // wallet the identity binds to. Requiring it to be the authenticated
+        // caller is what keeps consent-phishing out of identity theft -- a
+        // Consumer binding to a submitter-supplied address instead would let
+        // anyone spend a genuine proof at an address of their choosing.
+        if (submission.transactionData.length != 32) {
+            revert BadTransactionData(submission.transactionData.length);
+        }
+        address target = abi.decode(submission.transactionData, (address));
+        if (target != msg.sender) revert NotProofTarget(target, msg.sender);
+
+        // ── Proof Verifier: forward exactly the quoted value ──────────
+        uint256 required = verifier.quote();
+        if (msg.value != required) revert WrongClaimValue(required, msg.value);
+
+        ICeremony.PlatformFields memory fields = verifier.verify{value: required}(digest, submission);
+
+        if (bytes(fields.userId).length == 0) revert NoUserId();
+        if (fields.metadataObservedAt == 0) revert NoObservationTime();
+
+        // The ceremony path carries no per-version clock allowance: each
+        // Platform Verifier derives `metadataObservedAt` from its own profile's
+        // authenticated source and rejects one too far ahead itself.
+        _write(
+            submission.platformId,
+            uint32(submission.version),
+            fields.userId,
+            fields.handle,
+            fields.metadataObservedAt,
+            0,
+            publishName,
+            platform
+        );
+    }
+
+    /// @notice What `claim` requires to be delivered for this pair.
+    ///
+    /// @dev Quoted over the whole path, so a Consumer need not know its
+    ///      topology: two Notary Fees on the X and GitHub paths, and zero on
+    ///      Google's, which verifies no attestation (REQ-COMMON-06E).
+    function quoteClaim(bytes32 platformId, uint16 version) external view returns (uint256) {
+        IPlatformVerifier verifier = _s().ceremonyVerifiers[platformId][version];
+        if (address(verifier) == address(0)) revert UnknownCeremonyVersion(platformId, version);
+        return verifier.quote();
+    }
+
+    /// @notice Whether this digest has already been spent here.
+    function digestSpent(bytes32 digest) external view returns (bool) {
+        return _s().spentDigests[digest];
+    }
+
+    /// @notice The Platform Verifier registered for a pair, or the zero address.
+    function ceremonyVerifierOf(bytes32 platformId, uint16 version) external view returns (IPlatformVerifier) {
+        return _s().ceremonyVerifiers[platformId][version];
+    }
+
+    /// @notice Add or remove a Platform Verifier from the Supported Version Set.
+    ///
+    /// @dev The set decides which proof statements this chain accepts, so it is
+    ///      authority rather than configuration (REQ-COMMON-05C). Removing a
+    ///      version strands nothing permanently: a holder runs the ceremony
+    ///      again under a supported one.
+    function setCeremonyVerifier(bytes32 platformId, uint16 version, IPlatformVerifier verifier) external onlyOwner {
+        if (version == 0) revert ZeroVersion();
+        _requireConfigured(platformId);
+        if (address(verifier) != address(0) && verifier.platformId() != platformId) {
+            revert VerifierPlatformMismatch(platformId, verifier.platformId());
+        }
+        bool had = address(_s().ceremonyVerifiers[platformId][version]) != address(0);
+        bool has = address(verifier) != address(0);
+        if (had != has) {
+            if (has) ++_s().ceremonyVerifierCount[platformId];
+            else --_s().ceremonyVerifierCount[platformId];
+        }
+        _s().ceremonyVerifiers[platformId][version] = verifier;
+        emit CeremonyVerifierConfigured(platformId, version, address(verifier));
+    }
+
+    /// @notice The Chain ID this Consumer commits in every digest.
+    ///
+    /// @dev THE CHAIN PROFILE FIXES THIS, and the runtime must derive it the
+    ///      same way or no digest ever matches. For an EVM chain the identifier
+    ///      is `block.chainid`, and the bytes it contributes are its 32-byte
+    ///      big-endian encoding. The digest commits a HASH of the identifier
+    ///      rather than the identifier itself, because chains name themselves
+    ///      incompatibly and some too wide for 64 bits (REQ-COMMON-01C).
+    function chainId() public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid));
+    }
+
+    /// @dev Everything after authentication, shared by both entry points.
+    ///
+    ///      Which proof established a name is the authentication half's
+    ///      business; the keyspace, the ordering and the display are the same
+    ///      whichever half ran.
+    function _write(
+        bytes32 platformId,
+        uint32 version,
+        string memory userId,
+        string memory rawHandle,
+        uint64 rawObservedAt,
+        uint64 futureAllowance,
+        bool publishName,
+        Platform memory platform
+    ) private {
         // Put the observation on the scale every version of this platform
         // shares, BEFORE it is compared with or written to a node.
         //
@@ -538,13 +759,13 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // so subtracting it recovers the moment the observation describes.
         // Ordering inside one version is untouched: every claim shifts by the
         // same amount.
-        uint64 observedAt = _onSharedScale(claim.observedAt, slot.maxFutureObservation);
+        uint64 observedAt = _onSharedScale(rawObservedAt, futureAllowance);
 
         // Normalize here rather than trusting the verifier or the caller. The
         // key has to come from the same transform every reader uses.
-        string memory handle = HandleNormalizer.normalize(claim.handle, platform.rules);
+        string memory handle = HandleNormalizer.normalize(rawHandle, platform.rules);
 
-        bytes32 idKey = IdentityNodes.idNode(platformId, claim.userId);
+        bytes32 idKey = IdentityNodes.idNode(platformId, userId);
         bytes32 handleKey = IdentityNodes.handleNode(platformId, handle);
 
         // Strictly newer than BOTH, which is what stops a proof held back from
@@ -573,9 +794,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             _s().published[msg.sender][platformId] = handle;
         }
 
-        emit IdentityBound(
-            msg.sender, idKey, handleKey, platformId, claim.userId, handle, observedAt, published, version
-        );
+        emit IdentityBound(msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version);
     }
 
     /// @dev Stop resolving the handle this account used to hold.
@@ -650,7 +869,24 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      the honest test for the whole life of the platform.
     function _requireUsable(bytes32 platformId) private view returns (Platform memory platform) {
         platform = _s().platforms[platformId];
-        if (!platform.configured || platform.latestVersion == 0) revert UnknownPlatform(platformId);
+        // Between `setPlatform` and wiring a verifier, a platform owns a
+        // keyspace and can verify nothing. Answering `address(0)` there would
+        // tell a caller "nobody holds this name" about a platform that is not
+        // wired yet -- so either path counts, and neither is required.
+        bool canVerify = platform.latestVersion != 0 || _s().ceremonyVerifierCount[platformId] != 0;
+        if (!platform.configured || !canVerify) revert UnknownPlatform(platformId);
+    }
+
+    /// @dev The ceremony path's gate: the keyspace exists, and nothing more.
+    ///
+    ///      `_requireUsable` additionally wants a `latestVersion`, which is the
+    ///      LEGACY dispatch's notion of a default. The ceremony path keeps its
+    ///      own Supported Version Set and names its version explicitly, so
+    ///      requiring the other one would make a deployment register a legacy
+    ///      verifier it never intends to use.
+    function _requireConfigured(bytes32 platformId) private view returns (Platform memory platform) {
+        platform = _s().platforms[platformId];
+        if (!platform.configured) revert UnknownPlatform(platformId);
     }
 
     function _requireNewer(uint64 observedAt, uint64 known) private pure {
