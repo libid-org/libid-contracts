@@ -24,6 +24,10 @@ library CeremonyAuthorization {
     ///      version (REQ-COMMON-12).
     bytes32 internal constant PKCE_DOMAIN = keccak256(bytes("libid.identity.pkce"));
 
+    /// @dev Raised when the Authorized Transaction Data cannot be described by
+    ///      the layout's four-byte length field.
+    error TransactionDataTooLong(uint256 length);
+
     /// @dev The unpadded base64url alphabet, one byte per index.
     bytes internal constant B64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -38,6 +42,12 @@ library CeremonyAuthorization {
         bytes32 authorizationNonce,
         bytes memory transactionData
     ) internal pure returns (bytes memory) {
+        // REQ-COMMON-01 says reject a value that does not fit its field. A
+        // silent `uint32` truncation here would encode a length the data does
+        // not have, and the Rust and TypeScript builders both refuse it.
+        if (transactionData.length > type(uint32).max) {
+            revert TransactionDataTooLong(transactionData.length);
+        }
         return abi.encodePacked(
             operationDomain,
             platformVerifierVersion,

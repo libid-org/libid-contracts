@@ -178,6 +178,42 @@ function validateDirection(block: DirectionBlock, direction: string, length: num
   }
 }
 
+/// Require the revealed ranges and commitments of one direction to tile
+/// `[0, length)` exactly, with no gap and no overlap (REQ-COMMON-35).
+///
+/// Only for a direction whose profile demands exact coverage. The rule is
+/// conditional: REQ-COMMON-43 withholds it from a credential committed in a
+/// request body, which is GitHub's `client_secret`, so `validate` does not
+/// apply it and a caller asks for it where the profile does.
+///
+/// A gap is where a prover hides bytes. Exact coverage leaves the committed
+/// range as the only region the verifier cannot read.
+export function requireExactCoverage(
+  block: DirectionBlock,
+  direction: string,
+  length: number,
+): void {
+  const spans: Array<[number, number]> = [
+    ...block.revealed.map((r): [number, number] => [r.start, r.end]),
+    ...block.commitments.map((c): [number, number] => [c.start, c.end]),
+  ].sort((a, b) => a[0] - b[0])
+
+  let at = 0
+  for (const [start, end] of spans) {
+    if (start !== at) {
+      throw new AttestationError(
+        `transcript bytes ${at}..${start} of the ${direction} direction are covered by nothing`,
+      )
+    }
+    at = end
+  }
+  if (at !== length) {
+    throw new AttestationError(
+      `transcript bytes ${at}..${length} of the ${direction} direction are covered by nothing`,
+    )
+  }
+}
+
 export function validate(attested: AttestedData): void {
   validateDirection(attested.sent, 'sent', attested.sentTranscriptLength)
   validateDirection(attested.received, 'received', attested.recvTranscriptLength)

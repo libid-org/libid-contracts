@@ -6,6 +6,7 @@ import {
   decodeAttestedData,
   encodeAttestedData,
   HEADER_LEN,
+  requireExactCoverage,
   tag,
 } from './attestation.js'
 
@@ -135,5 +136,27 @@ describe('attested data', () => {
     const a = sample()
     a.sent.revealed[0]!.bytes = new Uint8Array(19)
     expect(() => encodeAttestedData(a)).toThrow(/carries 19 bytes/)
+  })
+
+  it('accepts an exact tiling', () => {
+    const a = sample()
+    expect(() => requireExactCoverage(a.sent, 'sent', a.sentTranscriptLength)).not.toThrow()
+  })
+
+  it('rejects a gap, which validate accepts on purpose', () => {
+    // Coverage is conditional under REQ-COMMON-43, so the shape check passes
+    // and the identity-session verifier is what must refuse this.
+    const a = sample()
+    a.sent.commitments[0]!.start = 21
+    expect(() => encodeAttestedData(a)).not.toThrow()
+    expect(() => requireExactCoverage(a.sent, 'sent', a.sentTranscriptLength)).toThrow(
+      /bytes 20\.\.21 .* covered by nothing/,
+    )
+  })
+
+  it('rejects a trailing gap', () => {
+    // Bytes past the last range are invisible without the signed length.
+    const a = sample()
+    expect(() => requireExactCoverage(a.sent, 'sent', 80)).toThrow(/bytes 60\.\.80/)
   })
 })

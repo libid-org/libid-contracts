@@ -110,4 +110,41 @@ contract CeremonyAttestationTest is Test {
         vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.PastTranscriptEnd.selector, 60, 50));
         this.decode(tampered);
     }
+
+    function coverSent(bytes calldata data) external pure {
+        CeremonyAttestation.AttestedData memory a = CeremonyAttestation.decode(data);
+        CeremonyAttestation.requireExactCoverage(a.sent, a.sentTranscriptLength);
+    }
+
+    /// @dev The pinned fixture tiles the sent direction exactly: 0..20 revealed,
+    ///      20..40 committed, 40..60 revealed.
+    function test_coverageAcceptsAnExactTiling() public view {
+        this.coverSent(FIXTURE);
+    }
+
+    /// @dev Moving the commitment one byte forward leaves sent byte 20 covered
+    ///      by nothing. `decode` accepts that on purpose -- coverage is
+    ///      conditional under REQ-COMMON-43 -- and the identity-session
+    ///      verifier is what must refuse it. A gap is where a prover hides
+    ///      bytes, so this is the check that keeps the committed range the only
+    ///      region nobody can read.
+    function test_coverageRejectsAGap() public {
+        bytes memory tampered = FIXTURE;
+        tampered[207] = bytes1(uint8(21)); // sent commitment start 20 -> 21
+
+        // decode alone still accepts it, which is why the helper exists.
+        this.decode(tampered);
+
+        vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.CoverageGap.selector, 20, 21));
+        this.coverSent(tampered);
+    }
+
+    /// @dev A trailing gap is the other half: bytes past the last range are
+    ///      invisible without the signed length to close them (REQ-COMMON-36).
+    function test_coverageRejectsATrailingGap() public {
+        bytes memory tampered = FIXTURE;
+        tampered[139] = 0x50; // sentTranscriptLength 60 -> 80
+        vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.CoverageGap.selector, 60, 80));
+        this.coverSent(tampered);
+    }
 }

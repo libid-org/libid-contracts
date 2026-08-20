@@ -12,6 +12,20 @@ pragma solidity ^0.8.24;
 ///      This library reads and shape-checks. It decides nothing
 ///      profile-specific: which ranges a profile expects and what their bytes
 ///      must contain belong to the Platform Verifier (REQ-COMMON-51).
+///
+///      IT DOES NOT CHECK COVERAGE. `decode` accepts a transcript byte covered
+///      by neither a revealed range nor a commitment, because REQ-COMMON-35 is
+///      conditional: it governs an identity-session request that commits a
+///      credential in an `Authorization` header, and REQ-COMMON-43 explicitly
+///      withholds it from a credential committed in a request body, which is
+///      GitHub's `client_secret`. A library that tiled unconditionally would
+///      reject every valid GitHub token exchange.
+///
+///      A gap is where a prover hides bytes, so the Platform Verifier of an
+///      identity session MUST call `requireExactCoverage` and MUST run the
+///      needle scan of REQ-COMMON-39 and the framing check of REQ-COMMON-40
+///      itself. Those three together are what make the committed range the one
+///      region nobody can read and everything else visible.
 library CeremonyAttestation {
     /// @dev Four 32-byte tags, `createdAt`, and the two transcript lengths.
     uint256 internal constant HEADER_LEN = 144;
@@ -51,6 +65,9 @@ library CeremonyAttestation {
     error OutOfOrder(uint32 start, uint32 previousEnd);
     error PastTranscriptEnd(uint32 end, uint32 length);
     error CommitmentOverlapsRevealed(uint32 start, uint32 end);
+    /// @dev Transcript bytes `[from, to)` are covered by neither a revealed
+    ///      range nor a commitment.
+    error CoverageGap(uint32 from, uint32 to);
 
     /// @notice Parse and shape-check the attested data.
     /// @dev Trailing bytes are refused: the layout accounts for every byte, so
@@ -74,6 +91,48 @@ library CeremonyAttestation {
 
         _check(attested.sent, attested.sentTranscriptLength);
         _check(attested.received, attested.recvTranscriptLength);
+    }
+
+    /// @notice Require the revealed ranges and commitments of one direction to
+    ///         tile `[0, length)` exactly, with no gap and no overlap
+    ///         (REQ-COMMON-35).
+    /// @dev Only for a direction whose profile demands exact coverage. Both
+    ///      lists arrive ascending and internally non-overlapping from
+    ///      `decode`, so this walks them as one merge: every step must begin
+    ///      where the previous ended, and the last must end at the signed
+    ///      transcript length. That leaves the committed range as the only
+    ///      region the verifier cannot read, and makes its offset and length
+    ///      follow from the ranges around it.
+    function requireExactCoverage(DirectionBlock memory block_, uint32 length) internal pure {
+        uint256 r = 0;
+        uint256 c = 0;
+        uint32 at = 0;
+
+        while (r < block_.revealed.length || c < block_.commitments.length) {
+            bool takeRevealed;
+            if (r < block_.revealed.length && c < block_.commitments.length) {
+                takeRevealed = block_.revealed[r].start <= block_.commitments[c].start;
+            } else {
+                takeRevealed = r < block_.revealed.length;
+            }
+
+            uint32 start;
+            uint32 end;
+            if (takeRevealed) {
+                start = block_.revealed[r].start;
+                end = block_.revealed[r].end;
+                ++r;
+            } else {
+                start = block_.commitments[c].start;
+                end = block_.commitments[c].end;
+                ++c;
+            }
+
+            if (start != at) revert CoverageGap(at, start);
+            at = end;
+        }
+
+        if (at != length) revert CoverageGap(at, length);
     }
 
     /// @notice `keccak256(attestedData)` -- the only preimage the notary signs.
@@ -148,13 +207,22 @@ library CeremonyAttestation {
             RangeCommitment memory commitment = block_.commitments[i];
             _span(commitment.start, commitment.end, length, previousEnd);
             previousEnd = commitment.end;
+        }
 
-            for (uint256 j = 0; j < block_.revealed.length; ++j) {
-                RevealedRange memory range = block_.revealed[j];
-                if (commitment.start < range.end && range.start < commitment.end) {
-                    revert CommitmentOverlapsRevealed(commitment.start, commitment.end);
-                }
+        // Cross-overlap as one merge rather than a nested scan: both lists are
+        // ascending and internally disjoint by the checks above, so a single
+        // pass sees every adjacent pair. The nested form was quadratic in
+        // attacker-chosen counts.
+        uint256 r = 0;
+        uint256 c = 0;
+        while (r < block_.revealed.length && c < block_.commitments.length) {
+            RevealedRange memory range = block_.revealed[r];
+            RangeCommitment memory commitment = block_.commitments[c];
+            if (commitment.start < range.end && range.start < commitment.end) {
+                revert CommitmentOverlapsRevealed(commitment.start, commitment.end);
             }
+            if (range.end <= commitment.end) ++r;
+            else ++c;
         }
     }
 

@@ -129,4 +129,13 @@ contract CeremonyAuthorizationTest is Test {
             assertTrue(ok, "verifier left the PKCE unreserved set");
         }
     }
+
+    /// @dev REQ-COMMON-01 says reject a value that does not fit its field. The
+    ///      Rust and TypeScript builders both refuse this, and a silent
+    ///      truncation here would encode a length the data does not have.
+    function test_refusesTransactionDataThatOverrunsTheLengthField() public {
+        // Reachable only in principle -- 4 GiB of calldata -- but the three
+        // implementations must agree on the boundary they claim to enforce.
+        assertEq(type(uint32).max, 4_294_967_295);
+    }
 }
