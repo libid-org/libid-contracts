@@ -55,6 +55,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     error RequestLineNotAtOrigin(uint32 start);
     /// @dev The last revealed range does not reach the signed transcript end.
     error BodyNotAtTranscriptEnd(uint32 end, uint32 length);
+    /// @dev The token request does not have the exact shape the profile fixes.
+    error WrongTokenRequestLayout(uint256 revealedRanges, uint256 commitments);
+    /// @dev The head/body separator is missing or ambiguous, so the body cannot
+    ///      be located by the framing the server itself parsed.
+    error NoHeadBoundary(uint256 occurrences);
 
     // ─── What a profile supplies ────────────────────────────────────
 
@@ -63,6 +68,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _identityAuthority() internal pure virtual returns (bytes32);
     function _tokenRequestLine() internal pure virtual returns (bytes memory);
     function _identityRequestLine() internal pure virtual returns (bytes memory);
+
+    /// @dev How many committed ranges the token request carries. X hides no
+    ///      body field and uses a public client, so zero; GitHub commits its
+    ///      `client_secret`, ordered last, so one.
+    function _tokenSentCommitments() internal pure virtual returns (uint256);
 
     /// @dev Anything the profile checks in the token body beyond the fields
     ///      every profile reads. Default: nothing.
@@ -192,12 +202,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         }
         if (!_startsWith(data.sent.revealed[0].value, _tokenRequestLine())) revert WrongRequestLine();
 
-        // The body is the revealed run that reaches the signed transcript end.
-        // GitHub's `client_secret` is ordered last and committed, so its body
-        // range stops at the commitment; X hides no body field, so its runs to
-        // the end. Either way the profile fixes which, and it is anchored to a
-        // signed boundary rather than to a position in a list.
-        bytes memory body = _revealedTail(data.sent, data.sentTranscriptLength);
+        bytes memory body = _tokenBody(data.sent);
         _checkTokenBody(body);
 
         // REQ-COMMON-15A. This is the whole binding between the evidence and
@@ -268,26 +273,43 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         if (proved != attested) revert CommitmentMismatch(proved, attested);
     }
 
-    /// @dev The revealed run that ends at the signed transcript boundary, or
-    ///      the last one before the profile's committed tail. Anchored to a
-    ///      signed offset rather than to a list position.
-    function _revealedTail(CeremonyAttestation.DirectionBlock memory block_, uint32 length)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        uint256 n = block_.revealed.length;
-        if (n == 0) revert WrongRequestLine();
-        CeremonyAttestation.RevealedRange memory last = block_.revealed[n - 1];
-        if (last.end == length) return last.value;
-
-        // Otherwise the tail is committed -- GitHub's client_secret -- and the
-        // last revealed run must end exactly where that commitment begins.
-        uint256 c = block_.commitments.length;
-        if (c != 0 && block_.commitments[c - 1].end == length && block_.commitments[c - 1].start == last.end) {
-            return last.value;
+    /// @dev The HTTP message body of the token request.
+    ///
+    ///      Located by the framing the SERVER parsed -- the `\r\n\r\n` that ends
+    ///      the head -- and not by a position in the range list. That
+    ///      distinction is the whole point: a prover who can choose which run
+    ///      counts as "the body" simply reveals a decoy after committing the
+    ///      real one, and every field below is then read from bytes the
+    ///      platform never saw while the platform executed something else.
+    ///
+    ///      So the profile fixes the shape exactly: ONE revealed run beginning
+    ///      at offset 0, and exactly the committed ranges the profile expects.
+    ///      X carries none, because it hides no body field and authenticates
+    ///      with a public client; GitHub carries one, its `client_secret`,
+    ///      ordered last under REQ-COMMON-22 and reaching the transcript end.
+    function _tokenBody(CeremonyAttestation.DirectionBlock memory block_) internal pure returns (bytes memory body) {
+        if (block_.revealed.length != 1 || block_.commitments.length != _tokenSentCommitments()) {
+            revert WrongTokenRequestLayout(block_.revealed.length, block_.commitments.length);
         }
-        revert BodyNotAtTranscriptEnd(last.end, length);
+        bytes memory whole = block_.revealed[0].value;
+
+        // Exactly one head boundary. A well-formed request has one; requiring
+        // it removes any question of which run of bytes the body is.
+        uint256 at = type(uint256).max;
+        uint256 seen;
+        for (uint256 i = 0; i + 4 <= whole.length; ++i) {
+            if (whole[i] == 0x0d && whole[i + 1] == 0x0a && whole[i + 2] == 0x0d && whole[i + 3] == 0x0a) {
+                ++seen;
+                if (at == type(uint256).max) at = i;
+            }
+        }
+        if (seen != 1) revert NoHeadBoundary(seen);
+
+        at += 4;
+        body = new bytes(whole.length - at);
+        for (uint256 i = 0; i < body.length; ++i) {
+            body[i] = whole[at + i];
+        }
     }
 
     function _startsWith(bytes memory data, bytes memory prefix) internal pure returns (bool) {

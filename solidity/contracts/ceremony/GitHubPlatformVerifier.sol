@@ -77,6 +77,12 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
         return CeremonyProfile.AUTHORITY_GITHUB_API;
     }
 
+    /// @dev GitHub commits its `client_secret`, ordered last under
+    ///      REQ-COMMON-22, so exactly one committed range reaches the end.
+    function _tokenSentCommitments() internal pure override returns (uint256) {
+        return 1;
+    }
+
     function _tokenRequestLine() internal pure override returns (bytes memory) {
         return "POST /login/oauth/access_token ";
     }

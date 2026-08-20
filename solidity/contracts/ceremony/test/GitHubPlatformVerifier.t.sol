@@ -78,22 +78,21 @@ contract GitHubPlatformVerifierTest is Test {
     /// The exchange: request line, then the revealed body PREFIX. The secret is
     /// ordered last and committed, so the prefix stops where it begins.
     function _exchange(bytes32 authority) private pure returns (ICeremony.Attestation memory) {
-        bytes memory line = "POST /login/oauth/access_token HTTP/1.1\r\n";
-        bytes memory prefix = abi.encodePacked(
+        // One revealed run up to the secret, which is ordered last and
+        // committed. The head boundary sits inside the revealed run, so the
+        // body is located by the framing rather than by a range position.
+        bytes memory whole = abi.encodePacked(
+            "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
             CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
         );
-        uint32 lineEnd = uint32(line.length);
-        uint32 prefixEnd = lineEnd + uint32(prefix.length);
-        uint32 secretEnd = prefixEnd + 40; // `&client_secret=<hex>`, committed
+        uint32 wholeEnd = uint32(whole.length);
+        uint32 secretEnd = wholeEnd + 40; // `&client_secret=<hex>`, committed
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: lineEnd, value: line}),
-                AttestationBuilder.Range({start: lineEnd, end: prefixEnd, value: prefix})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, end: wholeEnd, value: whole})),
             commitments: AttestationBuilder.one(
-                AttestationBuilder.Commitment({start: prefixEnd, end: secretEnd, value: bytes32(uint256(0x5EC1E7))})
+                AttestationBuilder.Commitment({start: wholeEnd, end: secretEnd, value: bytes32(uint256(0x5EC1E7))})
             ),
             length: secretEnd
         });

@@ -196,7 +196,7 @@ contract LayoutForgeryTest is Test {
         // into a document that never existed on the wire -- and the
         // duplicate-delimiter check had nothing to fire on, because the genuine
         // member was not in the buffer at all.
-        vm.expectPartialRevert(CeremonyAttestation.CoverageGap.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.WrongTokenRequestLayout.selector);
         this.run{value: quote}(s);
     }
 

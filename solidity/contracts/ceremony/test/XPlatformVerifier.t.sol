@@ -112,20 +112,24 @@ contract XPlatformVerifierTest is Test {
         bool bearerFraming
     ) private pure returns (ICeremony.Attestation memory) {
         AttestationBuilder.Direction memory received;
-        bytes memory line = "POST /2/oauth2/token HTTP/1.1\r\n";
-        bytes memory body = abi.encodePacked(
-            "grant_type=", grantType, "&client_id=", clientId, "&code=abc&code_verifier=", verifierValue
+        // The whole request in one revealed run: X uses a public client and
+        // hides no body field, so the head boundary is visible and the body is
+        // located by the framing the server itself parsed.
+        bytes memory whole = abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
+            "grant_type=",
+            grantType,
+            "&client_id=",
+            clientId,
+            "&code=abc&code_verifier=",
+            verifierValue
         );
-        uint32 lineEnd = uint32(line.length);
-        uint32 bodyEnd = lineEnd + uint32(body.length);
+        uint32 wholeEnd = uint32(whole.length);
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: lineEnd, value: line}),
-                AttestationBuilder.Range({start: lineEnd, end: bodyEnd, value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, end: wholeEnd, value: whole})),
             commitments: AttestationBuilder.none(),
-            length: bodyEnd
+            length: wholeEnd
         });
         // A real token response: the bearer committed and framed by the
         // revealed `"access_token":"` delimiter and its closing quote, with
