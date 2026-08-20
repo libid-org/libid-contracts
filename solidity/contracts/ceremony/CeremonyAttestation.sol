@@ -68,6 +68,17 @@ library CeremonyAttestation {
     /// @dev Transcript bytes `[from, to)` are covered by neither a revealed
     ///      range nor a commitment.
     error CoverageGap(uint32 from, uint32 to);
+    /// @dev Spans overlap. `decode` rejects this already; naming it here beats
+    ///      reporting a backwards gap to a caller that built a block by hand.
+    error SpansOverlap(uint32 at);
+    /// @dev This request commits exactly one credential, so several
+    ///      commitments would leave the framed range and the proved range
+    ///      unrelated.
+    error NotOneCommitment(uint256 count);
+    /// @dev An obsolete line fold in the revealed request bytes.
+    error ObsoleteLineFold(uint256 at);
+    error NotOneAuthorizationHeader(uint256 count);
+    error BadBearerFraming();
 
     /// @notice Parse and shape-check the attested data.
     /// @dev Trailing bytes are refused: the layout accounts for every byte, so
@@ -103,6 +114,159 @@ library CeremonyAttestation {
     ///      transcript length. That leaves the committed range as the only
     ///      region the verifier cannot read, and makes its offset and length
     ///      follow from the ranges around it.
+    /// @dev `\r\nauthorization: Bearer ` -- the raw bytes REQ-COMMON-40 wants
+    ///      immediately before the committed range.
+    bytes internal constant BEARER_PREFIX = "\r\nauthorization: Bearer ";
+    /// @dev And immediately after it.
+    bytes internal constant BEARER_SUFFIX = "\r\n";
+    /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts.
+    bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:bearer";
+
+    /// @notice Every check REQ-COMMON-35, -39 and -40 require of an
+    ///         identity-session request that commits a credential in an HTTP
+    ///         `Authorization` header.
+    ///
+    /// @dev At launch that is X's `/2/users/me` request and GitHub's `/user`
+    ///      request, and nothing else. REQ-COMMON-43 forbids applying these to
+    ///      a credential committed in a request body -- GitHub's token
+    ///      exchange commits `client_secret` in a form body, so demanding a
+    ///      CRLF-framed header around it would reject every valid exchange.
+    ///
+    ///      The three are one call because they are one property, and two of
+    ///      them are worthless alone. The uniqueness scan counts the needle
+    ///      across REVEALED bytes only, so a byte covered by nothing is a byte
+    ///      it never reads: without coverage a prover hides a second
+    ///      authorization header in a gap, the count stays at one, and the
+    ///      platform honours whichever header it likes.
+    ///
+    /// @return commitment The committed bearer range, which the caller then
+    ///         matches against the circuit's identity-bearer public input.
+    function requireBearerHeaderRequest(DirectionBlock memory block_, uint32 length)
+        internal
+        pure
+        returns (RangeCommitment memory commitment)
+    {
+        // One committed range, so the range REQ-COMMON-40 frames and the
+        // commitment the circuit opens are the same object. REQ-COMMON-60
+        // permits several per direction, and nothing else here would tie them.
+        if (block_.commitments.length != 1) revert NotOneCommitment(block_.commitments.length);
+        commitment = block_.commitments[0];
+
+        requireExactCoverage(block_, length);
+
+        // Obsolete line folding is illegal in HTTP/1.1 and defeats the needle:
+        // `authorization:\r\n Bearer x` normalizes to
+        // `authorization:\r\nbearer`, because normalization strips the space
+        // but keeps the CRLF the fold introduced. The header is then never
+        // counted, and a server honouring the fold authenticates with it.
+        bytes memory revealed = _concatRevealed(block_);
+        for (uint256 i = 0; i + 2 < revealed.length; ++i) {
+            if (revealed[i] == 0x0d && revealed[i + 1] == 0x0a && (revealed[i + 2] == 0x20 || revealed[i + 2] == 0x09))
+            {
+                revert ObsoleteLineFold(i);
+            }
+        }
+
+        // Counted per range rather than over the concatenation, so joining two
+        // regions cannot manufacture a match at the seam.
+        uint256 count;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            count += _countNeedle(_normalizeHeaderBytes(block_.revealed[i].value));
+        }
+        if (count != 1) revert NotOneAuthorizationHeader(count);
+
+        // Framing, on RAW bytes at known offsets. Two fixed comparisons make
+        // the committed range one header line's value by construction.
+        if (commitment.start < BEARER_PREFIX.length) revert BadBearerFraming();
+        bytes memory before_ = _revealedSlice(block_, commitment.start - uint32(BEARER_PREFIX.length), commitment.start);
+        bytes memory after_ = _revealedSlice(block_, commitment.end, commitment.end + uint32(BEARER_SUFFIX.length));
+        if (keccak256(before_) != keccak256(BEARER_PREFIX) || keccak256(after_) != keccak256(BEARER_SUFFIX)) {
+            revert BadBearerFraming();
+        }
+    }
+
+    /// @dev Lowercase ASCII and drop every space and horizontal tab, keeping CR
+    ///      and LF (REQ-COMMON-39). Field names and the scheme token are
+    ///      case-insensitive and the colon admits whitespace, so a literal
+    ///      search over raw bytes is evadable. Removing only bytes absent from
+    ///      the needle can create a spurious match, which over-rejects and is
+    ///      safe, but can never hide a real one.
+    function _normalizeHeaderBytes(bytes memory raw) private pure returns (bytes memory out) {
+        out = new bytes(raw.length);
+        uint256 n;
+        for (uint256 i = 0; i < raw.length; ++i) {
+            bytes1 c = raw[i];
+            if (c == 0x20 || c == 0x09) continue;
+            if (c >= 0x41 && c <= 0x5a) c = bytes1(uint8(c) + 0x20);
+            out[n++] = c;
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
+        }
+    }
+
+    function _countNeedle(bytes memory haystack) private pure returns (uint256 count) {
+        bytes memory needle = AUTHORIZATION_NEEDLE;
+        if (haystack.length < needle.length) return 0;
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool hit = true;
+            for (uint256 j = 0; j < needle.length; ++j) {
+                if (haystack[i + j] != needle[j]) {
+                    hit = false;
+                    break;
+                }
+            }
+            if (hit) ++count;
+        }
+    }
+
+    function _concatRevealed(DirectionBlock memory block_) private pure returns (bytes memory out) {
+        uint256 total;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            total += block_.revealed[i].value.length;
+        }
+        out = new bytes(total);
+        uint256 n;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            bytes memory v = block_.revealed[i].value;
+            for (uint256 j = 0; j < v.length; ++j) {
+                out[n++] = v[j];
+            }
+        }
+    }
+
+    /// @dev Read `[from, to)` of the transcript out of the revealed ranges.
+    ///      Returns an empty result if any byte of it is not revealed, which
+    ///      the caller treats as a framing failure.
+    function _revealedSlice(DirectionBlock memory block_, uint32 from, uint32 to)
+        private
+        pure
+        returns (bytes memory out)
+    {
+        if (to <= from) return "";
+        out = new bytes(to - from);
+        uint256 n;
+        uint32 at = from;
+        while (at < to) {
+            bool found;
+            for (uint256 i = 0; i < block_.revealed.length; ++i) {
+                RevealedRange memory r = block_.revealed[i];
+                if (r.start <= at && at < r.end) {
+                    uint256 offset = at - r.start;
+                    uint256 take = r.value.length - offset;
+                    if (take > to - at) take = to - at;
+                    for (uint256 j = 0; j < take; ++j) {
+                        out[n++] = r.value[offset + j];
+                    }
+                    at += uint32(take);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return "";
+        }
+    }
+
     function requireExactCoverage(DirectionBlock memory block_, uint32 length) internal pure {
         uint256 r = 0;
         uint256 c = 0;
@@ -128,6 +292,7 @@ library CeremonyAttestation {
                 ++c;
             }
 
+            if (start < at) revert SpansOverlap(start);
             if (start != at) revert CoverageGap(at, start);
             at = end;
         }

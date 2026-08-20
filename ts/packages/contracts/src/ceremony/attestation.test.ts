@@ -6,6 +6,7 @@ import {
   decodeAttestedData,
   encodeAttestedData,
   HEADER_LEN,
+  requireBearerHeaderRequest,
   requireExactCoverage,
   tag,
 } from './attestation.js'
@@ -158,5 +159,105 @@ describe('attested data', () => {
     // Bytes past the last range are invisible without the signed length.
     const a = sample()
     expect(() => requireExactCoverage(a.sent, 'sent', 80)).toThrow(/bytes 60\.\.80/)
+  })
+})
+
+describe('identity-session request', () => {
+  const BEARER = 'AAAAbbbbCCCCdddd'
+  const enc = (s: string) => new TextEncoder().encode(s)
+
+  /// A real `/2/users/me` request: bearer committed, everything else revealed,
+  /// tiled exactly.
+  function request(extraHeader: string, bearerPrefix: string) {
+    const head = `GET /2/users/me HTTP/1.1\r\naccept: application/json\r\nhost: api.x.com\r\n${extraHeader}${bearerPrefix}`
+    const tail = '\r\nconnection: close\r\n\r\n'
+    const start = head.length
+    const end = start + BEARER.length
+    const length = end + tail.length
+    const block = {
+      revealed: [
+        { start: 0, end: start, bytes: enc(head) },
+        { start: end, end: length, bytes: enc(tail) },
+      ],
+      commitments: [{ start, end, commitment: new Uint8Array(32).fill(5) }],
+    }
+    return { block, length }
+  }
+
+  const honest = () => request('', '\r\nauthorization: Bearer ')
+
+  it('accepts an honest request', () => {
+    const { block, length } = honest()
+    expect(requireBearerHeaderRequest(block, length).commitment[0]).toBe(5)
+  })
+
+  it('rejects a second authorization header', () => {
+    const { block, length } = request(
+      'authorization: Bearer stolen\r\n',
+      '\r\nauthorization: Bearer ',
+    )
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/2 authorization header lines/)
+  })
+
+  it('rejects a case and whitespace evaded second header', () => {
+    // A literal search over raw bytes would miss this one.
+    const { block, length } = request(
+      'AuThOrIzAtIoN:\tBeArEr stolen\r\n',
+      '\r\nauthorization: Bearer ',
+    )
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/2 authorization header lines/)
+  })
+
+  it('rejects an obsolete line fold', () => {
+    // `authorization:\r\n Bearer x` normalizes to `authorization:\r\nbearer`,
+    // so the needle never matches and the header is never counted.
+    const { block, length } = request(
+      'authorization:\r\n Bearer stolen\r\n',
+      '\r\nauthorization: Bearer ',
+    )
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/obsolete line fold/)
+  })
+
+  it('rejects a request with no authorization header', () => {
+    const { block, length } = request('', '\r\nx-other: ')
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/0 authorization header lines/)
+  })
+
+  it('rejects a gap the scan would never read', () => {
+    const { block, length } = honest()
+    block.revealed[0]!.end -= 1
+    block.revealed[0]!.bytes = block.revealed[0]!.bytes.subarray(
+      0,
+      block.revealed[0]!.bytes.length - 1,
+    )
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/covered by nothing/)
+  })
+
+  it('rejects a commitment that is not the header value', () => {
+    // Framing alone: the header is whole and revealed, coverage is exact, but
+    // the committed range sits in `host` instead.
+    const head =
+      'GET /2/users/me HTTP/1.1\r\naccept: application/json\r\nauthorization: Bearer TOKEN123\r\nhost: '
+    const committed = 'api.'
+    const tail = 'x.com\r\nconnection: close\r\n\r\n'
+    const start = head.length
+    const end = start + committed.length
+    const length = end + tail.length
+    const block = {
+      revealed: [
+        { start: 0, end: start, bytes: enc(head) },
+        { start: end, end: length, bytes: enc(tail) },
+      ],
+      commitments: [{ start, end, commitment: new Uint8Array(32).fill(5) }],
+    }
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(
+      /not framed by an authorization header/,
+    )
+  })
+
+  it('rejects more than one commitment', () => {
+    const { block, length } = honest()
+    block.commitments.unshift({ start: 0, end: 1, commitment: new Uint8Array(32).fill(6) })
+    expect(() => requireBearerHeaderRequest(block, length)).toThrow(/2 commitments, not one/)
   })
 })

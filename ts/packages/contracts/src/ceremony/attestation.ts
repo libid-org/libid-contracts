@@ -200,6 +200,10 @@ export function requireExactCoverage(
 
   let at = 0
   for (const [start, end] of spans) {
+    // Overlap is `validate`'s job, but a caller may build a block by hand.
+    if (start < at) {
+      throw new AttestationError(`spans of the ${direction} direction overlap at ${start}`)
+    }
     if (start !== at) {
       throw new AttestationError(
         `transcript bytes ${at}..${start} of the ${direction} direction are covered by nothing`,
@@ -212,6 +216,116 @@ export function requireExactCoverage(
       `transcript bytes ${at}..${length} of the ${direction} direction are covered by nothing`,
     )
   }
+}
+
+/// `\r\nauthorization: Bearer ` — the raw bytes REQ-COMMON-40 requires
+/// immediately before the committed range.
+export const BEARER_PREFIX = '\r\nauthorization: Bearer '
+/// And immediately after it.
+export const BEARER_SUFFIX = '\r\n'
+/// The normalized, line-anchored needle REQ-COMMON-39 counts.
+export const AUTHORIZATION_NEEDLE = '\r\nauthorization:bearer'
+
+const ascii = (b: Uint8Array) => Array.from(b, (c) => String.fromCharCode(c)).join('')
+
+/// Lowercase ASCII and drop every space and horizontal tab, keeping CR and LF
+/// (REQ-COMMON-39). Field names and the scheme token are case-insensitive and
+/// the colon admits whitespace, so a literal search over raw bytes is evadable.
+function normalizeHeaderBytes(raw: Uint8Array): string {
+  let out = ''
+  for (const b of raw) {
+    if (b === 0x20 || b === 0x09) continue
+    out += String.fromCharCode(b >= 0x41 && b <= 0x5a ? b + 0x20 : b)
+  }
+  return out
+}
+
+function countNeedle(haystack: string): number {
+  let count = 0
+  for (
+    let i = haystack.indexOf(AUTHORIZATION_NEEDLE);
+    i !== -1;
+    i = haystack.indexOf(AUTHORIZATION_NEEDLE, i + 1)
+  ) {
+    count++
+  }
+  return count
+}
+
+/// Read `[from, to)` of the transcript out of the revealed ranges, or `null` if
+/// any byte of it is not revealed.
+function revealedSlice(block: DirectionBlock, from: number, to: number): string | null {
+  let out = ''
+  let at = from
+  while (at < to) {
+    const range = block.revealed.find((r) => r.start <= at && at < r.end)
+    if (!range) return null
+    const offset = at - range.start
+    const take = Math.min(range.bytes.length - offset, to - at)
+    out += ascii(range.bytes.subarray(offset, offset + take))
+    at += take
+  }
+  return out
+}
+
+/// Every check REQ-COMMON-35, -39 and -40 require of an identity-session
+/// request that commits a credential in an HTTP `Authorization` header.
+///
+/// At launch that is X's `/2/users/me` and GitHub's `/user`, and nothing else:
+/// REQ-COMMON-43 forbids applying these to a credential committed in a request
+/// body, which is GitHub's `client_secret`.
+///
+/// The three are one call because they are one property, and two are worthless
+/// alone. The uniqueness scan counts the needle across REVEALED bytes only, so
+/// a byte covered by nothing is a byte it never reads: without coverage a
+/// prover hides a second authorization header in a gap and the count stays at
+/// one.
+///
+/// The chain runs this too. Here it lets the runtime fail before it spends a
+/// submission, and nothing on chain depends on that repeat.
+export function requireBearerHeaderRequest(block: DirectionBlock, length: number): RangeCommitment {
+  if (block.commitments.length !== 1) {
+    throw new AttestationError(
+      `the direction holds ${block.commitments.length} commitments, not one`,
+    )
+  }
+  const commitment = block.commitments[0]!
+
+  requireExactCoverage(block, 'sent', length)
+
+  // Obsolete line folding is illegal in HTTP/1.1 and defeats the needle:
+  // `authorization:\r\n Bearer x` normalizes to `authorization:\r\nbearer`,
+  // because normalization strips the space but keeps the CRLF the fold added.
+  const revealed = block.revealed.map((r) => ascii(r.bytes)).join('')
+  for (let i = 0; i + 2 < revealed.length; i++) {
+    if (
+      revealed[i] === '\r' &&
+      revealed[i + 1] === '\n' &&
+      (revealed[i + 2] === ' ' || revealed[i + 2] === '\t')
+    ) {
+      throw new AttestationError(`the revealed bytes carry an obsolete line fold at ${i}`)
+    }
+  }
+
+  // Counted per range, so joining two regions cannot manufacture a match.
+  const count = block.revealed.reduce((n, r) => n + countNeedle(normalizeHeaderBytes(r.bytes)), 0)
+  if (count !== 1) {
+    throw new AttestationError(
+      `the revealed bytes hold ${count} authorization header lines, not one`,
+    )
+  }
+
+  // Framing, on RAW bytes at known offsets.
+  const before =
+    commitment.start >= BEARER_PREFIX.length
+      ? revealedSlice(block, commitment.start - BEARER_PREFIX.length, commitment.start)
+      : null
+  const after = revealedSlice(block, commitment.end, commitment.end + BEARER_SUFFIX.length)
+  if (before !== BEARER_PREFIX || after !== BEARER_SUFFIX) {
+    throw new AttestationError('the committed range is not framed by an authorization header line')
+  }
+
+  return commitment
 }
 
 export function validate(attested: AttestedData): void {
