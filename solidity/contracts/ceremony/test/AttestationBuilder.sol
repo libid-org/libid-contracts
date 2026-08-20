@@ -71,4 +71,10 @@ library AttestationBuilder {
     function none() internal pure returns (Commitment[] memory out) {
         out = new Commitment[](0);
     }
+
+    function two(Commitment memory a, Commitment memory b) internal pure returns (Commitment[] memory out) {
+        out = new Commitment[](2);
+        out[0] = a;
+        out[1] = b;
+    }
 }

@@ -99,6 +99,18 @@ contract XPlatformVerifierTest is Test {
         pure
         returns (ICeremony.Attestation memory)
     {
+        return _tokenAttestation(grantType, clientId, verifierValue, true);
+    }
+
+    /// @dev `bearerFraming` false commits the bearer with no revealed anchors,
+    ///      which is the shape REQ-PLAT-57 exists to refuse.
+    function _tokenAttestation(
+        string memory grantType,
+        string memory clientId,
+        string memory verifierValue,
+        bool bearerFraming
+    ) private pure returns (ICeremony.Attestation memory) {
+        AttestationBuilder.Direction memory received;
         bytes memory line = "POST /2/oauth2/token HTTP/1.1\r\n";
         bytes memory body = abi.encodePacked(
             "grant_type=", grantType, "&client_id=", clientId, "&code=abc&code_verifier=", verifierValue
@@ -114,13 +126,10 @@ contract XPlatformVerifierTest is Test {
             commitments: AttestationBuilder.none(),
             length: bodyEnd
         });
-        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: new AttestationBuilder.Range[](0),
-            commitments: AttestationBuilder.one(
-                AttestationBuilder.Commitment({start: 0, end: 20, value: TOKEN_COMMITMENT})
-            ),
-            length: 20
-        });
+        // A real token response: the bearer committed and framed by the
+        // revealed `"access_token":"` delimiter and its closing quote, with
+        // every other byte hidden behind a commitment of its own.
+        received = _tokenResponse(bearerFraming);
 
         bytes memory attested = AttestationBuilder.encode(
             CeremonyProfile.FORMAT_TAG,
@@ -132,6 +141,42 @@ contract XPlatformVerifierTest is Test {
             received
         );
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
+    /// A token response shaped like the real one:
+    ///   [0,17)  hidden status line and headers, behind their own commitment
+    ///   [17,33) revealed `"access_token":"`
+    ///   [33,45) the committed bearer
+    ///   [45,46) revealed closing quote
+    ///   [46,70) the rest of the JSON, behind another commitment
+    function _tokenResponse(bool framed) private pure returns (AttestationBuilder.Direction memory received) {
+        bytes memory prefix = '"access_token":"';
+        uint32 headEnd = 17;
+        uint32 prefixEnd = headEnd + uint32(prefix.length);
+        uint32 bearerEnd = prefixEnd + 12;
+        uint32 quoteEnd = bearerEnd + 1;
+        uint32 total = quoteEnd + 24;
+
+        AttestationBuilder.Range[] memory revealed;
+        if (framed) {
+            revealed = AttestationBuilder.two(
+                AttestationBuilder.Range({start: headEnd, end: prefixEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+            );
+        } else {
+            // Nothing revealed at all — the shape REQ-PLAT-57 refuses, because
+            // the committed range could equally be a `refresh_token` value.
+            revealed = new AttestationBuilder.Range[](0);
+        }
+
+        received = AttestationBuilder.Direction({
+            revealed: revealed,
+            commitments: AttestationBuilder.two(
+                AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
+                AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x9999))})
+            ),
+            length: total
+        });
     }
 
     /// The identity request: bearer committed, every other byte revealed.
@@ -388,6 +433,103 @@ contract XPlatformVerifierTest is Test {
         ICeremony.Submission memory s = _submission();
         s.attestations[1] = _identityAttestation("2244994945", 'a","username":"b', "");
         vm.expectPartialRevert(CeremonyFields.AmbiguousField.selector);
+        this.run{value: quote}(s);
+    }
+
+    // ─── The token response anchors (REQ-PLAT-57, TEST-PLAT-22) ─────
+
+    /// @dev The bearer is identified by its framing, not by being the only
+    ///      commitment: the response hides every other byte behind a commitment
+    ///      of its own. With no revealed anchors the committed range is
+    ///      indistinguishable from a `refresh_token` value, or any other
+    ///      substring the prover chose to commit.
+    function test_rejectsATokenResponseWithNoRevealedAnchors() public {
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        ICeremony.Submission memory s = _submission();
+        s.attestations[0] = _tokenAttestation("authorization_code", "myClient-1", v, false);
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the framing must land on the range the circuit opened. Here the
+    ///      anchors are present but the proof names the OTHER committed range —
+    ///      which is what committing a `refresh_token` value and proving over
+    ///      it would look like.
+    function test_rejectsAProofOverTheWrongCommittedRange() public {
+        ICeremony.Submission memory s = _submission();
+        bytes32 other = bytes32(uint256(0x9999));
+        for (uint256 i = 0; i < 32; ++i) {
+            s.publicInputs[i] = bytes32(uint256(uint8(other[i])));
+        }
+        vm.expectPartialRevert(XPlatformVerifier.CommitmentMismatch.selector);
+        this.run{value: quote}(s);
+    }
+
+    // ─── The identity request line (REQ-COMMON-21A) ─────────────────
+
+    /// @dev The path separates operations on the same server, so
+    ///      `/2/users/me` must be what was asked. A lookup-by-username endpoint
+    ///      would answer for an account the prover never held.
+    function test_rejectsAForeignIdentityPath() public {
+        ICeremony.Submission memory s = _submission();
+        s.attestations[1] = _identityAttestationOnPath("GET /2/users/by/username/victim ");
+        vm.expectRevert(XPlatformVerifier.WrongRequestLine.selector);
+        this.run{value: quote}(s);
+    }
+
+    function _identityAttestationOnPath(string memory requestLine) private pure returns (ICeremony.Attestation memory) {
+        bytes memory head = abi.encodePacked(
+            requestLine, "HTTP/1.1\r\naccept: application/json\r\nhost: api.x.com\r\n", "\r\nauthorization: Bearer "
+        );
+        bytes memory bearer = "TOKENTOKENTOKEN";
+        bytes memory tail = "\r\nconnection: close\r\n\r\n";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        uint32 sentLen = end + uint32(tail.length);
+
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, end: start, value: head}),
+                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: sentLen
+        });
+        bytes memory body = '"id":"2244994945","username":"alice"';
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(
+                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
+            ),
+            commitments: AttestationBuilder.none(),
+            length: uint32(body.length)
+        });
+        bytes memory attested = AttestationBuilder.encode(
+            CeremonyProfile.FORMAT_TAG,
+            CeremonyProfile.PLATFORM_X,
+            CeremonyProfile.IDENTITY_SESSION_TAG,
+            CeremonyProfile.AUTHORITY_X_API,
+            T0,
+            sent,
+            received
+        );
+        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
+    /// @dev The authority is what the notary authenticated, not a revealed
+    ///      `Host` header, so a transcript from an attacker's server cannot
+    ///      substitute for the platform's.
+    function test_rejectsAForeignAuthority() public {
+        ICeremony.Submission memory s = _submission();
+        bytes memory attested = s.attestations[1].attestedData;
+        // authorityId sits at bytes 96..128 of the header.
+        bytes32 evil = keccak256(bytes("evil.example"));
+        for (uint256 i = 0; i < 32; ++i) {
+            attested[96 + i] = evil[i];
+        }
+        s.attestations[1] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
     }
 }

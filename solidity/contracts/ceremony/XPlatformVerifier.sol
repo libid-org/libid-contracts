@@ -45,6 +45,14 @@ contract XPlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
 
     bytes private constant TOKEN_REQUEST_LINE = "POST /2/oauth2/token ";
     bytes private constant GRANT_TYPE = "authorization_code";
+    bytes private constant IDENTITY_REQUEST_LINE = "GET /2/users/me ";
+
+    /// @dev What frames the committed bearer in the token RESPONSE. Every other
+    ///      response byte is hidden, so without these anchors the committed
+    ///      range is indistinguishable from a `refresh_token` value
+    ///      (REQ-PLAT-57).
+    bytes private constant ACCESS_TOKEN_PREFIX = '"access_token":"';
+    bytes private constant ACCESS_TOKEN_SUFFIX = '"';
 
     /// @dev The circuit exposes two 32-byte commitments as 64 public inputs,
     ///      one byte each.
@@ -159,7 +167,12 @@ contract XPlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         }
         fields.clientIdentifier = clientId;
 
-        _requireCommitment(data.received, submission.publicInputs, OFF_TOKEN_COMMITMENT);
+        // The bearer is identified by its framing, not by being the only
+        // commitment: the response hides every other byte behind a commitment
+        // of its own.
+        CeremonyAttestation.RangeCommitment memory bearer =
+            CeremonyAttestation.requireFramedCommitment(data.received, ACCESS_TOKEN_PREFIX, ACCESS_TOKEN_SUFFIX);
+        _requireCommitmentValue(bearer.commitment, submission.publicInputs, OFF_TOKEN_COMMITMENT);
 
         return _requireFresh(data.createdAt);
     }
@@ -174,6 +187,11 @@ contract XPlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         // together. They are one property: the scan reads only revealed bytes,
         // so without coverage a prover hides a second authorization header in a
         // gap and the count still says one.
+        // REQ-COMMON-21A applies to this request as much as to the token one.
+        if (!_startsWith(_revealedAt(data.sent, 0), IDENTITY_REQUEST_LINE)) {
+            revert WrongRequestLine();
+        }
+
         CeremonyAttestation.RangeCommitment memory bearer =
             CeremonyAttestation.requireBearerHeaderRequest(data.sent, data.sentTranscriptLength);
         _requireCommitmentValue(bearer.commitment, submission.publicInputs, OFF_IDENTITY_COMMITMENT);
@@ -190,17 +208,6 @@ contract XPlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     /// @dev Match a proved commitment against the one the attestation carried.
     ///      Without this the circuit could prove a link between two
     ///      attestations other than the ones submitted (REQ-PLAT-32C).
-    function _requireCommitment(
-        CeremonyAttestation.DirectionBlock memory block_,
-        bytes32[] calldata publicInputs,
-        uint256 offset
-    ) private pure {
-        if (block_.commitments.length != 1) {
-            revert CeremonyAttestation.NotOneCommitment(block_.commitments.length);
-        }
-        _requireCommitmentValue(block_.commitments[0].commitment, publicInputs, offset);
-    }
-
     function _requireCommitmentValue(bytes32 attested, bytes32[] calldata publicInputs, uint256 offset) private pure {
         bytes32 proved;
         for (uint256 i = 0; i < 32; ++i) {
