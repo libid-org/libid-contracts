@@ -93,7 +93,7 @@ contract IdentityNamesTest is Test {
     }
 
     function test_anUnconfiguredPlatformIsRefused() public {
-        bytes32 unknown = keccak256("libid.identity.platform.nowhere");
+        bytes32 unknown = keccak256("nowhere");
         verifier.stage("123", "alice", alice, 100);
 
         vm.prank(alice);
@@ -308,7 +308,7 @@ contract IdentityNamesTest is Test {
     /// address would tell a caller "nobody owns this name" when the truth is
     /// that the platform is not configured, and a zero cannot say which.
     function test_everyResolverRefusesAnUnknownPlatform() public {
-        bytes32 unwired = keccak256("libid.identity.platform.nowhere");
+        bytes32 unwired = keccak256("nowhere");
 
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, unwired));
         names.resolveId(unwired, "123");
@@ -804,7 +804,7 @@ contract IdentityNamesTest is Test {
     /// can verify nothing. Answering `address(0)` there would tell a caller
     /// "nobody holds this name" about a platform that is not wired yet.
     function test_aPlatformWithoutAVerifierDoesNotResolve() public {
-        bytes32 fresh = keccak256("libid.identity.platform.fresh");
+        bytes32 fresh = keccak256("fresh");
         vm.prank(owner);
         names.setPlatform(fresh, HandleVectors.rulesFor(X));
 
@@ -821,7 +821,7 @@ contract IdentityNamesTest is Test {
     /// And binding says the same thing, rather than naming a version the
     /// caller never chose.
     function test_bindingAPlatformWithoutAVerifierNamesThePlatform() public {
-        bytes32 fresh = keccak256("libid.identity.platform.fresh");
+        bytes32 fresh = keccak256("fresh");
         vm.prank(owner);
         names.setPlatform(fresh, HandleVectors.rulesFor(X));
 
@@ -889,7 +889,7 @@ contract IdentityNamesTest is Test {
     /// A verifier needs a keyspace to write into. Without this the platform
     /// would accept proofs while every resolver reverted `UnknownPlatform`.
     function test_aVerifierNeedsItsPlatformConfiguredFirst() public {
-        bytes32 nowhere = keccak256("libid.identity.platform.nowhere");
+        bytes32 nowhere = keccak256("nowhere");
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownPlatform.selector, nowhere));
         names.setVerifier(nowhere, V1, IIdentityVerifier(address(verifier)), NO_FUTURE_ALLOWANCE);

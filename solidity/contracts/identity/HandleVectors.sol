@@ -12,12 +12,12 @@ import {HandleNormalizer} from "./HandleNormalizer.sol";
 ///      TypeScript run the same table. A normalizer that disagrees with
 ///      another language fails a test instead of writing a different key.
 library HandleVectors {
-    /// keccak256(bytes("dyaka.identity.platform.x"))
-    bytes32 internal constant PLATFORM_X = keccak256(bytes("dyaka.identity.platform.x"));
-    /// keccak256(bytes("dyaka.identity.platform.github"))
-    bytes32 internal constant PLATFORM_GITHUB = keccak256(bytes("dyaka.identity.platform.github"));
-    /// keccak256(bytes("dyaka.identity.platform.google"))
-    bytes32 internal constant PLATFORM_GOOGLE = keccak256(bytes("dyaka.identity.platform.google"));
+    /// keccak256(bytes("x"))
+    bytes32 internal constant PLATFORM_X = keccak256(bytes("x"));
+    /// keccak256(bytes("github"))
+    bytes32 internal constant PLATFORM_GITHUB = keccak256(bytes("github"));
+    /// keccak256(bytes("google"))
+    bytes32 internal constant PLATFORM_GOOGLE = keccak256(bytes("google"));
 
     uint256 internal constant MAX_LENGTH_X = 15;
     uint256 internal constant MAX_LENGTH_GITHUB = 39;
