@@ -46,16 +46,22 @@
       "stripLeadingAt": false,
       "maxLength": 62,
       "shape": "email",
+      "allowUnderscore": false,
+      "allowHyphen": false,
       "note": [
         "The address is used as proved. This transform does not remove dots,",
         "does not strip a +tag, and does not rewrite a domain, because two",
         "different addresses must never become one identity.",
         "",
         "62 bytes is a hard limit and not only a lookup limit. A longer address",
-        "is rejected instead of truncated, for the same reason."
+        "is rejected instead of truncated, for the same reason.",
+        "",
+        "allowUnderscore and allowHyphen are stated for completeness and",
+        "are never read: the email shape supersedes both, and the address",
+        "set already carries the underscore and the hyphen."
       ],
       "futureAllowanceSeconds": 7200,
-      "allowanceNote": "The OIDC circuit exposes no `iat`, so the observation is the token's `exp` — Google issues about an hour of life, and the claim therefore reads roughly an hour ahead of the moment it describes."
+      "allowanceNote": "The OIDC circuit exposes no `iat`, so the observation is the token's `exp` \u2014 Google issues about an hour of life, and the claim therefore reads roughly an hour ahead of the moment it describes."
     }
   ],
   "errors": [
@@ -155,7 +161,7 @@
     },
     {
       "platform": "x",
-      "input": "alicé",
+      "input": "alic\u00e9",
       "error": "BadCharacter",
       "note": "A byte above 0x7f is refused."
     },

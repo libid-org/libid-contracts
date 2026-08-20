@@ -7,3 +7,4 @@
 
 export * from './attestation.js'
 export * from './authorization.js'
+export * from './profile.js'
