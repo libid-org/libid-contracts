@@ -9,7 +9,7 @@
 # re-derives both committed verifiers from the released verification keys:
 #
 #   solidity/contracts/login/oidc/Verifier.sol      ⟵ jwt_email vk
-#   solidity/contracts/login/zk/XHonkVerifier.sol   ⟵ dyaka-noir-token vk
+#   solidity/contracts/login/zk/XHonkVerifier.sol   ⟵ x-token vk
 #                                                     (HonkVerifier renamed
 #                                                      XHonkVerifier — two bb
 #                                                      verifiers in one
@@ -86,7 +86,7 @@ done
 
 # --- Extract the circuits we regenerate from -------------------------------
 VERSION="$(jq -re .version "$DL/manifest.json")"
-for circuit in jwt_email dyaka-noir-token; do
+for circuit in jwt_email x-token; do
   mkdir -p "$DL/$circuit"
   tar -xzf "$DL/libid-circuits-${VERSION}-${circuit}.tar.gz" -C "$DL/$circuit"
 done
@@ -122,7 +122,7 @@ echo "Using bb $BB_VERSION at $BB"
 # --- Regenerate ------------------------------------------------------------
 "$BB" write_solidity_verifier -k "$DL/jwt_email/vk" \
   -o "$GEN/Verifier.sol" -t evm
-"$BB" write_solidity_verifier -k "$DL/dyaka-noir-token/vk" \
+"$BB" write_solidity_verifier -k "$DL/x-token/vk" \
   -o "$GEN/XHonkVerifier.sol" -t evm
 
 perl -i -pe 's/assembly \{/assembly ("memory-safe") \{/g' \
