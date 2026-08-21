@@ -16,16 +16,16 @@ interface INotaryService {
     ///      digest authenticates whatever the caller hashed, which need not be
     ///      the bytes the Platform Verifier goes on to read (REQ-COMMON-49).
     ///
-    ///      Rejection is a revert, not a `false`. REQ-COMMON-42 requires the
-    ///      fees of one submission to take effect together or not at all, and
-    ///      to leave nothing delivered once the submission is rejected --
-    ///      reverting gives both by construction, with no refund path to get
-    ///      wrong.
+    ///      Rejection is a revert, and this returns nothing. REQ-COMMON-42
+    ///      requires the fees of one submission to take effect together or not
+    ///      at all, and to leave nothing delivered once the submission is
+    ///      rejected -- reverting gives both by construction, with no refund
+    ///      path to get wrong. Returning a boolean would offer a second way to
+    ///      say "rejected" that keeps the fee and lets a caller miss it.
     ///
     /// @param attestedData The exact bytes of ceremony-common section 9.1.
     /// @param signature    The notary signature over `keccak256(attestedData)`.
-    /// @return accepted    Always true; a rejection reverts.
-    function verify(bytes calldata attestedData, bytes calldata signature) external payable returns (bool accepted);
+    function verify(bytes calldata attestedData, bytes calldata signature) external payable;
 
     /// @notice The fee one verification currently costs, in the chain's native
     ///         asset.

@@ -98,7 +98,7 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
     // ─── Verification ───────────────────────────────────────────────
 
     /// @inheritdoc INotaryService
-    function verify(bytes calldata attestedData, bytes calldata signature) external payable returns (bool accepted) {
+    function verify(bytes calldata attestedData, bytes calldata signature) external payable {
         uint256 required = _s().fee;
         if (msg.value != required) revert WrongFee(required, msg.value);
 
@@ -111,8 +111,6 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, signature);
         if (err != ECDSA.RecoverError.NoError) revert MalformedSignature();
         if (!_s().trusted[recovered]) revert UntrustedNotary(recovered);
-
-        return true;
     }
 
     /// @inheritdoc INotaryService

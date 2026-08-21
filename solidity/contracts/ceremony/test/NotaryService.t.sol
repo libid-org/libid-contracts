@@ -43,7 +43,7 @@ contract NotaryServiceTest is Test {
     // ─── The core property ──────────────────────────────────────────
 
     function test_acceptsARealNotarySignature() public {
-        assertTrue(service.verify{value: FEE}(ATTESTED, SIG));
+        service.verify{value: FEE}(ATTESTED, SIG);
     }
 
     /// @dev REQ-COMMON-49, and the whole reason this contract replaced one that
@@ -104,7 +104,7 @@ contract NotaryServiceTest is Test {
             vm.prank(callers[i], callers[i]); // distinct sender AND origin
             assertEq(service.fee(), quoted, "the fee moved with the caller");
             vm.prank(callers[i]);
-            assertTrue(service.verify{value: quoted}(ATTESTED, SIG));
+            service.verify{value: quoted}(ATTESTED, SIG);
         }
     }
 
@@ -143,7 +143,8 @@ contract NotaryServiceTest is Test {
 
         assertTrue(service.isTrustedNotary(NOTARY));
         assertTrue(service.isTrustedNotary(vm.addr(incoming)));
-        assertTrue(service.verify{value: FEE}(ATTESTED, SIG), "outgoing key still verifies");
+        // Not reverting IS the assertion: the outgoing key still verifies.
+        service.verify{value: FEE}(ATTESTED, SIG);
 
         vm.prank(OWNER);
         service.setNotary(NOTARY, false);
@@ -162,7 +163,7 @@ contract NotaryServiceTest is Test {
         vm.prank(OWNER);
         service.setFee(5 wei);
         assertEq(service.fee(), 5 wei);
-        assertTrue(service.verify{value: 5 wei}(ATTESTED, SIG));
+        service.verify{value: 5 wei}(ATTESTED, SIG);
 
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, 5 wei, FEE));
         service.verify{value: FEE}(ATTESTED, SIG);
@@ -174,7 +175,7 @@ contract NotaryServiceTest is Test {
     function test_aZeroFeeStillRequiresAnExactMatch() public {
         vm.prank(OWNER);
         service.setFee(0);
-        assertTrue(service.verify(ATTESTED, SIG));
+        service.verify(ATTESTED, SIG);
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, 0, 1));
         service.verify{value: 1}(ATTESTED, SIG);
     }
