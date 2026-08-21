@@ -32,9 +32,9 @@ Two kinds of fixtures, in different states of permanence:
 ### Per-run fixtures (`circuits/jwt_email/target/`)
 
 - `proof`, `public_inputs`, `proof_meta.json` — produced by running
-  `bin/dyaka-oidc-cli` (after the Rust lift completes). These ARE
-  gitignored: each is bound to a specific OAuth code + session
-  keypair + JWT `exp`, so they go stale after ~1 hour.
+  the OIDC prover CLI from the original monorepo (after the Rust lift
+  completes). These ARE gitignored: each is bound to a specific OAuth
+  code + session keypair + JWT `exp`, so they go stale after ~1 hour.
 
 A test that depends on these guards itself with a file-existence check
 and emits a clear "skipped" message rather than failing CI. To
@@ -42,7 +42,8 @@ regenerate, run the CLI (web flow OAuths against Google live, writes
 all three files):
 
 ```bash
-cd bin/dyaka-oidc-cli && cargo run --release
+# in the OIDC prover CLI's directory (original monorepo)
+cargo run --release
 ```
 
 The CLI drives an OAuth → JWT → Noir witness → proof → fixture-write

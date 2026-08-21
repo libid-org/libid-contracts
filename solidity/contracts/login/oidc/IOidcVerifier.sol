@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-/// Plug-in OIDC identity-attestation module for the dyaka `Registry`.
+/// Plug-in OIDC identity-attestation module for the `Registry`.
 ///
 /// One implementation per OIDC provider (Google, Telegram, …). Each module
 /// owns whatever trust roots its provider exposes (RSA JWKS) and the

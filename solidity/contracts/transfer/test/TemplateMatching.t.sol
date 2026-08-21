@@ -123,10 +123,10 @@ contract TemplateMatchingTest is Test, BankDiamondDeployer {
     }
 
     function test_templateWithMiddleWord() public {
-        bank.setPlatformTemplate("test", "@dyaka-bot send @{recipient} then {amount} of {token}");
+        bank.setPlatformTemplate("test", "@libid-bot send @{recipient} then {amount} of {token}");
         (string memory prefix, string memory afterRecipient, string memory afterAmount, string memory suffix) =
             bank.getTemplateParts("test", 0);
-        assertEq(prefix, "@dyaka-bot send @");
+        assertEq(prefix, "@libid-bot send @");
         assertEq(afterRecipient, " then ");
         assertEq(afterAmount, " of ");
         assertEq(suffix, "");

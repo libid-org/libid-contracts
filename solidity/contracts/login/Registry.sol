@@ -675,9 +675,9 @@ contract Registry is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, Pa
 
     function _verifyNotarySignature(FullTlsProof calldata proof) internal view {
         // Domain-separated by (chainId, this contract). The notary mirror
-        // is `crypto::compute_notary_digest` in `crates/dyaka-auth`. The
-        // Notary contract owns the attestation check itself (EIP-191 +
-        // recover + signer compare today).
+        // is `crypto::compute_notary_digest` in the original monorepo's
+        // auth crate. The Notary contract owns the attestation check
+        // itself (EIP-191 + recover + signer compare today).
         bytes32 proofDigest = keccak256(
             abi.encode(
                 block.chainid,

@@ -5,7 +5,7 @@ import {IntegrationTest} from "./Integration.t.sol";
 import {WebWallet} from "../../login/WebWallet.sol";
 
 contract BalanceViewsTest is IntegrationTest {
-    // ── balanceOf(address, token) — Dyaka only ─────────────────────
+    // ── balanceOf(address, token) — bank balance only ──────────────
 
     function test_balanceOf_byAddress_registered() public {
         WebWallet alice = _alice();
@@ -31,7 +31,7 @@ contract BalanceViewsTest is IntegrationTest {
         assertEq(bank.balanceOf(address(0xdead), address(token)), 0);
     }
 
-    // ── balanceOf(platform, handle, token) — Dyaka only ────────────
+    // ── balanceOf(platform, handle, token) — bank balance only ─────
 
     function test_balanceOf_byHandle_registered() public {
         _alice();
@@ -48,17 +48,17 @@ contract BalanceViewsTest is IntegrationTest {
         assertEq(bank.balanceOf("api.x.com", "ghost", _idFor("ghost"), address(token)), 0);
     }
 
-    // ── balanceOfTotal(address, token) — Dyaka + wallet ERC20 ──────
+    // ── balanceOfTotal(address, token) — bank + wallet ERC20 ───────
 
     function test_balanceOfTotal_byAddress() public {
         WebWallet alice = _alice();
         _fund("x", "alice", 100e18);
         _fundWallet(alice, 500e18);
-        // Total = 100 (Dyaka) + 500 (wallet ERC20)
+        // Total = 100 (bank) + 500 (wallet ERC20)
         assertEq(bank.balanceOfTotal(address(alice), address(token)), 600e18);
     }
 
-    function test_balanceOfTotal_byAddress_onlyDyaka() public {
+    function test_balanceOfTotal_byAddress_onlyBank() public {
         WebWallet alice = _alice();
         _fund("x", "alice", 100e18);
         assertEq(bank.balanceOfTotal(address(alice), address(token)), 100e18);
@@ -75,18 +75,18 @@ contract BalanceViewsTest is IntegrationTest {
         assertEq(bank.balanceOfTotal(address(alice), address(token)), 0);
     }
 
-    // ── balanceOfTotal(platform, handle, token) — Dyaka + wallet ───
+    // ── balanceOfTotal(platform, handle, token) — bank + wallet ────
 
     function test_balanceOfTotal_byHandle_registered() public {
         WebWallet alice = _alice();
         _fund("x", "alice", 100e18);
         _fundWallet(alice, 250e18);
-        // Total = 100 (Dyaka) + 250 (wallet ERC20)
+        // Total = 100 (bank) + 250 (wallet ERC20)
         assertEq(bank.balanceOfTotal("api.x.com", "alice", _idFor("alice"), address(token)), 350e18);
     }
 
     function test_balanceOfTotal_byHandle_unregistered() public {
-        // Unregistered: only Dyaka balance, no wallet
+        // Unregistered: only bank balance, no wallet
         _fund("x", "nobody", 75e18);
         assertEq(bank.balanceOfTotal("api.x.com", "nobody", _idFor("nobody"), address(token)), 75e18);
     }
