@@ -53,6 +53,7 @@ contract GitHubPlatformVerifierTest is Test {
                 )
             )
         );
+        address honkAddr = address(new Honk());
         GitHubPlatformVerifier vImpl = new GitHubPlatformVerifier();
         verifier = GitHubPlatformVerifier(
             address(
@@ -60,7 +61,14 @@ contract GitHubPlatformVerifierTest is Test {
                     address(vImpl),
                     abi.encodeCall(
                         GitHubPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(address(new Honk())), LIFETIME, SKEW)
+                        (
+                            OWNER,
+                            INotaryService(address(notary)),
+                            IHonkVerifier(honkAddr),
+                            honkAddr.codehash,
+                            LIFETIME,
+                            SKEW
+                        )
                     )
                 )
             )

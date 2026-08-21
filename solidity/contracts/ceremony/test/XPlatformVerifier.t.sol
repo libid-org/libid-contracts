@@ -73,7 +73,14 @@ contract XPlatformVerifierTest is Test {
                     address(vImpl),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(address(honk)), LIFETIME, SKEW)
+                        (
+                            OWNER,
+                            INotaryService(address(notary)),
+                            IHonkVerifier(address(honk)),
+                            address(honk).codehash,
+                            LIFETIME,
+                            SKEW
+                        )
                     )
                 )
             )
@@ -430,6 +437,38 @@ contract XPlatformVerifierTest is Test {
         ICeremony.Submission memory s = _submission();
         vm.expectPartialRevert(PlatformVerifierBase.ProofExpired.selector);
         this.run{value: quote}(s);
+    }
+
+    // ─── The proof artifact (REQ-COMMON-45) ─────────────────────────
+
+    /// @dev An address alone does not say WHICH circuit answers behind it.
+    ///      bb-generated Honk verifiers embed their verification key as code
+    ///      constants and expose no getter, so the code hash is the only handle
+    ///      governance has on the artifact it selected. Naming it makes a
+    ///      mis-wiring fail here, at the governance call, rather than at the
+    ///      first user's proof.
+    function test_rejectsAVerifierThatIsNotTheNamedArtifact() public {
+        address other = address(new AcceptingHonk());
+        vm.prank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.WrongVerifierArtifact.selector);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(other), keccak256("some other artifact"));
+    }
+
+    /// @dev An account with no code hashes to the empty-code hash, which no
+    ///      real artifact matches, so a plain address cannot be wired either.
+    function test_rejectsAnAddressHoldingNoCode() public {
+        address eoa = address(0xB0B);
+        vm.prank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.WrongVerifierArtifact.selector);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(eoa), keccak256("anything"));
+    }
+
+    function test_recordsTheArtifactItWired() public {
+        address other = address(new AcceptingHonk());
+        vm.prank(OWNER);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(other), other.codehash);
+        assertEq(verifier.honkVerifier(), other);
+        assertEq(verifier.honkVerifierCodehash(), other.codehash);
     }
 
     // ─── The identity fields ────────────────────────────────────────

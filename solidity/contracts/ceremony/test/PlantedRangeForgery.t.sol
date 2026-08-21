@@ -46,6 +46,7 @@ contract PlantedRangeForgeryTest is Test {
                 )
             )
         );
+        address honkAddr = address(new Honk2());
         XPlatformVerifier vImpl = new XPlatformVerifier();
         verifier = XPlatformVerifier(
             address(
@@ -53,7 +54,7 @@ contract PlantedRangeForgeryTest is Test {
                     address(vImpl),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(address(new Honk2())), 3600, 300)
+                        (OWNER, INotaryService(address(notary)), IHonkVerifier(honkAddr), honkAddr.codehash, 3600, 300)
                     )
                 )
             )

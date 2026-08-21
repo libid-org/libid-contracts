@@ -45,6 +45,7 @@ contract LayoutForgeryTest is Test {
                 )
             )
         );
+        address honkAddr = address(new Honk3());
         XPlatformVerifier vImpl = new XPlatformVerifier();
         verifier = XPlatformVerifier(
             address(
@@ -52,7 +53,7 @@ contract LayoutForgeryTest is Test {
                     address(vImpl),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(address(new Honk3())), 3600, 300)
+                        (OWNER, INotaryService(address(notary)), IHonkVerifier(honkAddr), honkAddr.codehash, 3600, 300)
                     )
                 )
             )

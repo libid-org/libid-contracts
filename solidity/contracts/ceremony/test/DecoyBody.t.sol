@@ -43,6 +43,7 @@ contract DecoyBodyTest is Test {
         notary = NotaryService(
             address(new ERC1967Proxy(address(ni), abi.encodeCall(NotaryService.initialize, (OWNER, vm.addr(KEY), FEE))))
         );
+        address honkAddr = address(new OkHonk());
         XPlatformVerifier vi = new XPlatformVerifier();
         verifier = XPlatformVerifier(
             address(
@@ -50,7 +51,7 @@ contract DecoyBodyTest is Test {
                     address(vi),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(address(new OkHonk())), 3600, 300)
+                        (OWNER, INotaryService(address(notary)), IHonkVerifier(honkAddr), honkAddr.codehash, 3600, 300)
                     )
                 )
             )

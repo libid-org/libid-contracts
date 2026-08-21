@@ -66,6 +66,7 @@ contract GooglePlatformVerifierTest is Test {
                             OWNER,
                             INotaryService(address(0xDEAD)),
                             IHonkVerifier(address(honk)),
+                            address(honk).codehash,
                             IJwksRoots(address(roots))
                         )
                     )

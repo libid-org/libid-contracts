@@ -43,6 +43,12 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         uint64 proofLifetime;
         /// Maximum lead over Block Time an attestation may carry.
         uint64 maxFutureAttestationSkew;
+        /// The code hash of the artifact above, recorded when it was wired.
+        ///
+        /// bb-generated Honk verifiers embed their verification key as code
+        /// constants and expose no getter, so the code hash is the only handle
+        /// on WHICH circuit a deployed verifier answers for.
+        bytes32 honkVerifierCodehash;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.PlatformVerifier")) - 1)) & ~bytes32(uint256(0xff))
@@ -55,7 +61,7 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         }
     }
 
-    event TrustRootsChanged(address notary, address honkVerifier);
+    event TrustRootsChanged(address notary, address honkVerifier, bytes32 honkVerifierCodehash);
     event ProtocolParametersChanged(uint64 proofLifetime, uint64 maxFutureAttestationSkew);
 
     error WrongValue(uint256 required, uint256 provided);
@@ -68,19 +74,22 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     error ProofExpired(uint64 validUntil, uint64 blockTime);
     error BadProof();
     error ZeroAddress();
+    /// @dev The verifier at that address is not the artifact governance named.
+    error WrongVerifierArtifact(bytes32 expected, bytes32 found);
 
     // solhint-disable-next-line func-name-mixedcase
     function __PlatformVerifierBase_init(
         address owner_,
         INotaryService notary_,
         IHonkVerifier honkVerifier_,
+        bytes32 honkVerifierCodehash_,
         uint64 proofLifetime_,
         uint64 maxFutureAttestationSkew_
     ) internal onlyInitializing {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
-        _setTrustRoots(notary_, honkVerifier_);
+        _setTrustRoots(notary_, honkVerifier_, honkVerifierCodehash_);
         _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_);
     }
 
@@ -94,12 +103,26 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         return address(_base().honkVerifier);
     }
 
+    /// @notice The code hash of the artifact currently wired, so a reader can
+    ///         tell which circuit release this verifier answers for.
+    function honkVerifierCodehash() external view returns (bytes32) {
+        return _base().honkVerifierCodehash;
+    }
+
     function protocolParameters() external view returns (uint64 proofLifetime, uint64 maxFutureAttestationSkew) {
         return (_base().proofLifetime, _base().maxFutureAttestationSkew);
     }
 
-    function setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_) external onlyOwner {
-        _setTrustRoots(notary_, honkVerifier_);
+    /// @dev The caller names the artifact it means to wire, by code hash, and
+    ///      the call fails if the address does not hold it. REQ-COMMON-45 asks
+    ///      for the EXACT artifact governance selected; an address alone does
+    ///      not say which circuit answers behind it, and a mismatch found at
+    ///      the first user's proof is found in production.
+    function setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_, bytes32 honkVerifierCodehash_)
+        external
+        onlyOwner
+    {
+        _setTrustRoots(notary_, honkVerifier_, honkVerifierCodehash_);
     }
 
     /// @dev Governance-owned. The Platform Verifier reads the current value
@@ -110,13 +133,19 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_);
     }
 
-    function _setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_) private {
+    function _setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_, bytes32 honkVerifierCodehash_)
+        private
+    {
         if (address(notary_) == address(0) || address(honkVerifier_) == address(0)) {
             revert ZeroAddress();
         }
+        bytes32 found = address(honkVerifier_).codehash;
+        if (found != honkVerifierCodehash_) revert WrongVerifierArtifact(honkVerifierCodehash_, found);
+
         _base().notary = notary_;
         _base().honkVerifier = honkVerifier_;
-        emit TrustRootsChanged(address(notary_), address(honkVerifier_));
+        _base().honkVerifierCodehash = honkVerifierCodehash_;
+        emit TrustRootsChanged(address(notary_), address(honkVerifier_), honkVerifierCodehash_);
     }
 
     function _setProtocolParameters(uint64 proofLifetime_, uint64 maxFutureAttestationSkew_) private {

@@ -83,11 +83,14 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     /// @dev `notary_` is still required by the base, and is deliberately never
     ///      called: a profile whose Attestation Count is zero must not reach a
     ///      Notary Service (REQ-COMMON-05D).
-    function initialize(address owner_, INotaryService notary_, IHonkVerifier honkVerifier_, IJwksRoots jwksRoots_)
-        external
-        initializer
-    {
-        __PlatformVerifierBase_init(owner_, notary_, honkVerifier_, 0, 0);
+    function initialize(
+        address owner_,
+        INotaryService notary_,
+        IHonkVerifier honkVerifier_,
+        bytes32 honkVerifierCodehash_,
+        IJwksRoots jwksRoots_
+    ) external initializer {
+        __PlatformVerifierBase_init(owner_, notary_, honkVerifier_, honkVerifierCodehash_, 0, 0);
         _setJwksRoots(jwksRoots_);
     }
 
