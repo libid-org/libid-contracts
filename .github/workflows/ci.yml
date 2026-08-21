@@ -105,7 +105,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Verifiers: the committed bb-generated Solidity verifiers reproduce from
   # the pinned libid-circuits release. This replaces the reproducibility gate
-  # that died with the dyaka monorepo split — there, the deploy workflow
+  # that died with the monorepo split — there, the deploy workflow
   # recompiled the circuit next to the contracts; here, the circuits live in
   # libid-circuits and this job re-derives both verifiers from that repo's
   # released verification keys (verifier ⟵ vk alone, no nargo needed) and

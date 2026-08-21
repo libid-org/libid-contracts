@@ -41,7 +41,7 @@ contract WalletFactory is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         _disableInitializers();
     }
 
-    /// @param owner_       Factory owner (governance / Dyaka multisig).
+    /// @param owner_       Factory owner (the governance multisig).
     /// @param walletImpl_  Initial WebWallet implementation address.
     /// @param registry_    Registry contract address.
     function initialize(address owner_, address walletImpl_, address registry_) external initializer {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// Plug-in ZK identity-attestation module for the dyaka `Registry`.
+/// Plug-in ZK identity-attestation module for the `Registry`.
 ///
 /// One implementation per platform (X, GitHub-via-JWT, TikTok, …). The
 /// verifier owns the platform-specific trust anchors (notary key, OAuth

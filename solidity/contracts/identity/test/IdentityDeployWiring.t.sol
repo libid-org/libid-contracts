@@ -51,7 +51,7 @@ contract IdentityDeployWiringTest is Test {
     /// A default would silently normalize with the wrong rules.
     function test_anUnknownPlatformHasNoRules() public {
         vm.expectRevert(bytes("unknown platform"));
-        this.rulesForExternally(keccak256("dyaka.identity.platform.nowhere"));
+        this.rulesForExternally(keccak256("libid.identity.platform.nowhere"));
     }
 
     /// `rulesFor` is an internal library call, which `expectRevert` cannot see.
@@ -100,7 +100,7 @@ contract IdentityDeployWiringTest is Test {
     /// silently reject every Google binding.
     function test_anUnknownPlatformHasNoAllowance() public {
         vm.expectRevert(bytes("unknown platform"));
-        this.allowanceForExternally(keccak256("dyaka.identity.platform.nowhere"));
+        this.allowanceForExternally(keccak256("libid.identity.platform.nowhere"));
     }
 
     /// An external hop, because `vm.expectRevert` cannot see into an internal

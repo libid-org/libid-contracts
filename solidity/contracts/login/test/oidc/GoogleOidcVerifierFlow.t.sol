@@ -507,7 +507,7 @@ contract GoogleOidcVerifierFlowTest is Test {
     }
 
     /// Full pipeline: rotate, then verify. The verifier returns the
-    /// validated email plaintext (matches the dyaka Registry's `(platform,
+    /// validated email plaintext (matches the Registry's `(platform,
     /// handle)` storage shape - see Registry.register_session_oidc).
     function test_full_pipeline_rotate_then_verify() public {
         if (!fixturesPresent) {

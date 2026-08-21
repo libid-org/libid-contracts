@@ -239,10 +239,11 @@ contract TransferFacet is BankModifiers {
         (senderWallet, receiverWallet) = _executeTransfer(uid, resource.platform, sender, receiverUserId, token, amount);
     }
 
-    // ── Transfer within Dyaka (WebWallet → WebWallet) ────────────────────
+    // ── Transfer within the Bank (WebWallet → WebWallet) ─────────────────
 
-    /// @notice Transfer between Dyaka balances without touching the chain. Caller
-    ///         must be a registered WebWallet. Lazy-migrates + auto-tops-up.
+    /// @notice Transfer between internal Bank balances without touching the
+    ///         chain. Caller must be a registered WebWallet. Lazy-migrates +
+    ///         auto-tops-up.
     function transfer_within(
         string calldata receiverPlatform,
         string calldata receiverHandle,
