@@ -19,13 +19,14 @@ fi
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cargo_manifest="$root/rust/contracts/Cargo.toml"
+identity_manifest="$root/rust/identity/Cargo.toml"
 npm_manifest="$root/ts/packages/contracts/package.json"
 
-python3 - "$new" "$cargo_manifest" "$npm_manifest" <<'PY'
+python3 - "$new" "$cargo_manifest" "$identity_manifest" "$npm_manifest" <<'PY'
 import re
 import sys
 
-new, cargo_manifest, npm_manifest = sys.argv[1], sys.argv[2], sys.argv[3]
+new, cargo_manifest, identity_manifest, npm_manifest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
 def rewrite(path, pattern, replacement):
     text = open(path).read()
@@ -35,6 +36,7 @@ def rewrite(path, pattern, replacement):
     open(path, "w").write(updated)
 
 rewrite(cargo_manifest, r'^version = ".*"$', f'version = "{new}"')
+rewrite(identity_manifest, r'^version = ".*"$', f'version = "{new}"')
 rewrite(npm_manifest, r'^(\s*)"version": ".*",$', rf'\1"version": "{new}",')
 PY
 
@@ -48,6 +50,7 @@ PY
 
 echo "Version set to $new in:"
 echo "  rust/contracts/Cargo.toml (+ rust/Cargo.lock)"
+echo "  rust/identity/Cargo.toml"
 echo "  ts/packages/contracts/package.json"
 echo
 echo "Next steps:"

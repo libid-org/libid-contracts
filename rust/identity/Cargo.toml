@@ -1,0 +1,17 @@
+[package]
+name = "libid-identity"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/libid-org/libid-contracts"
+description = "The libid handle transform: per-platform normalization rules and the shared vector table, mirroring HandleNormalizer.sol byte for byte."
+keywords = ["ethereum", "identity", "normalization"]
+categories = ["cryptography::cryptocurrencies"]
+include = ["src/**", "README.md"]
+
+# No dependencies on purpose: every consumer of the identity system — an
+# indexer, a wallet, a backend — needs this transform, and none of them should
+# inherit anything for it. The transform needs nothing but the standard
+# library.
+[dependencies]
