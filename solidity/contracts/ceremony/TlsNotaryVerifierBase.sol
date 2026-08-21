@@ -78,15 +78,34 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      every profile reads. Default: nothing.
     function _checkTokenBody(bytes memory body) internal pure virtual {}
 
-    /// @dev Read the two identity fields from the revealed response bytes.
-    /// @dev Read the two identity fields. The block is passed whole, NOT
-    ///      concatenated: each field must be found inside a single revealed
-    ///      range, at authenticated offsets.
-    function _readIdentityFields(CeremonyAttestation.DirectionBlock memory block_)
+    /// @dev Which shape a platform's immutable identifier takes in its identity
+    ///      response. X quotes it; GitHub sends a bare integer, whose
+    ///      terminator is what proves the revealed digits are the whole number
+    ///      rather than a prefix of a longer one.
+    enum IdShape {
+        JsonString,
+        JsonInteger
+    }
+
+    /// @dev The two identity members this profile reads, as DATA rather than as
+    ///      a reading routine.
+    ///
+    ///      A hook handed the direction block could concatenate its revealed
+    ///      ranges, index them positionally, or read `revealed[0]` -- and each
+    ///      of those has broken this verifier before. Concatenation discards
+    ///      every offset, so a prover revealing disjoint fragments gets them
+    ///      joined into a document that never crossed the wire. Positional
+    ///      reads take whichever range the prover put first.
+    ///
+    ///      Declaring the field names and leaving the reading to the base makes
+    ///      all three unwritable rather than forbidden by a comment. A new
+    ///      profile supplies two strings and a shape; it never touches an
+    ///      attestation.
+    function _identityFields()
         internal
         pure
         virtual
-        returns (string memory userId, string memory handle);
+        returns (string memory idField, IdShape idShape, string memory handleField);
 
     /// @dev Find a JSON string field in exactly one revealed range.
     ///
@@ -102,7 +121,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      means every byte of it came from one contiguous run the notary
     ///      signed, at the offsets it signed them at.
     function _uniqueJsonString(CeremonyAttestation.DirectionBlock memory block_, string memory name)
-        internal
+        private
         pure
         returns (bytes memory value)
     {
@@ -120,7 +139,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
 
     /// @dev The same, for a bare JSON integer.
     function _uniqueJsonInteger(CeremonyAttestation.DirectionBlock memory block_, string memory name)
-        internal
+        private
         pure
         returns (bytes memory digits)
     {
@@ -256,7 +275,13 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
 
         // The response direction is tiled too, so no byte of it is invisible.
         CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
-        (fields.userId, fields.handle) = _readIdentityFields(data.received);
+        (string memory idField, IdShape idShape, string memory handleField) = _identityFields();
+        fields.userId = string(
+            idShape == IdShape.JsonString
+                ? _uniqueJsonString(data.received, idField)
+                : _uniqueJsonInteger(data.received, idField)
+        );
+        fields.handle = string(_uniqueJsonString(data.received, handleField));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────

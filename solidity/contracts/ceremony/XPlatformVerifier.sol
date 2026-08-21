@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 import {CeremonyFields} from "./CeremonyFields.sol";
 import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {INotaryService} from "./INotaryService.sol";
@@ -85,16 +84,15 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
         if (keccak256(grantType) != keccak256(GRANT_TYPE)) revert WrongGrantType(grantType);
     }
 
-    /// @dev REQ-PLAT-31. X's `id` is a JSON string, and both fields are read by
+    /// @dev REQ-PLAT-31. X's `id` is a JSON string, so both members are read by
     ///      their full `"field":"` delimiters, refusing a transcript where
     ///      either matches twice.
-    function _readIdentityFields(CeremonyAttestation.DirectionBlock memory block_)
+    function _identityFields()
         internal
         pure
         override
-        returns (string memory userId, string memory handle)
+        returns (string memory idField, IdShape idShape, string memory handleField)
     {
-        userId = string(_uniqueJsonString(block_, "id"));
-        handle = string(_uniqueJsonString(block_, "username"));
+        return ("id", IdShape.JsonString, "username");
     }
 }

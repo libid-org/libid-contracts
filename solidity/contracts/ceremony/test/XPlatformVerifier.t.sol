@@ -441,6 +441,100 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev The same, with the two members in SEPARATE revealed ranges.
+    ///
+    ///      The test above puts both inside one range, where the field reader's
+    ///      own scan sees two matches. This one puts one member in each range,
+    ///      so every individual range looks unambiguous and only the count
+    ///      ACROSS ranges is wrong. A reader that returned the first match it
+    ///      found -- or that stopped scanning once it had one -- would accept
+    ///      this and let the prover choose which handle the chain records.
+    function test_rejectsTwoUsernamesInSeparateRevealedRanges() public {
+        ICeremony.Submission memory s = _submission();
+        s.attestations[1] = _identityAttestationSplitAcrossRanges();
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A handle that exists ONLY across a range boundary.
+    ///
+    ///      Neither revealed range contains a `username` member. Joined end to
+    ///      end they spell one, because the prover split the delimiter itself:
+    ///      the first range stops mid-word and the second resumes it. A reader
+    ///      that concatenated the ranges before matching would find exactly one
+    ///      member, find nothing wrong with it, and record a handle that never
+    ///      crossed the wire. Reading each range on its own finds none, which
+    ///      is the rejection.
+    function test_rejectsAHandleSplicedAcrossARangeBoundary() public {
+        ICeremony.Submission memory s = _submission();
+        s.attestations[1] = _identityAttestationSplicedHandle();
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
+        this.run{value: quote}(s);
+    }
+
+    function _identityAttestationSplicedHandle() private pure returns (ICeremony.Attestation memory) {
+        bytes memory first = '{"id":"2244994945","usern';
+        bytes memory second = 'ame":"mallory"}';
+        return _splitIdentityAttestation(first, second);
+    }
+
+    /// @dev An identity response whose two revealed ranges each carry a whole
+    ///      `username` member. The ranges still tile the signed length, so
+    ///      nothing but the cross-range count rejects it.
+    function _identityAttestationSplitAcrossRanges() private pure returns (ICeremony.Attestation memory) {
+        return _splitIdentityAttestation('{"id":"2244994945","username":"alice"', ',"username":"mallory"}');
+    }
+
+    /// @dev One identity attestation whose received direction is exactly the two
+    ///      revealed ranges given, tiling the signed length with no commitment.
+    function _splitIdentityAttestation(bytes memory first, bytes memory second)
+        private
+        pure
+        returns (ICeremony.Attestation memory)
+    {
+        bytes memory head =
+            "GET /2/users/me HTTP/1.1\r\naccept: application/json\r\nhost: api.x.com\r\nauthorization: Bearer ";
+        bytes memory bearer = "TOKENTOKENTOKEN";
+        bytes memory tail = "\r\nconnection: close\r\n\r\n";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        uint32 sentLen = end + uint32(tail.length);
+
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, end: start, value: head}),
+                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: sentLen
+        });
+
+        uint32 split = uint32(first.length);
+        uint32 recvLen = split + uint32(second.length);
+
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, end: split, value: first}),
+                AttestationBuilder.Range({start: split, end: recvLen, value: second})
+            ),
+            commitments: AttestationBuilder.none(),
+            length: recvLen
+        });
+
+        bytes memory attested = AttestationBuilder.encode(
+            CeremonyProfile.FORMAT_TAG,
+            CeremonyProfile.PLATFORM_X,
+            CeremonyProfile.IDENTITY_SESSION_TAG,
+            CeremonyProfile.AUTHORITY_X_API,
+            T0,
+            sent,
+            received
+        );
+        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
     // ─── The token response anchors (REQ-PLAT-57, TEST-PLAT-22) ─────
 
     /// @dev The bearer is identified by its framing, not by being the only
