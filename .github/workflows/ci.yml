@@ -121,9 +121,8 @@ jobs:
   # (--check here); the "Regenerate verifiers" dispatch workflow runs the same
   # script with --write to refresh the committed files after a pin bump.
   #
-  # TODO(release v0.1.0): once libid-circuits v0.1.0 is published, add
-  # `verifiers` to the `needs:` of publish-crates so nothing publishes over a
-  # drifted verifier.
+  # publish-crates hangs its `needs:` off this job so nothing publishes over a
+  # drifted verifier; publish-npm inherits the gate through publish-crates.
   # ---------------------------------------------------------------------------
   verifiers:
     name: Verifiers match circuits release
@@ -430,7 +429,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'release' && github.event.action == 'published'
-    needs: [verify-tag, versions, solidity, rust, publish-check]
+    needs: [verify-tag, versions, solidity, rust, publish-check, verifiers]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
