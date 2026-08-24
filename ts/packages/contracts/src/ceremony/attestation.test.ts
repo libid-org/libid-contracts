@@ -7,6 +7,7 @@ import {
   encodeAttestedData,
   HEADER_LEN,
   requireBearerHeaderRequest,
+  requireFramedCommitment,
   requireExactCoverage,
   tag,
 } from './attestation.js'
@@ -85,6 +86,45 @@ describe('attested data', () => {
     const line = new TextEncoder().encode('POST /2/oauth2/token ').slice(0, first.bytes.length)
     token.sent.revealed[0] = { ...first, bytes: line }
     expect(attestationDigest(token)).not.toBe(attestationDigest(sample()))
+  })
+
+  // The chain rejects both of these. A dry run that does not is worse than no
+  // dry run: the runtime spends a second session on a session already lost.
+  it('refuses a bare line feed in the revealed request', () => {
+    const head = new TextEncoder().encode(
+      'GET /2/users/me HTTP/1.1\r\nhost: api.x.com\nauthorization: Bearer VICTIM\r\nauthorization: Bearer ',
+    )
+    const tail = new TextEncoder().encode('\r\n\r\n')
+    const start = head.length
+    const end = start + 16
+    expect(() =>
+      requireBearerHeaderRequest(
+        {
+          revealed: [
+            { start: 0, end: start, bytes: head },
+            { start: end, end: end + tail.length, bytes: tail },
+          ],
+          commitments: [{ start, end, commitment: new Uint8Array(32) }],
+        },
+        end + tail.length,
+      ),
+    ).toThrow(AttestationError)
+  })
+
+  it('finds the one commitment framed by the given bytes', () => {
+    const prefix = new TextEncoder().encode('"access_token":"')
+    const suffix = new TextEncoder().encode('"')
+    const start = prefix.length
+    const end = start + 20
+    const block = {
+      revealed: [
+        { start: 0, end: start, bytes: prefix },
+        { start: end, end: end + 1, bytes: suffix },
+      ],
+      commitments: [{ start, end, commitment: new Uint8Array(32).fill(7) }],
+    }
+    expect(requireFramedCommitment(block, '"access_token":"', '"').start).toBe(start)
+    expect(() => requireFramedCommitment(block, '"refresh_token":"', '"')).toThrow(AttestationError)
   })
 
   it('refuses trailing bytes', () => {

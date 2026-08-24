@@ -12,7 +12,7 @@
 
 import { type Hex, keccak256, toHex } from 'viem'
 
-/// Four 32-byte tags, `createdAt`, and the two transcript lengths.
+/// The authority, `createdAt`, and the two transcript lengths.
 export const HEADER_LEN = 48
 
 /// Offsets are zero-based into that direction's complete transcript, `start`
@@ -143,10 +143,6 @@ function checkSpan(
 /// overlapping, empty, or ending past the signed transcript length
 /// (REQ-COMMON-59, REQ-COMMON-60).
 function validateDirection(block: DirectionBlock, direction: string, length: number): void {
-  if (block.revealed.length > 0xffff || block.commitments.length > 0xffff) {
-    throw new AttestationError(`a direction holds more entries than the two-byte count admits`)
-  }
-
   let previousEnd = 0
   for (const range of block.revealed) {
     checkSpan(direction, 'revealed range', range.start, range.end, length, previousEnd)
@@ -304,6 +300,16 @@ export function requireBearerHeaderRequest(block: DirectionBlock, length: number
     }
   }
 
+  // Every LF must be part of a CRLF. Otherwise
+  // `...\nauthorization: Bearer <victim>\r\n` starts a header line the
+  // CRLF-anchored needle never counts, while a lenient platform parser honours
+  // it.
+  for (let i = 0; i < revealed.length; i++) {
+    if (revealed[i] === '\n' && (i === 0 || revealed[i - 1] !== '\r')) {
+      throw new AttestationError(`the revealed bytes carry a bare line feed at ${i}`)
+    }
+  }
+
   // Counted per range, so joining two regions cannot manufacture a match.
   const count = block.revealed.reduce((n, r) => n + countNeedle(normalizeHeaderBytes(r.bytes)), 0)
   if (count !== 1) {
@@ -323,6 +329,41 @@ export function requireBearerHeaderRequest(block: DirectionBlock, length: number
   }
 
   return commitment
+}
+
+/// The one commitment framed by exactly these revealed bytes.
+///
+/// For a direction that is NOT exactly covered, where several ranges are hidden
+/// and only the anchors around one of them are revealed. The token response is
+/// that case: the bearer is committed and every other byte is too, so without
+/// the anchors the committed range is indistinguishable from a `refresh_token`
+/// value (REQ-PLAT-57, REQ-PLAT-58).
+///
+/// The chain runs this in `_tokenSession`. A runtime that skips it locally
+/// finds out by losing two Notary Fees.
+export function requireFramedCommitment(
+  block: DirectionBlock,
+  prefix: string,
+  suffix: string,
+): RangeCommitment {
+  let found: RangeCommitment | null = null
+  for (const commitment of block.commitments) {
+    const before =
+      commitment.start >= prefix.length
+        ? revealedSlice(block, commitment.start - prefix.length, commitment.start)
+        : null
+    if (before !== prefix) continue
+    if (revealedSlice(block, commitment.end, commitment.end + suffix.length) !== suffix) continue
+    // Two framed commitments frame nothing: the anchors must name one range.
+    if (found !== null) {
+      throw new AttestationError('more than one commitment is framed by those bytes')
+    }
+    found = commitment
+  }
+  if (found === null) {
+    throw new AttestationError('no commitment is framed by those bytes')
+  }
+  return found
 }
 
 export function validate(attested: AttestedData): void {
