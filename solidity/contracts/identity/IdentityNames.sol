@@ -79,14 +79,22 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      shares: what the verifier reported, less that version's future
     ///      allowance. The nodes are shared by all versions, so raw values
     ///      would compare two clocks and the looser one would win — see
-    ///      `_onSharedScale`. Recover what the verifier stated by adding back
-    ///      the allowance of `version`.
+    ///      `_onSharedScale`. Which side subtracted differs by path: a legacy
+    ///      binding is scaled here, from `VerifierSlot.maxFutureObservation`; a
+    ///      ceremony binding arrives already scaled, because the Platform
+    ///      Verifier owns that number. So recovering what the verifier stated
+    ///      means adding back the allowance THAT path used, not a single one.
     ///
     ///      `version` is what makes retiring an old proof format possible. The
     ///      owner may only stop accepting a version once nobody depends on it,
     ///      and this is the on-chain record of who still does. It rides in the
     ///      same slot: 20 + 8 + 4 bytes is exactly one word, so keeping it
     ///      costs no extra storage.
+    ///
+    ///      The two paths number their versions independently and both start at
+    ///      one, so a ceremony version is stored with [`CEREMONY_VERSION_BIT`]
+    ///      set. Without it "is anybody still on legacy v1" would count every
+    ///      ceremony v1 binding and the retirement would never come.
     struct Binding {
         address owner;
         uint64 observedAt;
@@ -202,12 +210,17 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         mapping(bytes32 => mapping(uint32 => VerifierSlot)) verifiers;
         // ── Appended for the ceremony path. The struct's rule is append-only,
         //    so these sit after everything above and disturb no stored slot.
-        /// platformId -> Platform Verifier Version -> the verifier for that
-        /// pair. This is the Supported Version Set of REQ-COMMON-05B: more than
-        /// one version of one platform is supported at once, so a deployment
-        /// can run a new one beside the one it replaces while holders migrate.
         /// The one component this Consumer calls to verify a proof.
+        ///
+        /// One address, not a version set. The Supported Version Set lives at
+        /// the Proof Verifier, because a Consumer holding its own copy would
+        /// be a second version-governance surface free to drift from it.
         IProofVerifier proofVerifier;
+        /// platformId -> has any name ever been bound on it.
+        ///
+        /// Set once and never cleared: it answers "was this platform ever able
+        /// to verify", which a retirement cannot make false in retrospect.
+        mapping(bytes32 => bool) everBound;
         /// Every Authorization Digest this Consumer has accepted.
         ///
         /// The digest is its own replay nullifier, and recording belongs to the
@@ -296,10 +309,10 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @dev Reconfiguring `rules` re-keys every handle already written.
     event PlatformConfigured(bytes32 indexed platformId);
 
-    /// @notice A proof version gained or replaced its verifier.
-    /// @notice A Platform Verifier entered or left the Supported Version Set.
+    /// @notice This Consumer was pointed at a Proof Verifier.
     event ProofVerifierConfigured(address verifier);
 
+    /// @notice A legacy proof version gained or replaced its verifier.
     event VerifierConfigured(
         bytes32 indexed platformId, uint32 indexed version, address verifier, uint64 maxFutureObservation
     );
@@ -330,12 +343,17 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      about: a digest is spendable once at EACH Consumer accepting this
     ///      domain, so two deployments choosing the same string share a digest
     ///      space.
+    /// @dev Set on `Binding.version` for a binding established through the
+    ///      ceremony path. The two Supported Version Sets are independent and
+    ///      both count from one, so without a marker their records collide.
+    uint32 internal constant CEREMONY_VERSION_BIT = 0x80000000;
+
     bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity"));
 
     error ZeroVersion();
+    error ZeroAddress();
     /// @dev The submission names an operation this Consumer does not own
     ///      (REQ-COMMON-06A).
-    error ZeroAddress();
     error ForeignOperationDomain(bytes32 operationDomain);
     /// @dev A digest is spendable once here (REQ-COMMON-03A).
     error DigestAlreadySpent(bytes32 digest);
@@ -654,7 +672,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
         _write(
             submission.platformId,
-            uint32(submission.version),
+            CEREMONY_VERSION_BIT | uint32(submission.version),
             claimed.userId,
             claimed.handle,
             claimed.metadataObservedAt,
@@ -727,6 +745,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         bool publishName,
         Platform memory platform
     ) private {
+        // This platform has now verified something, and no later retirement of
+        // its versions makes that untrue. The resolvers read it so a name
+        // outlives the format that established it.
+        _s().everBound[platformId] = true;
+
         // Put the observation on the scale every version of this platform
         // shares, BEFORE it is compared with or written to a node.
         //
@@ -861,7 +884,15 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // holds the Supported Version Set, so it is asked rather than mirrored.
         IProofVerifier pv = _s().proofVerifier;
         bool canVerify = platform.latestVersion != 0 || (address(pv) != address(0) && pv.verifiesPlatform(platformId));
-        if (!platform.configured || !canVerify) revert UnknownPlatform(platformId);
+        // "Can verify" moves. Governance retiring the last version of a
+        // platform would otherwise stop every name already bound under it from
+        // resolving -- while CeremonyProofVerifier's own documentation promises
+        // that removing a version strands nothing. A name does not belong to
+        // the proof that established it, and does not stop existing when that
+        // proof's format is retired.
+        if (!platform.configured || !(canVerify || _s().everBound[platformId])) {
+            revert UnknownPlatform(platformId);
+        }
     }
 
     /// @dev The ceremony path's gate: the keyspace exists, and nothing more.

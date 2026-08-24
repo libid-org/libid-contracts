@@ -228,6 +228,34 @@ contract CeremonyClaimTest is Test {
         assertEq(names.resolveHandle(PLATFORM, "bob"), WALLET);
     }
 
+    /// @dev Both Supported Version Sets count from one. Storing a ceremony v1
+    ///      as plain 1 would make "is anybody still on legacy v1" -- the
+    ///      question `retireVerifier` exists to answer -- count every ceremony
+    ///      binding, and the retirement would never come.
+    function test_aCeremonyVersionIsNotALegacyVersion() public {
+        _claim(_submission(WALLET, bytes32(uint256(88))), FEE);
+        (,, uint32 version) = names.byId(IdentityNodes.idNode(PLATFORM, "2244994945"));
+        assertTrue(version != 1, "a ceremony v1 must not read as legacy v1");
+        assertEq(version & 0x7fffffff, 1, "and it must still say which version");
+    }
+
+    /// @dev CeremonyProofVerifier's own doc says removing a version "strands no
+    ///      name already bound under it". Routing resolution through the
+    ///      Supported Version Set made that false: retiring the last version
+    ///      stopped every bound name on the platform from resolving, for names
+    ///      that were bound and still owned. A name does not belong to the
+    ///      proof that established it.
+    function test_aBoundNameOutlivesTheVersionThatEstablishedIt() public {
+        _claim(_submission(WALLET, bytes32(uint256(77))), FEE);
+        assertEq(names.resolveId(PLATFORM, "2244994945"), WALLET);
+
+        vm.prank(OWNER);
+        proofVerifier.setVerifier(PLATFORM, 1, IPlatformVerifier(address(0)));
+
+        assertEq(names.resolveId(PLATFORM, "2244994945"), WALLET);
+        assertEq(names.resolveHandle(PLATFORM, "alice"), WALLET);
+    }
+
     /// @dev The set is authority, not configuration (REQ-COMMON-05C).
     function test_onlyTheOwnerChangesTheSupportedVersionSet() public {
         vm.expectRevert();
