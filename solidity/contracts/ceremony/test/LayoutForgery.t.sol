@@ -86,8 +86,8 @@ contract LayoutForgeryTest is Test {
         uint32 bodyEnd = lineEnd + uint32(body.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: lineEnd, value: line}),
-                AttestationBuilder.Range({start: lineEnd, end: bodyEnd, value: body})
+                AttestationBuilder.Range({start: 0, value: line}),
+                AttestationBuilder.Range({start: lineEnd, value: body})
             ),
             commitments: AttestationBuilder.none(),
             length: bodyEnd
@@ -101,8 +101,8 @@ contract LayoutForgeryTest is Test {
         uint32 total = quoteEnd + 24;
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, end: prefixEnd, value: prefix}),
-                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+                AttestationBuilder.Range({start: headEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
             commitments: AttestationBuilder.two(
                 AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
@@ -124,9 +124,9 @@ contract LayoutForgeryTest is Test {
         // {"data":{"id":"999","name":"44196397","username":"attacker"}}
         //  0            12            25          37                 61
         AttestationBuilder.Range[] memory rs = new AttestationBuilder.Range[](3);
-        rs[0] = AttestationBuilder.Range({start: 0, end: 12, value: '{"data":{"id'});
-        rs[1] = AttestationBuilder.Range({start: 25, end: 37, value: '":"44196397"'});
-        rs[2] = AttestationBuilder.Range({start: 37, end: 61, value: ',"username":"attacker"}}'});
+        rs[0] = AttestationBuilder.Range({start: 0, value: '{"data":{"id'});
+        rs[1] = AttestationBuilder.Range({start: 25, value: '":"44196397"'});
+        rs[2] = AttestationBuilder.Range({start: 37, value: ',"username":"attacker"}}'});
         received = AttestationBuilder.Direction({revealed: rs, commitments: AttestationBuilder.none(), length: 61});
     }
 
@@ -145,8 +145,7 @@ contract LayoutForgeryTest is Test {
         uint32 sentLen = bend + uint32(tail.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: bstart, value: head}),
-                AttestationBuilder.Range({start: bend, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: bend, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: bstart, end: bend, value: IDENTITY_COMMITMENT})
@@ -199,8 +198,8 @@ contract LayoutForgeryTest is Test {
         uint32 e2 = s2 + uint32(fakeBody.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: s1, end: e1, value: fakeLine}),
-                AttestationBuilder.Range({start: s2, end: e2, value: fakeBody})
+                AttestationBuilder.Range({start: s1, value: fakeLine}),
+                AttestationBuilder.Range({start: s2, value: fakeBody})
             ),
             commitments: AttestationBuilder.none(),
             length: e2 + 300
@@ -213,8 +212,8 @@ contract LayoutForgeryTest is Test {
         uint32 total = quoteEnd + 24;
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, end: prefixEnd, value: prefix}),
-                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+                AttestationBuilder.Range({start: headEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
             commitments: AttestationBuilder.two(
                 AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
@@ -229,9 +228,7 @@ contract LayoutForgeryTest is Test {
     function _honestIdentityRecv() private pure returns (AttestationBuilder.Direction memory received) {
         bytes memory body = '{"data":{"id":"2244994945","username":"alice"}}';
         received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(
-                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });

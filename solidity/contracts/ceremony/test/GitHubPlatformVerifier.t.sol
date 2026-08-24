@@ -98,7 +98,7 @@ contract GitHubPlatformVerifierTest is Test {
         uint32 secretEnd = wholeEnd + 40; // `&client_secret=<hex>`, committed
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, end: wholeEnd, value: whole})),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: wholeEnd, end: secretEnd, value: bytes32(uint256(0x5EC1E7))})
             ),
@@ -114,8 +114,8 @@ contract GitHubPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, end: anchorEnd, value: anchor}),
-                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+                AttestationBuilder.Range({start: headEnd, value: anchor}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
             commitments: AttestationBuilder.two(
                 AttestationBuilder.Commitment({start: anchorEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
@@ -139,8 +139,7 @@ contract GitHubPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: start, value: head}),
-                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
@@ -149,7 +148,7 @@ contract GitHubPlatformVerifierTest is Test {
         });
         bytes memory b = bytes(body);
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, end: uint32(b.length), value: b})),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: b})),
             commitments: AttestationBuilder.none(),
             length: uint32(b.length)
         });

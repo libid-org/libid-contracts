@@ -8,9 +8,11 @@ pragma solidity ^0.8.24;
 ///      `CeremonyAttestation.t.sol`; this exists so a test can vary one field of
 ///      a session and watch a verifier refuse it.
 library AttestationBuilder {
+    /// @dev No `end`: a revealed range's length is its bytes, and the encoder
+    ///      writes that length. A separate `end` would be a field a test could
+    ///      set and watch do nothing.
     struct Range {
         uint32 start;
-        uint32 end;
         bytes value;
     }
 

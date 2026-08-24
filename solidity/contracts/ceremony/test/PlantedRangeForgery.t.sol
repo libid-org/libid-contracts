@@ -86,8 +86,8 @@ contract PlantedRangeForgeryTest is Test {
         uint32 total = quoteEnd + 24;
         received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, end: prefixEnd, value: prefix}),
-                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+                AttestationBuilder.Range({start: headEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
             commitments: AttestationBuilder.two(
                 AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
@@ -116,8 +116,8 @@ contract PlantedRangeForgeryTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: uint32(line.length), value: line}),
-                AttestationBuilder.Range({start: plantedStart, end: plantedEnd, value: planted})
+                AttestationBuilder.Range({start: 0, value: line}),
+                AttestationBuilder.Range({start: plantedStart, value: planted})
             ),
             commitments: AttestationBuilder.none(),
             length: total
@@ -137,8 +137,7 @@ contract PlantedRangeForgeryTest is Test {
         uint32 sentLen = bend + uint32(tail.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: bstart, value: head}),
-                AttestationBuilder.Range({start: bend, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: bend, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: bstart, end: bend, value: IDENTITY_COMMITMENT})
@@ -147,9 +146,7 @@ contract PlantedRangeForgeryTest is Test {
         });
         bytes memory body = abi.encodePacked('"id":"2244994945","username":"alice"');
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(
-                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
@@ -199,10 +196,10 @@ contract PlantedRangeForgeryTest is Test {
         uint32 e3 = s3 + uint32(f3.length);
 
         AttestationBuilder.Range[] memory rs = new AttestationBuilder.Range[](4);
-        rs[0] = AttestationBuilder.Range({start: 0, end: uint32(line.length), value: line});
-        rs[1] = AttestationBuilder.Range({start: s1, end: e1, value: f1});
-        rs[2] = AttestationBuilder.Range({start: s2, end: e2, value: f2});
-        rs[3] = AttestationBuilder.Range({start: s3, end: e3, value: f3});
+        rs[0] = AttestationBuilder.Range({start: 0, value: line});
+        rs[1] = AttestationBuilder.Range({start: s1, value: f1});
+        rs[2] = AttestationBuilder.Range({start: s2, value: f2});
+        rs[3] = AttestationBuilder.Range({start: s3, value: f3});
 
         AttestationBuilder.Direction memory sent =
             AttestationBuilder.Direction({revealed: rs, commitments: AttestationBuilder.none(), length: e3});

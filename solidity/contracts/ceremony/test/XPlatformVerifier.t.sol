@@ -134,7 +134,7 @@ contract XPlatformVerifierTest is Test {
         uint32 wholeEnd = uint32(whole.length);
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, end: wholeEnd, value: whole})),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
             commitments: AttestationBuilder.none(),
             length: wholeEnd
         });
@@ -164,8 +164,8 @@ contract XPlatformVerifierTest is Test {
         AttestationBuilder.Range[] memory revealed;
         if (framed) {
             revealed = AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, end: prefixEnd, value: prefix}),
-                AttestationBuilder.Range({start: bearerEnd, end: quoteEnd, value: '"'})
+                AttestationBuilder.Range({start: headEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
             );
         } else {
             // Nothing revealed at all — the shape REQ-PLAT-57 refuses, because
@@ -202,8 +202,7 @@ contract XPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: start, value: head}),
-                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
@@ -213,9 +212,7 @@ contract XPlatformVerifierTest is Test {
 
         bytes memory body = abi.encodePacked('"id":"', idValue, '","username":"', username, '"');
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(
-                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
@@ -529,8 +526,7 @@ contract XPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: start, value: head}),
-                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
@@ -543,8 +539,8 @@ contract XPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: split, value: first}),
-                AttestationBuilder.Range({start: split, end: recvLen, value: second})
+                AttestationBuilder.Range({start: 0, value: first}),
+                AttestationBuilder.Range({start: split, value: second})
             ),
             commitments: AttestationBuilder.none(),
             length: recvLen
@@ -607,8 +603,7 @@ contract XPlatformVerifierTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: start, value: head}),
-                AttestationBuilder.Range({start: end, end: sentLen, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
@@ -617,9 +612,7 @@ contract XPlatformVerifierTest is Test {
         });
         bytes memory body = '"id":"2244994945","username":"alice"';
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(
-                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });

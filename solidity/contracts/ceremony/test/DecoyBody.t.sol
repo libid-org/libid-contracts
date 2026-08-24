@@ -79,8 +79,7 @@ contract DecoyBodyTest is Test {
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: h, value: head}),
-                AttestationBuilder.Range({start: r, end: l, value: decoy})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: r, value: decoy})
             ),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: h, end: r, value: bytes32(uint256(0xDEC0))})
@@ -95,8 +94,7 @@ contract DecoyBodyTest is Test {
         uint32 q1 = b1 + 1;
         AttestationBuilder.Direction memory recv = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: a0, end: a1, value: anchor}),
-                AttestationBuilder.Range({start: b1, end: q1, value: '"'})
+                AttestationBuilder.Range({start: a0, value: anchor}), AttestationBuilder.Range({start: b1, value: '"'})
             ),
             commitments: AttestationBuilder.two(
                 AttestationBuilder.Commitment({start: a1, end: b1, value: TOKEN_C}),
@@ -118,17 +116,14 @@ contract DecoyBodyTest is Test {
         uint32 l = e0 + uint32(tail.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, end: s0, value: head}),
-                AttestationBuilder.Range({start: e0, end: l, value: tail})
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: e0, value: tail})
             ),
             commitments: AttestationBuilder.one(AttestationBuilder.Commitment({start: s0, end: e0, value: ID_C})),
             length: l
         });
         bytes memory body = '{"data":{"id":"2244994945","username":"victim"}}';
         AttestationBuilder.Direction memory recv = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.one(
-                AttestationBuilder.Range({start: 0, end: uint32(body.length), value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
