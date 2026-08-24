@@ -7,17 +7,19 @@ pragma solidity ^0.8.24;
 ///
 /// @dev THE NAMESPACED STRINGS ARE OURS, NOT THE SPECIFICATION'S.
 ///      ceremony-common fixes exactly one literal: `libid.identity.pkce`, in
-///      section 7. Every other libID-namespaced string -- `formatTag`
-///      (REQ-COMMON-53), `operationTag` and the platform name
-///      (REQ-COMMON-55), and each Consumer's operation domain
-///      (REQ-COMMON-01A) -- is required to exist and required to be pinned,
-///      but its bytes are left to the profile author.
+///      section 7. The platform name (REQ-COMMON-55) and each Consumer's
+///      operation domain (REQ-COMMON-01A) are required to exist and required
+///      to be pinned, but their bytes are left to the profile author.
 ///
 ///      So these are a cross-implementation agreement, not a reading of the
-///      specification. A notary emitting one string and a verifier pinning
-///      another derives a key nobody trusts and rejects every genuine
-///      attestation, with no error that says why. `libid-rs` carries the same
-///      strings in `crates/libid-ceremony/src/profile.rs`.
+///      specification. A Consumer dispatching on one string and a verifier
+///      registered under another simply never meet, with no error that says
+///      why.
+///
+///      The attestation no longer carries a namespaced string at all. The
+///      format tag, the platform id and the session tag were things the notary
+///      was handed and wrote down as though observed; what it signs now names
+///      only the host it authenticated.
 library CeremonyProfile {
     // --- Platform identifiers -----------------------------------------------
 

@@ -124,15 +124,7 @@ contract GitHubPlatformVerifierTest is Test {
             length: total
         });
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_GITHUB,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            authority,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(authority, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -161,15 +153,7 @@ contract GitHubPlatformVerifierTest is Test {
             commitments: AttestationBuilder.none(),
             length: uint32(b.length)
         });
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_GITHUB,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            authority,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(authority, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -288,11 +272,12 @@ contract GitHubPlatformVerifierTest is Test {
     function test_rejectsASecondAuthorizationHeaderOnTheIdentityRead() public {
         ICeremony.Submission memory s = _submission();
         bytes memory attested = s.attestations[1].attestedData;
-        // Corrupt the platform id so the session is refused before anything
-        // else — a cheap check that the shared guards run for GitHub too.
-        attested[32] = bytes1(uint8(attested[32]) ^ 0x01);
+        // Corrupt the authority so the session is refused before anything else
+        // — a cheap check that the shared guard runs for GitHub too. It is the
+        // first 32 bytes now that the stamped tags are gone.
+        attested[0] = bytes1(uint8(attested[0]) ^ 0x01);
         s.attestations[1] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
-        vm.expectPartialRevert(PlatformVerifierBase.WrongPlatform.selector);
+        vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
     }
 }

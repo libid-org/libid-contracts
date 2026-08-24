@@ -111,15 +111,7 @@ contract LayoutForgeryTest is Test {
             length: total
         });
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -161,15 +153,7 @@ contract LayoutForgeryTest is Test {
             ),
             length: sentLen
         });
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -238,15 +222,7 @@ contract LayoutForgeryTest is Test {
             ),
             length: total
         });
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 

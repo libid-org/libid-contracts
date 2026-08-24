@@ -203,9 +203,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         uint256 fee,
         PlatformFields memory fields
     ) private returns (uint64 observedAt) {
-        CeremonyAttestation.AttestedData memory data = _authenticate(
-            submission.attestations[0], _platform(), CeremonyProfile.TOKEN_SESSION_TAG, _tokenAuthority(), fee
-        );
+        CeremonyAttestation.AttestedData memory data = _authenticate(submission.attestations[0], _tokenAuthority(), fee);
 
         // REQ-COMMON-18A applies to THIS direction too. Without tiling, a
         // prover reveals two header values it composed itself and this verifier
@@ -249,9 +247,8 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     }
 
     function _identitySession(Submission calldata submission, uint256 fee, PlatformFields memory fields) private {
-        CeremonyAttestation.AttestedData memory data = _authenticate(
-            submission.attestations[1], _platform(), CeremonyProfile.IDENTITY_SESSION_TAG, _identityAuthority(), fee
-        );
+        CeremonyAttestation.AttestedData memory data =
+            _authenticate(submission.attestations[1], _identityAuthority(), fee);
 
         // REQ-COMMON-21A: the path separates operations on the same server.
         // Anchored at the origin for the same reason as the token request --

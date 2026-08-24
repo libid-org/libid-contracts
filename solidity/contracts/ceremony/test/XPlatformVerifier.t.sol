@@ -143,15 +143,7 @@ contract XPlatformVerifierTest is Test {
         // every other byte hidden behind a commitment of its own.
         received = _tokenResponse(bearerFraming);
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -228,15 +220,7 @@ contract XPlatformVerifierTest is Test {
             length: uint32(body.length)
         });
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -351,12 +335,16 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// @dev Two attestations of one ceremony differing only in which session
-    ///      they came from would otherwise be interchangeable.
+    /// @dev Nothing in an attestation says which session of a ceremony it
+    ///      covers, and nothing needs to. X serves both sessions from one host,
+    ///      so the authority cannot separate them either -- what separates them
+    ///      is the request line, which the notary recorded as a revealed range
+    ///      and did not choose. Swapping the two therefore fails on bytes that
+    ///      came off the wire rather than on a label the prover handed over.
     function test_rejectsTheTwoSessionsSwapped() public {
         ICeremony.Submission memory s = _submission();
         (s.attestations[0], s.attestations[1]) = (s.attestations[1], s.attestations[0]);
-        vm.expectPartialRevert(PlatformVerifierBase.WrongOperationTag.selector);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.WrongRequestLine.selector);
         this.run{value: quote}(s);
     }
 
@@ -562,15 +550,7 @@ contract XPlatformVerifierTest is Test {
             length: recvLen
         });
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -643,15 +623,7 @@ contract XPlatformVerifierTest is Test {
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -661,10 +633,11 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsAForeignAuthority() public {
         ICeremony.Submission memory s = _submission();
         bytes memory attested = s.attestations[1].attestedData;
-        // authorityId sits at bytes 96..128 of the header.
+        // authorityId is the first 32 bytes: it is the whole header identity
+        // now that the stamped tags are gone.
         bytes32 evil = keccak256(bytes("evil.example"));
         for (uint256 i = 0; i < 32; ++i) {
-            attested[96 + i] = evil[i];
+            attested[i] = evil[i];
         }
         s.attestations[1] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
         vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);

@@ -66,9 +66,6 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
 
     error WrongValue(uint256 required, uint256 provided);
     error WrongAttestationCount(uint256 required, uint256 provided);
-    error WrongFormatTag(bytes32 expected, bytes32 found);
-    error WrongPlatform(bytes32 expected, bytes32 found);
-    error WrongOperationTag(bytes32 expected, bytes32 found);
     error WrongAuthority(bytes32 expected, bytes32 found);
     error AttestationAhead(uint64 createdAt, uint64 blockTime, uint64 allowance);
     error ProofExpired(uint64 validUntil, uint64 blockTime);
@@ -160,35 +157,26 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     ///      pins. The Notary Service's decision is final (REQ-COMMON-05D): this
     ///      never second-guesses it, and never compares the attested data
     ///      against a transcript it does not hold.
-    function _authenticate(
-        Attestation calldata attestation,
-        bytes32 expectedPlatform,
-        bytes32 expectedOperationTag,
-        bytes32 expectedAuthority,
-        uint256 fee
-    ) internal returns (CeremonyAttestation.AttestedData memory data) {
+    function _authenticate(Attestation calldata attestation, bytes32 expectedAuthority, uint256 fee)
+        internal
+        returns (CeremonyAttestation.AttestedData memory data)
+    {
         _base().notary.verify{value: fee}(attestation.attestedData, attestation.signature);
 
         data = CeremonyAttestation.decode(attestation.attestedData);
 
-        // A change to the field list, a field's width, or a field's meaning
-        // takes a new format version rather than another field, so a mismatch
-        // here means the bytes are not the layout this verifier reads.
-        if (data.formatTag != CeremonyProfile.FORMAT_TAG) {
-            revert WrongFormatTag(CeremonyProfile.FORMAT_TAG, data.formatTag);
-        }
-        if (data.platformId != expectedPlatform) {
-            revert WrongPlatform(expectedPlatform, data.platformId);
-        }
-        // One ceremony notarizes more than one session, and two attestations
-        // differing only in which session they came from would otherwise be
-        // interchangeable.
-        if (data.operationTag != expectedOperationTag) {
-            revert WrongOperationTag(expectedOperationTag, data.operationTag);
-        }
-        // The authority is what the notary authenticated in the handshake, not
-        // a revealed range: the transcript holds it only in a prover-composed
-        // `Host` header, which says nothing about which server answered.
+        // The one comparison left, and the only one the notary could honestly
+        // have supplied: the TLS server name it authenticated in the handshake.
+        // It is not a revealed range -- the transcript holds the authority only
+        // in a prover-composed `Host` header, which says nothing about which
+        // server answered.
+        //
+        // The format, the platform and the session used to be compared here
+        // too. None of them was ever observed: the notary was handed all three
+        // and wrote them down. The format is fixed by the notary key this
+        // profile pins alongside it (REQ-COMMON-18), the platform is whichever
+        // host answered, and which session this is, is the request line the
+        // caller of this function goes on to check.
         if (data.authorityId != expectedAuthority) {
             revert WrongAuthority(expectedAuthority, data.authorityId);
         }

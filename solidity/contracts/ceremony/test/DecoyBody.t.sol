@@ -105,15 +105,7 @@ contract DecoyBodyTest is Test {
             length: q1 + 10
         });
 
-        bytes memory att = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            recv
-        );
+        bytes memory att = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, recv);
         return ICeremony.Attestation({attestedData: att, signature: _sign(att)});
     }
 
@@ -140,15 +132,7 @@ contract DecoyBodyTest is Test {
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
-        bytes memory att = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            recv
-        );
+        bytes memory att = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, recv);
         return ICeremony.Attestation({attestedData: att, signature: _sign(att)});
     }
 

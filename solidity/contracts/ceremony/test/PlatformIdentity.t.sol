@@ -37,8 +37,6 @@ contract PlatformIdentityTest is Test {
     function test_libidNamespacesOnlyItsOwnConstructs() public pure {
         assertEq(IdentityNodes.ID_NODE_V1, keccak256(bytes("libid.identity.id-node.v1")));
         assertEq(IdentityNodes.HANDLE_NODE_V1, keccak256(bytes("libid.identity.handle-node.v1")));
-        assertEq(CeremonyProfile.FORMAT_TAG, keccak256(bytes("libid.attestation.v1")));
-        assertEq(CeremonyProfile.TOKEN_SESSION_TAG, keccak256(bytes("libid.ceremony.session.token.v1")));
     }
 
     /// @dev The node tags are what every stored key hangs off, so changing one

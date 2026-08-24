@@ -26,27 +26,21 @@ library AttestationBuilder {
         uint32 length;
     }
 
-    function encode(
-        bytes32 formatTag,
-        bytes32 platformId,
-        bytes32 operationTag,
-        bytes32 authorityId,
-        uint64 createdAt,
-        Direction memory sent,
-        Direction memory received
-    ) internal pure returns (bytes memory out) {
-        out = abi.encodePacked(
-            formatTag, platformId, operationTag, authorityId, createdAt, sent.length, received.length
-        );
+    function encode(bytes32 authorityId, uint64 createdAt, Direction memory sent, Direction memory received)
+        internal
+        pure
+        returns (bytes memory out)
+    {
+        out = abi.encodePacked(authorityId, createdAt, sent.length, received.length);
         out = abi.encodePacked(out, _direction(sent), _direction(received));
     }
 
     function _direction(Direction memory d) private pure returns (bytes memory out) {
-        out = abi.encodePacked(uint16(d.revealed.length));
+        out = abi.encodePacked(uint64(d.revealed.length));
         for (uint256 i = 0; i < d.revealed.length; ++i) {
-            out = abi.encodePacked(out, d.revealed[i].start, d.revealed[i].end, d.revealed[i].value);
+            out = abi.encodePacked(out, d.revealed[i].start, uint64(d.revealed[i].value.length), d.revealed[i].value);
         }
-        out = abi.encodePacked(out, uint16(d.commitments.length));
+        out = abi.encodePacked(out, uint64(d.commitments.length));
         for (uint256 i = 0; i < d.commitments.length; ++i) {
             out = abi.encodePacked(out, d.commitments[i].start, d.commitments[i].end, d.commitments[i].value);
         }

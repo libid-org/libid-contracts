@@ -123,15 +123,7 @@ contract PlantedRangeForgeryTest is Test {
             length: total
         });
 
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            _tokenResponse()
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse());
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -161,15 +153,7 @@ contract PlantedRangeForgeryTest is Test {
             commitments: AttestationBuilder.none(),
             length: uint32(body.length)
         });
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.IDENTITY_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            received
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
@@ -222,15 +206,7 @@ contract PlantedRangeForgeryTest is Test {
 
         AttestationBuilder.Direction memory sent =
             AttestationBuilder.Direction({revealed: rs, commitments: AttestationBuilder.none(), length: e3});
-        bytes memory attested = AttestationBuilder.encode(
-            CeremonyProfile.FORMAT_TAG,
-            CeremonyProfile.PLATFORM_X,
-            CeremonyProfile.TOKEN_SESSION_TAG,
-            CeremonyProfile.AUTHORITY_X_API,
-            T0,
-            sent,
-            _tokenResponse()
-        );
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse());
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
