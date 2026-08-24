@@ -71,7 +71,16 @@ library CeremonyFields {
         return (Found.One, value);
     }
 
-    /// @notice `jsonInteger`, reporting instead of reverting.
+    /// @notice `jsonInteger`, reporting ABSENCE and still refusing malformation.
+    ///
+    /// @dev Not symmetric with [`tryJsonString`], deliberately. Absence is
+    ///      reported, because a field lives in exactly one revealed range and
+    ///      the others must be able to say "not here". A malformed match still
+    ///      reverts, because the needle `"id":` is the full delimiter -- it
+    ///      cannot match inside a neighbouring member such as `"node_id":"`,
+    ///      whose `i` is preceded by `_` rather than a quote -- so a second
+    ///      occurrence is a duplicate delimiter, which REQ-COMMON-19A wants
+    ///      rejected rather than skipped past to whichever copy parses.
     function tryJsonInteger(bytes memory data, string memory name)
         internal
         pure

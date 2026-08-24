@@ -48,6 +48,8 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     error CodeVerifierMismatch();
     error ClientIdentifierNotSerializerSafe(bytes found);
     error CommitmentMismatch(bytes32 proved, bytes32 attested);
+    /// @dev A public input the circuit declares as a byte carried more.
+    error PublicInputNotAByte(uint256 index, uint256 value);
     /// @dev A field was found in no revealed range, or in more than one.
     error FieldNotUnique(string name, uint256 rangesMatching);
     /// @dev The first revealed range does not begin the transcript, so nothing
@@ -213,7 +215,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         CeremonyAttestation.requireExactCoverage(data.sent, data.sentTranscriptLength);
 
         // Range 0 must BEGIN the transcript. Indexing the list is not enough:
-        // the lowest-offset revealed range is wherever the prover put it.
+        // the lowest-offset revealed range is wherever the prover put it. An
+        // empty list passes coverage against a zero signed length, so it is
+        // named here rather than left to an out-of-bounds panic that tells an
+        // operator nothing.
+        if (data.sent.revealed.length == 0) revert RequestLineNotAtOrigin(type(uint32).max);
         if (data.sent.revealed[0].start != 0) {
             revert RequestLineNotAtOrigin(data.sent.revealed[0].start);
         }
@@ -290,7 +296,13 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _requireCommitmentValue(bytes32 attested, bytes32[] calldata publicInputs, uint256 offset) internal pure {
         bytes32 proved;
         for (uint256 i = 0; i < 32; ++i) {
-            proved |= bytes32(uint256(uint8(uint256(publicInputs[offset + i]))) << (8 * (31 - i)));
+            uint256 element = uint256(publicInputs[offset + i]);
+            // The circuit declares these as bytes and the proof system
+            // constrains them, but this contract cannot see that. Truncating
+            // instead would accept 0x0101 as 0x01 and rest the whole
+            // commitment binding on an invariant stated nowhere it can check.
+            if (element > 0xff) revert PublicInputNotAByte(offset + i, element);
+            proved |= bytes32(element << (8 * (31 - i)));
         }
         if (proved != attested) revert CommitmentMismatch(proved, attested);
     }
@@ -340,24 +352,5 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             if (data[i] != prefix[i]) return false;
         }
         return true;
-    }
-
-    function _concatRevealed(CeremonyAttestation.DirectionBlock memory block_)
-        internal
-        pure
-        returns (bytes memory out)
-    {
-        uint256 total;
-        for (uint256 i = 0; i < block_.revealed.length; ++i) {
-            total += block_.revealed[i].value.length;
-        }
-        out = new bytes(total);
-        uint256 n;
-        for (uint256 i = 0; i < block_.revealed.length; ++i) {
-            bytes memory v = block_.revealed[i].value;
-            for (uint256 j = 0; j < v.length; ++j) {
-                out[n++] = v[j];
-            }
-        }
     }
 }

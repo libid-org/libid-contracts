@@ -74,6 +74,10 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     ///      `exp` itself (REQ-PLAT-22).
     error TokenExpired(uint64 exp, uint64 blockTime);
     error EmptyUserId();
+    /// @dev A public input the circuit declares as a byte carried more.
+    error PublicInputNotAByte(uint256 index, uint256 value);
+    /// @dev The signed expiry does not fit the width every timestamp uses.
+    error ExpiryNotAUint64(uint256 value);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -156,8 +160,11 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         // but decides no trust; that decision is here alone.
         _requireTrustedModulus(submission.publicInputs);
 
-        // REQ-PLAT-22. The signed `exp` is the whole validity ceiling.
-        uint64 exp = uint64(uint256(submission.publicInputs[OFF_EXP]));
+        // REQ-PLAT-22. The signed `exp` is the whole validity ceiling, so a
+        // field element that does not fit `u64` must not become one that does.
+        uint256 rawExp = uint256(submission.publicInputs[OFF_EXP]);
+        if (rawExp > type(uint64).max) revert ExpiryNotAUint64(rawExp);
+        uint64 exp = uint64(rawExp);
         if (block.timestamp >= exp) revert TokenExpired(exp, uint64(block.timestamp));
 
         _requireProof(submission.proof, submission.publicInputs);
@@ -175,7 +182,12 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     /// @dev 32 field elements, one byte each.
     function _digestFromInputs(bytes32[] calldata publicInputs) private pure returns (bytes32 out) {
         for (uint256 i = 0; i < 32; ++i) {
-            out |= bytes32(uint256(uint8(uint256(publicInputs[OFF_DIGEST + i]))) << (8 * (31 - i)));
+            uint256 element = uint256(publicInputs[OFF_DIGEST + i]);
+            // Truncating here would rest the ONLY thing binding a Google
+            // ceremony to its transaction (REQ-COMMON-02A) on a range
+            // constraint this contract cannot see.
+            if (element > 0xff) revert PublicInputNotAByte(OFF_DIGEST + i, element);
+            out |= bytes32(element << (8 * (31 - i)));
         }
     }
 
