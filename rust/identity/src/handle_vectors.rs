@@ -18,11 +18,11 @@ pub struct Vector {
 }
 
 /// keccak256 of this string is the platform id.
-pub const PLATFORM_X_DOMAIN: &str = "dyaka.identity.platform.x";
+pub const PLATFORM_X_DOMAIN: &str = "x";
 /// keccak256 of this string is the platform id.
-pub const PLATFORM_GITHUB_DOMAIN: &str = "dyaka.identity.platform.github";
+pub const PLATFORM_GITHUB_DOMAIN: &str = "github";
 /// keccak256 of this string is the platform id.
-pub const PLATFORM_GOOGLE_DOMAIN: &str = "dyaka.identity.platform.google";
+pub const PLATFORM_GOOGLE_DOMAIN: &str = "google";
 
 /// Bytes a x handle may have after normalization.
 pub const MAX_LENGTH_X: usize = 15;
