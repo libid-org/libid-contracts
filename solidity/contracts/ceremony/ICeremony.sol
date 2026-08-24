@@ -101,6 +101,11 @@ interface ICeremony {
     ///                           (REQ-PLAT-08A, REQ-PLAT-08B).
     /// @param metadataObservedAt The monotone metadata watermark.
     struct VerifiedClaim {
+        /// @dev The digest the Proof Verifier recomputed, returned so the
+        ///      Consumer records the one that was actually used
+        ///      (REQ-COMMON-03). REQ-COMMON-06 does not list it; recomputing it
+        ///      a second time to get it would be a second chance to disagree.
+        bytes32 authorizationDigest;
         bytes32 operationDomain;
         bytes transactionData;
         bytes clientIdentifier;

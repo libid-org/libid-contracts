@@ -7,7 +7,7 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 
 import {CeremonyAuthorization} from "../ceremony/CeremonyAuthorization.sol";
 import {ICeremony} from "../ceremony/ICeremony.sol";
-import {IPlatformVerifier} from "../ceremony/IPlatformVerifier.sol";
+import {IProofVerifier} from "../ceremony/IProofVerifier.sol";
 import {HandleNormalizer} from "./HandleNormalizer.sol";
 import {IdentityNodes} from "./IdentityNodes.sol";
 import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
@@ -205,7 +205,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// pair. This is the Supported Version Set of REQ-COMMON-05B: more than
         /// one version of one platform is supported at once, so a deployment
         /// can run a new one beside the one it replaces while holders migrate.
-        mapping(bytes32 => mapping(uint16 => IPlatformVerifier)) ceremonyVerifiers;
+        /// The one component this Consumer calls to verify a proof.
+        IProofVerifier proofVerifier;
         /// Every Authorization Digest this Consumer has accepted.
         ///
         /// The digest is its own replay nullifier, and recording belongs to the
@@ -214,12 +215,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// first, consume the digest, and leave this contract nothing to apply
         /// -- a denial of service costing the attacker only a fee.
         mapping(bytes32 => bool) spentDigests;
-        /// platformId -> how many Platform Verifiers it has registered.
-        ///
-        /// A platform is usable once it can verify by EITHER path. Without this
-        /// a platform wired only for ceremonies would answer "nobody holds this
-        /// name" while it was perfectly able to bind one.
-        mapping(bytes32 => uint256) ceremonyVerifierCount;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.IdentityNames")) - 1)) & ~bytes32(uint256(0xff))
@@ -302,7 +297,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// @notice A proof version gained or replaced its verifier.
     /// @notice A Platform Verifier entered or left the Supported Version Set.
-    event CeremonyVerifierConfigured(bytes32 indexed platformId, uint16 indexed version, address verifier);
+    event ProofVerifierConfigured(address verifier);
 
     event VerifierConfigured(
         bytes32 indexed platformId, uint32 indexed version, address verifier, uint64 maxFutureObservation
@@ -339,8 +334,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     error ZeroVersion();
     /// @dev The submission names an operation this Consumer does not own
     ///      (REQ-COMMON-06A).
+    error ZeroAddress();
     error ForeignOperationDomain(bytes32 operationDomain);
-    error UnknownCeremonyVersion(bytes32 platformId, uint16 version);
     /// @dev A digest is spendable once here (REQ-COMMON-03A).
     error DigestAlreadySpent(bytes32 digest);
     /// @dev The Authorized Transaction Data of this operation is exactly one
@@ -587,86 +582,73 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// @notice Bind an identity from a ceremony submission.
     ///
-    /// @dev This contract wears two of the four roles of ceremony-common
-    ///      section 5.1. As PROOF VERIFIER it recomputes the Authorization
-    ///      Digest, dispatches on the pair the submission names, quotes and
-    ///      forwards the fees, and takes nothing platform-specific into its own
-    ///      hands. As CONSUMER it decides what the transaction means: it owns
-    ///      the operation domain, records the digest, and enforces the
-    ///      authorization predicate.
+    /// @dev The CONSUMER of ceremony-common section 5.1, and only that. It
+    ///      owns the operation domain, records the digest, enforces the
+    ///      authorization predicate and applies the effect. Dispatch, the
+    ///      digest recomputation and the fee path belong to the Proof Verifier,
+    ///      which is a contract of its own so a second Consumer does not become
+    ///      a second version-governance surface.
     ///
     ///      The value attached must equal `quoteClaim` for the same pair. Exact
     ///      value at every hop needs no refund path, so no partial-failure rule
     ///      is required and nothing can be captured in transit.
     function claim(ICeremony.Submission calldata submission, bool publishName) external payable {
-        // ── Consumer: is this operation ours at all? ──────────────────
+        // ── Is this operation ours at all? ────────────────────────────
         //
-        // The domain travels in the submission and is authenticated by digest
-        // recomputation rather than trusted: a submission naming another domain
-        // produces a different digest, which fails whichever binding check its
-        // profile uses. Checking it first means a submission for someone else's
-        // operation is refused before any fee moves.
+        // Checked here on the submission so one for someone else's operation is
+        // refused before any fee moves, and again below on what came back
+        // authenticated -- that second check is the one REQ-COMMON-06A means,
+        // because the first reads a value the caller wrote.
         if (submission.operationDomain != CLAIM_IDENTITY_DOMAIN) {
             revert ForeignOperationDomain(submission.operationDomain);
         }
 
         Platform memory platform = _requireConfigured(submission.platformId);
 
-        IPlatformVerifier verifier = _s().ceremonyVerifiers[submission.platformId][submission.version];
-        if (address(verifier) == address(0)) {
-            revert UnknownCeremonyVersion(submission.platformId, submission.version);
+        IProofVerifier pv = _s().proofVerifier;
+        uint256 required = pv.quote(submission.platformId, submission.version);
+        if (msg.value != required) revert WrongClaimValue(required, msg.value);
+
+        ICeremony.VerifiedClaim memory claimed = pv.verify{value: required}(submission);
+
+        // ── Reject a domain we do not own (REQ-COMMON-06A) ────────────
+        if (claimed.operationDomain != CLAIM_IDENTITY_DOMAIN) {
+            revert ForeignOperationDomain(claimed.operationDomain);
         }
 
-        // ── Proof Verifier: recompute the digest ──────────────────────
+        // ── Spend the digest before any effect ────────────────────────
         //
-        // The Chain ID comes from the chain this contract is executing on, and
-        // never from the submission -- there is nothing there for a caller to
-        // choose (REQ-COMMON-06C). The version comes from the submission, and
-        // cannot disagree with the dispatched one because dispatch read it from
-        // there in the first place.
-        bytes32 digest = CeremonyAuthorization.digest(
-            submission.operationDomain,
-            submission.version,
-            chainId(),
-            submission.authorizationNonce,
-            submission.transactionData
-        );
+        // Recording belongs here rather than one hop up: at the Proof Verifier
+        // anyone watching a submission could call first, consume the digest,
+        // and leave this contract nothing to apply -- denial of service for the
+        // price of a fee (REQ-COMMON-03A).
+        if (_s().spentDigests[claimed.authorizationDigest]) {
+            revert DigestAlreadySpent(claimed.authorizationDigest);
+        }
+        _s().spentDigests[claimed.authorizationDigest] = true;
 
-        // ── Consumer: spend the digest before any effect ──────────────
-        if (_s().spentDigests[digest]) revert DigestAlreadySpent(digest);
-        _s().spentDigests[digest] = true;
-
-        // ── Consumer: the authorization predicate ─────────────────────
+        // ── The authorization predicate ───────────────────────────────
         //
         // The Authorized Transaction Data of this operation is one address: the
         // wallet the identity binds to. Requiring it to be the authenticated
-        // caller is what keeps consent-phishing out of identity theft -- a
-        // Consumer binding to a submitter-supplied address instead would let
-        // anyone spend a genuine proof at an address of their choosing.
-        if (submission.transactionData.length != 32) {
-            revert BadTransactionData(submission.transactionData.length);
+        // caller is what keeps consent-phishing out of identity theft -- binding
+        // to a submitter-supplied address instead would let anyone spend a
+        // genuine proof at an address of their choosing.
+        if (claimed.transactionData.length != 32) {
+            revert BadTransactionData(claimed.transactionData.length);
         }
-        address target = abi.decode(submission.transactionData, (address));
+        address target = abi.decode(claimed.transactionData, (address));
         if (target != msg.sender) revert NotProofTarget(target, msg.sender);
 
-        // ── Proof Verifier: forward exactly the quoted value ──────────
-        uint256 required = verifier.quote();
-        if (msg.value != required) revert WrongClaimValue(required, msg.value);
+        if (bytes(claimed.userId).length == 0) revert NoUserId();
+        if (claimed.metadataObservedAt == 0) revert NoObservationTime();
 
-        ICeremony.PlatformFields memory fields = verifier.verify{value: required}(digest, submission);
-
-        if (bytes(fields.userId).length == 0) revert NoUserId();
-        if (fields.metadataObservedAt == 0) revert NoObservationTime();
-
-        // The ceremony path carries no per-version clock allowance: each
-        // Platform Verifier derives `metadataObservedAt` from its own profile's
-        // authenticated source and rejects one too far ahead itself.
         _write(
             submission.platformId,
             uint32(submission.version),
-            fields.userId,
-            fields.handle,
-            fields.metadataObservedAt,
+            claimed.userId,
+            claimed.handle,
+            claimed.metadataObservedAt,
             0,
             publishName,
             platform
@@ -675,13 +657,12 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// @notice What `claim` requires to be delivered for this pair.
     ///
-    /// @dev Quoted over the whole path, so a Consumer need not know its
-    ///      topology: two Notary Fees on the X and GitHub paths, and zero on
-    ///      Google's, which verifies no attestation (REQ-COMMON-06E).
+    /// @dev Asked of the Proof Verifier rather than worked out here: quoting
+    ///      covers the whole path -- two Notary Fees on X and GitHub, zero on
+    ///      Google -- and a Consumer that computed it would need to know the
+    ///      path's topology (REQ-COMMON-06E).
     function quoteClaim(bytes32 platformId, uint16 version) external view returns (uint256) {
-        IPlatformVerifier verifier = _s().ceremonyVerifiers[platformId][version];
-        if (address(verifier) == address(0)) revert UnknownCeremonyVersion(platformId, version);
-        return verifier.quote();
+        return _s().proofVerifier.quote(platformId, version);
     }
 
     /// @notice Whether this digest has already been spent here.
@@ -689,31 +670,21 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         return _s().spentDigests[digest];
     }
 
-    /// @notice The Platform Verifier registered for a pair, or the zero address.
-    function ceremonyVerifierOf(bytes32 platformId, uint16 version) external view returns (IPlatformVerifier) {
-        return _s().ceremonyVerifiers[platformId][version];
+    /// @notice The Proof Verifier this Consumer calls.
+    function proofVerifier() external view returns (IProofVerifier) {
+        return _s().proofVerifier;
     }
 
-    /// @notice Add or remove a Platform Verifier from the Supported Version Set.
+    /// @notice Point this Consumer at a Proof Verifier.
     ///
-    /// @dev The set decides which proof statements this chain accepts, so it is
-    ///      authority rather than configuration (REQ-COMMON-05C). Removing a
-    ///      version strands nothing permanently: a holder runs the ceremony
-    ///      again under a supported one.
-    function setCeremonyVerifier(bytes32 platformId, uint16 version, IPlatformVerifier verifier) external onlyOwner {
-        if (version == 0) revert ZeroVersion();
-        _requireConfigured(platformId);
-        if (address(verifier) != address(0) && verifier.platformId() != platformId) {
-            revert VerifierPlatformMismatch(platformId, verifier.platformId());
-        }
-        bool had = address(_s().ceremonyVerifiers[platformId][version]) != address(0);
-        bool has = address(verifier) != address(0);
-        if (had != has) {
-            if (has) ++_s().ceremonyVerifierCount[platformId];
-            else --_s().ceremonyVerifierCount[platformId];
-        }
-        _s().ceremonyVerifiers[platformId][version] = verifier;
-        emit CeremonyVerifierConfigured(platformId, version, address(verifier));
+    /// @dev The Supported Version Set is not this contract's to hold. Which
+    ///      proof statements the chain accepts is governance's decision over
+    ///      there, and a Consumer keeping its own copy would be a second such
+    ///      decision, free to drift.
+    function setProofVerifier(IProofVerifier verifier) external onlyOwner {
+        if (address(verifier) == address(0)) revert ZeroAddress();
+        _s().proofVerifier = verifier;
+        emit ProofVerifierConfigured(address(verifier));
     }
 
     /// @notice The Chain ID this Consumer commits in every digest.
@@ -872,8 +843,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // Between `setPlatform` and wiring a verifier, a platform owns a
         // keyspace and can verify nothing. Answering `address(0)` there would
         // tell a caller "nobody holds this name" about a platform that is not
-        // wired yet -- so either path counts, and neither is required.
-        bool canVerify = platform.latestVersion != 0 || _s().ceremonyVerifierCount[platformId] != 0;
+        // wired yet -- so either path counts, and neither is required. The
+        // ceremony half of that question belongs to the Proof Verifier, which
+        // holds the Supported Version Set, so it is asked rather than mirrored.
+        IProofVerifier pv = _s().proofVerifier;
+        bool canVerify = platform.latestVersion != 0 || (address(pv) != address(0) && pv.verifiesPlatform(platformId));
         if (!platform.configured || !canVerify) revert UnknownPlatform(platformId);
     }
 

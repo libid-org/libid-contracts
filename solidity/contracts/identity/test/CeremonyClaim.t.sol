@@ -7,7 +7,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {CeremonyAuthorization} from "../../ceremony/CeremonyAuthorization.sol";
 import {CeremonyProfile} from "../../ceremony/CeremonyProfile.sol";
 import {ICeremony} from "../../ceremony/ICeremony.sol";
+import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
 import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
+import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
 import {HandleNormalizer} from "../HandleNormalizer.sol";
 import {IdentityNames} from "../IdentityNames.sol";
 import {IdentityNodes} from "../IdentityNodes.sol";
@@ -59,6 +61,7 @@ contract StubVerifier is IPlatformVerifier {
 /// @notice IdentityNames wearing the Proof Verifier and Consumer roles.
 contract CeremonyClaimTest is Test {
     IdentityNames names;
+    CeremonyProofVerifier proofVerifier;
     StubVerifier verifier;
 
     address constant OWNER = address(0xA11CE);
@@ -72,7 +75,13 @@ contract CeremonyClaimTest is Test {
         IdentityNames impl = new IdentityNames();
         names =
             IdentityNames(address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityNames.initialize, (OWNER)))));
+        CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
+        proofVerifier = CeremonyProofVerifier(
+            address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (OWNER))))
+        );
+
         vm.startPrank(OWNER);
+        names.setProofVerifier(IProofVerifier(address(proofVerifier)));
         names.setPlatform(
             PLATFORM,
             HandleNormalizer.Rules({
@@ -80,7 +89,7 @@ contract CeremonyClaimTest is Test {
             })
         );
         verifier = new StubVerifier(PLATFORM, FEE);
-        names.setCeremonyVerifier(PLATFORM, 1, IPlatformVerifier(address(verifier)));
+        proofVerifier.setVerifier(PLATFORM, 1, IPlatformVerifier(address(verifier)));
         vm.stopPrank();
         vm.deal(WALLET, 100 ether);
     }
@@ -198,7 +207,7 @@ contract CeremonyClaimTest is Test {
         ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(8)));
         s.version = 2;
         vm.prank(WALLET);
-        vm.expectRevert(abi.encodeWithSelector(IdentityNames.UnknownCeremonyVersion.selector, PLATFORM, uint16(2)));
+        vm.expectRevert(abi.encodeWithSelector(CeremonyProofVerifier.UnknownVersion.selector, PLATFORM, uint16(2)));
         names.claim{value: FEE}(s, false);
     }
 
@@ -208,7 +217,7 @@ contract CeremonyClaimTest is Test {
         StubVerifier second = new StubVerifier(PLATFORM, FEE);
         second.set("999", "bob");
         vm.prank(OWNER);
-        names.setCeremonyVerifier(PLATFORM, 2, IPlatformVerifier(address(second)));
+        proofVerifier.setVerifier(PLATFORM, 2, IPlatformVerifier(address(second)));
 
         _claim(_submission(WALLET, bytes32(uint256(10))), FEE);
         ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(11)));
@@ -222,7 +231,7 @@ contract CeremonyClaimTest is Test {
     /// @dev The set is authority, not configuration (REQ-COMMON-05C).
     function test_onlyTheOwnerChangesTheSupportedVersionSet() public {
         vm.expectRevert();
-        names.setCeremonyVerifier(PLATFORM, 3, IPlatformVerifier(address(verifier)));
+        proofVerifier.setVerifier(PLATFORM, 3, IPlatformVerifier(address(verifier)));
     }
 
     /// @dev A verifier for another platform in this platform's slot would
@@ -232,10 +241,10 @@ contract CeremonyClaimTest is Test {
         vm.prank(OWNER);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IdentityNames.VerifierPlatformMismatch.selector, PLATFORM, CeremonyProfile.PLATFORM_GITHUB
+                CeremonyProofVerifier.VerifierPlatformMismatch.selector, PLATFORM, CeremonyProfile.PLATFORM_GITHUB
             )
         );
-        names.setCeremonyVerifier(PLATFORM, 4, IPlatformVerifier(address(other)));
+        proofVerifier.setVerifier(PLATFORM, 4, IPlatformVerifier(address(other)));
     }
 
     // ─── The handle is normalized here, not by the verifier ─────────

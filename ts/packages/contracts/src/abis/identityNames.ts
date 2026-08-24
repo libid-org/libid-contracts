@@ -179,30 +179,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "ceremonyVerifierOf",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IPlatformVerifier"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "chainId",
     "inputs": [],
     "outputs": [
@@ -399,6 +375,19 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
+    "name": "proofVerifier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IProofVerifier"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "proxiableUUID",
     "inputs": [],
     "outputs": [
@@ -567,29 +556,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "setCeremonyVerifier",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "verifier",
-        "type": "address",
-        "internalType": "contract IPlatformVerifier"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setLatestVersion",
     "inputs": [
       {
@@ -646,6 +612,19 @@ export const identityNamesAbi = [
             "internalType": "bool"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setProofVerifier",
+    "inputs": [
+      {
+        "name": "verifier",
+        "type": "address",
+        "internalType": "contract IProofVerifier"
       }
     ],
     "outputs": [],
@@ -746,31 +725,6 @@ export const identityNamesAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "CeremonyVerifierConfigured",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "verifier",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -956,6 +910,19 @@ export const identityNamesAbi = [
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProofVerifierConfigured",
+    "inputs": [
+      {
+        "name": "verifier",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1226,17 +1193,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
-    "name": "TransactionDataTooLong",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "UUPSUnauthorizedCallContext",
     "inputs": []
   },
@@ -1248,22 +1204,6 @@ export const identityNamesAbi = [
         "name": "slot",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnknownCeremonyVersion",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint16",
-        "internalType": "uint16"
       }
     ]
   },
@@ -1341,6 +1281,11 @@ export const identityNamesAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
   },
   {
     "type": "error",
