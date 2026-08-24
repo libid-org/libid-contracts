@@ -1177,6 +1177,11 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StaleProof",
     "inputs": [
       {

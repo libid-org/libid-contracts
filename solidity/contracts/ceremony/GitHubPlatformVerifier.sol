@@ -58,10 +58,17 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
         IHonkVerifier honkVerifier_,
         bytes32 honkVerifierCodehash_,
         uint64 proofLifetime_,
-        uint64 maxFutureAttestationSkew_
+        uint64 maxFutureAttestationSkew_,
+        uint64 futureObservationAllowance_
     ) external initializer {
         __PlatformVerifierBase_init(
-            owner_, notary_, honkVerifier_, honkVerifierCodehash_, proofLifetime_, maxFutureAttestationSkew_
+            owner_,
+            notary_,
+            honkVerifier_,
+            honkVerifierCodehash_,
+            proofLifetime_,
+            maxFutureAttestationSkew_,
+            futureObservationAllowance_
         );
     }
 

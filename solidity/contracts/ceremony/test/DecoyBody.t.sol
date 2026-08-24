@@ -51,7 +51,15 @@ contract DecoyBodyTest is Test {
                     address(vi),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(honkAddr), honkAddr.codehash, 3600, 300)
+                        (
+                            OWNER,
+                            INotaryService(address(notary)),
+                            IHonkVerifier(honkAddr),
+                            honkAddr.codehash,
+                            3600,
+                            300,
+                            300
+                        )
                     )
                 )
             )

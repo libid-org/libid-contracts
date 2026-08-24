@@ -79,6 +79,7 @@ contract XPlatformVerifierTest is Test {
                             IHonkVerifier(address(honk)),
                             address(honk).codehash,
                             LIFETIME,
+                            SKEW,
                             SKEW
                         )
                     )
@@ -253,7 +254,11 @@ contract XPlatformVerifierTest is Test {
         assertEq(f.userId, "2244994945");
         assertEq(f.handle, "alice");
         assertEq(string(f.clientIdentifier), "myClient-1");
-        assertEq(f.metadataObservedAt, T0);
+        // On the shared scale, not raw. Profiles disagree about "now" -- this
+        // one's evidence time is an attestation creation time, Google's is a
+        // signed expiry an hour ahead -- so each verifier subtracts its own
+        // allowance and a Consumer can compare the two.
+        assertEq(f.metadataObservedAt, T0 - SKEW);
     }
 
     function test_quotesTwoNotaryFees() public view {
@@ -418,7 +423,7 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(_submission());
 
         vm.prank(OWNER);
-        verifier.setProtocolParameters(50, SKEW);
+        verifier.setProtocolParameters(50, SKEW, SKEW);
         ICeremony.Submission memory s = _submission();
         vm.expectPartialRevert(PlatformVerifierBase.ProofExpired.selector);
         this.run{value: quote}(s);

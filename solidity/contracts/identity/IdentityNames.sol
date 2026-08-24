@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 import {CeremonyAuthorization} from "../ceremony/CeremonyAuthorization.sol";
 import {ICeremony} from "../ceremony/ICeremony.sol";
@@ -66,7 +67,7 @@ import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
 ///      **There is no pause.** A pause is a lever over other people's names,
 ///      and nothing here needs one: no funds are held, and no address is
 ///      predicted ahead of its deployment.
-contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
+contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice A binding, the moment the platform stated it, and the proof
     ///         version that established it.
     ///
@@ -374,6 +375,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
     }
 
     /// @notice The largest allowance a version may carry.
@@ -592,7 +594,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      The value attached must equal `quoteClaim` for the same pair. Exact
     ///      value at every hop needs no refund path, so no partial-failure rule
     ///      is required and nothing can be captured in transit.
-    function claim(ICeremony.Submission calldata submission, bool publishName) external payable {
+    function claim(ICeremony.Submission calldata submission, bool publishName) external payable nonReentrant {
         // ── Is this operation ours at all? ────────────────────────────
         //
         // Checked here on the submission so one for someone else's operation is
@@ -622,6 +624,13 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // anyone watching a submission could call first, consume the digest,
         // and leave this contract nothing to apply -- denial of service for the
         // price of a fee (REQ-COMMON-03A).
+        //
+        // "Before any effect" is true of the WRITE below, but the digest only
+        // becomes known from the call above it, so the nullifier cannot be set
+        // before that call returns. `nonReentrant` is what closes the window
+        // rather than callee goodwill: without it a Platform Verifier could
+        // reenter here, find the digest unspent, and be relying on the outer
+        // frame reverting.
         if (_s().spentDigests[claimed.authorizationDigest]) {
             revert DigestAlreadySpent(claimed.authorizationDigest);
         }
@@ -649,6 +658,10 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             claimed.userId,
             claimed.handle,
             claimed.metadataObservedAt,
+            // Zero, because the Platform Verifier already put its evidence
+            // time on the shared scale and refused anything above its own
+            // ceiling. Subtracting an allowance twice would push a ceremony
+            // claim below every legacy one.
             0,
             publishName,
             platform

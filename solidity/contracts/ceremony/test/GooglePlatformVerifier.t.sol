@@ -44,6 +44,9 @@ contract GooglePlatformVerifierTest is Test {
 
     address constant OWNER = address(0xA11CE);
     uint64 constant T0 = 1_770_000_000;
+    /// @dev Google id_tokens live an hour; two gives room without letting a
+    ///      claim lock a name for longer than the token itself was valid.
+    uint64 constant GOOGLE_ALLOWANCE = 7200;
     uint64 constant EXP = T0 + 3600;
 
     bytes32 constant DIGEST = 0xb318fb559e16a179b853ed2853576cda16032d93b0839bb81a55135d334c0af5;
@@ -67,6 +70,7 @@ contract GooglePlatformVerifierTest is Test {
                             INotaryService(address(0xDEAD)),
                             IHonkVerifier(address(honk)),
                             address(honk).codehash,
+                            GOOGLE_ALLOWANCE,
                             IJwksRoots(address(roots))
                         )
                     )
@@ -149,6 +153,19 @@ contract GooglePlatformVerifierTest is Test {
 
     // ─── The happy path ─────────────────────────────────────────────
 
+    /// @dev Nothing bounded `exp` from above before. `block.timestamp >= exp`
+    ///      is a floor, so a token minted with a distant expiry wrote a
+    ///      watermark that far ahead -- and `_requireNewer` then refused the
+    ///      account owner's own re-proof for as long. Re-proving is the remedy
+    ///      for a lost name, so an unbounded expiry buys a lock on one.
+    function test_rejectsAnExpiryFurtherAheadThanTheAllowance() public {
+        uint64 farOut = uint64(block.timestamp) + GOOGLE_ALLOWANCE + 1;
+        ICeremony.Submission memory s = _submission();
+        s.publicInputs = _inputs(DIGEST, CLIENT_ID, farOut);
+        vm.expectPartialRevert(PlatformVerifierBase.ObservedInTheFuture.selector);
+        this.run(s);
+    }
+
     function test_verifiesAWholeGoogleCeremony() public {
         ICeremony.PlatformFields memory f = this.run(_submission());
         assertEq(f.userId, SUB);
@@ -156,7 +173,9 @@ contract GooglePlatformVerifierTest is Test {
         assertEq(string(f.clientIdentifier), string(CLIENT_ID));
         // Section 2.2: the signed `exp` supplies BOTH the watermark and the
         // validity ceiling.
-        assertEq(f.metadataObservedAt, EXP);
+        // The signed expiry, brought onto the shared scale. Raw, it would
+        // beat every X or GitHub claim made in the same hour.
+        assertEq(f.metadataObservedAt, EXP - GOOGLE_ALLOWANCE);
     }
 
     /// @dev The handle is RAW: normalization is the Consumer's derivation on its

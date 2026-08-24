@@ -92,9 +92,17 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         INotaryService notary_,
         IHonkVerifier honkVerifier_,
         bytes32 honkVerifierCodehash_,
+        uint64 futureObservationAllowance_,
         IJwksRoots jwksRoots_
     ) external initializer {
-        __PlatformVerifierBase_init(owner_, notary_, honkVerifier_, honkVerifierCodehash_, 0, 0);
+        // No attestation, so no lifetime and no attestation skew: the signed
+        // `exp` is the whole validity ceiling. The allowance is real though --
+        // `exp` runs an hour ahead of Block Time, and a Consumer comparing it
+        // raw against a TLSNotary profile's near-now evidence would let Google
+        // win every race.
+        __PlatformVerifierBase_init(
+            owner_, notary_, honkVerifier_, honkVerifierCodehash_, 0, 0, futureObservationAllowance_
+        );
         _setJwksRoots(jwksRoots_);
     }
 
@@ -166,6 +174,9 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         if (rawExp > type(uint64).max) revert ExpiryNotAUint64(rawExp);
         uint64 exp = uint64(rawExp);
         if (block.timestamp >= exp) revert TokenExpired(exp, uint64(block.timestamp));
+        // And a ceiling above it. Without one, a token minted with a distant
+        // expiry buys a proportionally long lock on the name.
+        _requireNotAhead(exp);
 
         _requireProof(submission.proof, submission.publicInputs);
 
@@ -174,7 +185,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         // RAW bytes. Normalization is the Consumer's derivation on its own
         // write path (REQ-PLAT-16B).
         fields.handle = string(_unpack(submission.publicInputs, OFF_EMAIL, 2));
-        fields.metadataObservedAt = exp;
+        fields.metadataObservedAt = _onSharedScale(exp, _base().futureObservationAllowance);
     }
 
     // ─── Reading the public inputs ──────────────────────────────────

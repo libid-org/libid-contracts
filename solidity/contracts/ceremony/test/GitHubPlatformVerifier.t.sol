@@ -67,6 +67,7 @@ contract GitHubPlatformVerifierTest is Test {
                             IHonkVerifier(honkAddr),
                             honkAddr.codehash,
                             LIFETIME,
+                            SKEW,
                             SKEW
                         )
                     )
@@ -186,7 +187,11 @@ contract GitHubPlatformVerifierTest is Test {
         assertEq(f.userId, "583231");
         assertEq(f.handle, "octocat");
         assertEq(string(f.clientIdentifier), "Iv1.8a61f9b3a7aba766");
-        assertEq(f.metadataObservedAt, T0);
+        // On the shared scale, not raw. Profiles disagree about "now" -- this
+        // one's evidence time is an attestation creation time, Google's is a
+        // signed expiry an hour ahead -- so each verifier subtracts its own
+        // allowance and a Consumer can compare the two.
+        assertEq(f.metadataObservedAt, T0 - SKEW);
     }
 
     /// @dev The `Iv1.` prefix is why the serializer-safe set includes the dot.

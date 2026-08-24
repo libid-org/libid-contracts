@@ -54,7 +54,15 @@ contract PlantedRangeForgeryTest is Test {
                     address(vImpl),
                     abi.encodeCall(
                         XPlatformVerifier.initialize,
-                        (OWNER, INotaryService(address(notary)), IHonkVerifier(honkAddr), honkAddr.codehash, 3600, 300)
+                        (
+                            OWNER,
+                            INotaryService(address(notary)),
+                            IHonkVerifier(honkAddr),
+                            honkAddr.codehash,
+                            3600,
+                            300,
+                            300
+                        )
                     )
                 )
             )

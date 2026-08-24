@@ -43,6 +43,16 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         uint64 proofLifetime;
         /// Maximum lead over Block Time an attestation may carry.
         uint64 maxFutureAttestationSkew;
+        /// How far ahead of Block Time this profile's evidence time may run.
+        ///
+        /// Profiles do not agree on what "now" is. Google's evidence time is a
+        /// signed `exp`, an hour ahead; a TLSNotary profile's is an attestation
+        /// creation time, which is roughly now. A Consumer comparing the two
+        /// raw would let one platform's proof always beat the other's, so each
+        /// verifier subtracts its own allowance and returns a time on one
+        /// shared scale. It is also the ceiling: evidence dated further ahead
+        /// than this is refused rather than normalised.
+        uint64 futureObservationAllowance;
         /// The code hash of the artifact above, recorded when it was wired.
         ///
         /// bb-generated Honk verifiers embed their verification key as code
@@ -62,13 +72,16 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     }
 
     event TrustRootsChanged(address notary, address honkVerifier, bytes32 honkVerifierCodehash);
-    event ProtocolParametersChanged(uint64 proofLifetime, uint64 maxFutureAttestationSkew);
+    event ProtocolParametersChanged(
+        uint64 proofLifetime, uint64 maxFutureAttestationSkew, uint64 futureObservationAllowance
+    );
 
     error WrongValue(uint256 required, uint256 provided);
     error WrongAttestationCount(uint256 required, uint256 provided);
     error WrongAuthority(bytes32 expected, bytes32 found);
     error AttestationAhead(uint64 createdAt, uint64 blockTime, uint64 allowance);
     error ProofExpired(uint64 validUntil, uint64 blockTime);
+    error ObservedInTheFuture(uint64 observedAt, uint64 limit);
     error BadProof();
     error ZeroAddress();
     /// @dev The verifier at that address is not the artifact governance named.
@@ -81,13 +94,14 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         IHonkVerifier honkVerifier_,
         bytes32 honkVerifierCodehash_,
         uint64 proofLifetime_,
-        uint64 maxFutureAttestationSkew_
+        uint64 maxFutureAttestationSkew_,
+        uint64 futureObservationAllowance_
     ) internal onlyInitializing {
         __Ownable_init(owner_);
         __Ownable2Step_init();
         __UUPSUpgradeable_init();
         _setTrustRoots(notary_, honkVerifier_, honkVerifierCodehash_);
-        _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_);
+        _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_, futureObservationAllowance_);
     }
 
     // ─── Trust roots and parameters ─────────────────────────────────
@@ -106,8 +120,12 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         return _base().honkVerifierCodehash;
     }
 
-    function protocolParameters() external view returns (uint64 proofLifetime, uint64 maxFutureAttestationSkew) {
-        return (_base().proofLifetime, _base().maxFutureAttestationSkew);
+    function protocolParameters()
+        external
+        view
+        returns (uint64 proofLifetime, uint64 maxFutureAttestationSkew, uint64 futureObservationAllowance)
+    {
+        return (_base().proofLifetime, _base().maxFutureAttestationSkew, _base().futureObservationAllowance);
     }
 
     /// @dev The caller names the artifact it means to wire, by code hash, and
@@ -126,8 +144,12 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     ///      when it verifies and accepts no caller-supplied substitute
     ///      (REQ-PARAM-02). Lowering one may reject an outstanding proof;
     ///      raising one may extend an outstanding proof.
-    function setProtocolParameters(uint64 proofLifetime_, uint64 maxFutureAttestationSkew_) external onlyOwner {
-        _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_);
+    function setProtocolParameters(
+        uint64 proofLifetime_,
+        uint64 maxFutureAttestationSkew_,
+        uint64 futureObservationAllowance_
+    ) external onlyOwner {
+        _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_, futureObservationAllowance_);
     }
 
     function _setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_, bytes32 honkVerifierCodehash_)
@@ -145,10 +167,15 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         emit TrustRootsChanged(address(notary_), address(honkVerifier_), honkVerifierCodehash_);
     }
 
-    function _setProtocolParameters(uint64 proofLifetime_, uint64 maxFutureAttestationSkew_) private {
+    function _setProtocolParameters(
+        uint64 proofLifetime_,
+        uint64 maxFutureAttestationSkew_,
+        uint64 futureObservationAllowance_
+    ) private {
         _base().proofLifetime = proofLifetime_;
         _base().maxFutureAttestationSkew = maxFutureAttestationSkew_;
-        emit ProtocolParametersChanged(proofLifetime_, maxFutureAttestationSkew_);
+        _base().futureObservationAllowance = futureObservationAllowance_;
+        emit ProtocolParametersChanged(proofLifetime_, maxFutureAttestationSkew_, futureObservationAllowance_);
     }
 
     // ─── Shared duties ──────────────────────────────────────────────
@@ -197,7 +224,27 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         uint64 validUntil = createdAt + _base().proofLifetime;
         if (blockTime >= validUntil) revert ProofExpired(validUntil, blockTime);
 
-        return createdAt;
+        // Onto the shared scale, so a Consumer can compare this against a
+        // profile whose evidence time runs further ahead without one of them
+        // always winning.
+        return _onSharedScale(createdAt, _base().futureObservationAllowance);
+    }
+
+    /// @dev Saturates at zero rather than reverting: reaching it needs an
+    ///      evidence time below the allowance, which no live chain will see,
+    ///      and a zero beats no watermark -- so the degenerate case fails
+    ///      closed instead of wrapping into a huge one.
+    function _onSharedScale(uint64 observedAt, uint64 allowance) internal pure returns (uint64) {
+        return observedAt > allowance ? observedAt - allowance : 0;
+    }
+
+    /// @dev Evidence dated further ahead than the profile allows is refused
+    ///      rather than normalised: without a ceiling a longer-lived token
+    ///      would buy a proportionally longer lock on a name, and re-proving --
+    ///      the remedy for a lost name -- would stop working for that long.
+    function _requireNotAhead(uint64 observedAt) internal view {
+        uint64 limit = uint64(block.timestamp) + _base().futureObservationAllowance;
+        if (observedAt > limit) revert ObservedInTheFuture(observedAt, limit);
     }
 
     /// @dev Verify the proof under the artifact governance selected. Without
