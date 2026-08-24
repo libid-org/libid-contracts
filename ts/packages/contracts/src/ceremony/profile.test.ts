@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   attestationCount,
-  FORMAT_TAG,
   GITHUB_V1,
   GOOGLE_V1,
-  IDENTITY_SESSION_TAG,
   LAUNCH_PARAMETERS,
   LAUNCH_PROFILES,
-  TOKEN_SESSION_TAG,
   TokenExchangeError,
   type TokenExchangeRequestV1,
   validateTokenExchangeRequest,
@@ -19,16 +16,6 @@ import {
 /// The same strings live in the Rust and Solidity profiles; a disagreement
 /// rejects every genuine attestation with no error that says why.
 describe('profile tags', () => {
-  it('pins the attestation tags', () => {
-    expect(FORMAT_TAG).toBe('0xf1b67c286f7f90224eb4661a5922406b5092042b9515e4e9e448ec1d4f55b352')
-    expect(TOKEN_SESSION_TAG).toBe(
-      '0x197620cf765b4e8ce251f1d1f78b0c2997cc15d9e996e5938c6bf2a7bbfd8ab0',
-    )
-    expect(IDENTITY_SESSION_TAG).toBe(
-      '0xe7b961087ec316778e6885d11145cc06f1d75360430f461d0322fb7f105899dd',
-    )
-  })
-
   it('pins the platform ids, and they are distinct', () => {
     expect(GOOGLE_V1.platformId).toBe(
       '0x8f2f90d8304f6eb382d037c47a041d8c8b4d18bdd8b082fa32828e016a584ca7',
@@ -40,10 +27,6 @@ describe('profile tags', () => {
       '0x07a17bd3c7c8d7b88e93a4d9007e3bc230b0a586a434de0bed6500e9f343deb7',
     )
     expect(new Set(LAUNCH_PROFILES.map((p) => p.platformId)).size).toBe(3)
-  })
-
-  it('separates the two sessions of one ceremony', () => {
-    expect(TOKEN_SESSION_TAG).not.toBe(IDENTITY_SESSION_TAG)
   })
 })
 

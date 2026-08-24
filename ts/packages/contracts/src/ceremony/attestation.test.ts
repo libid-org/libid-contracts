@@ -17,20 +17,16 @@ import {
 /// preimage the chain rebuilds differently, deriving a key nobody trusts and
 /// rejecting every genuine attestation.
 const FIXTURE =
-  'f1b67c286f7f90224eb4661a5922406b5092042b9515e4e9e448ec1d4f55b352' +
-  '7521d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83' +
-  'e7b961087ec316778e6885d11145cc06f1d75360430f461d0322fb7f105899dd' +
   '4930142f5283d4a8eab0d24c588f00b21213ae2a47e7ed6c1dc6a57044f1655d' +
-  '0000000069800e800000003c00000028' +
-  '000200000000000000146161616161616161616161616161616161616161' +
-  '000000280000003c6262626262626262626262626262626262626262' +
-  '00010000001400000028' +
-  '0707070707070707070707070707070707070707070707070707070707070707' +
-  '0001000000000000000a63636363636363636363' +
-  '00010000000a00000028' +
-  '0909090909090909090909090909090909090909090909090909090909090909'
+  '0000000069800e800000003c0000002800000000000000020000000000000000' +
+  '0000001461616161616161616161616161616161616161610000002800000000' +
+  '0000001462626262626262626262626262626262626262620000000000000001' +
+  '0000001400000028070707070707070707070707070707070707070707070707' +
+  '0707070707070707000000000000000100000000000000000000000a63636363' +
+  '63636363636300000000000000010000000a0000002809090909090909090909' +
+  '09090909090909090909090909090909090909090909'
 
-const FIXTURE_DIGEST = '0x511d91f8a3c13c1824fd1d3e7c011caf09f2f0763f1ede5c786839592ae8d252'
+const FIXTURE_DIGEST = '0x48162f05bdb27b19b3544bf2aae608745861bf357bb31e07f536b6fb50e95936'
 
 function bytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -40,9 +36,6 @@ function bytes(hex: string): Uint8Array {
 
 function sample(): AttestedData {
   return {
-    formatTag: tag('libid.attestation.v1'),
-    platformId: tag('x'),
-    operationTag: tag('libid.ceremony.session.identity.v1'),
     authorityId: tag('api.x.com'),
     createdAt: 1_770_000_000n,
     sentTranscriptLength: 60,
@@ -79,14 +72,18 @@ describe('attested data', () => {
     expect(new TextDecoder().decode(decoded.received.revealed[0]!.bytes)).toBe('cccccccccc')
   })
 
-  it('lays the header out in 144 bytes', () => {
-    expect(HEADER_LEN).toBe(144)
+  it('lays the header out in 48 bytes', () => {
+    expect(HEADER_LEN).toBe(48)
   })
 
-  it('separates the two sessions of one ceremony', () => {
-    // REQ-COMMON-55: without operationTag the token and identity attestations
-    // would differ in nothing a verifier reads.
-    const token = { ...sample(), operationTag: tag('libid.ceremony.session.token.v1') }
+  it('separates the two sessions by what the notary observed', () => {
+    // Nothing in the record labels which session it covers. What separates
+    // them is the request line, which is a revealed range the notary recorded
+    // rather than a tag it was handed.
+    const token = sample()
+    const first = token.sent.revealed[0]
+    const line = new TextEncoder().encode('POST /2/oauth2/token ').slice(0, first.bytes.length)
+    token.sent.revealed[0] = { ...first, bytes: line }
     expect(attestationDigest(token)).not.toBe(attestationDigest(sample()))
   })
 

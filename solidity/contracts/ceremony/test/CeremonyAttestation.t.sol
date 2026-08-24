@@ -14,17 +14,16 @@ import {CeremonyAttestation} from "../CeremonyAttestation.sol";
 contract CeremonyAttestationTest is Test {
     /// @dev Shaped like an X identity session: the request reveals every byte
     ///      but the bearer, which is committed between the revealed ranges.
-    bytes constant FIXTURE = hex"f1b67c286f7f90224eb4661a5922406b5092042b9515e4e9e448ec1d4f55b352"
-        hex"7521d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83"
-        hex"e7b961087ec316778e6885d11145cc06f1d75360430f461d0322fb7f105899dd"
-        hex"4930142f5283d4a8eab0d24c588f00b21213ae2a47e7ed6c1dc6a57044f1655d"
-        hex"0000000069800e800000003c0000002800020000000000000014616161616161"
-        hex"6161616161616161616161616161000000280000003c62626262626262626262"
-        hex"6262626262626262626200010000001400000028070707070707070707070707"
-        hex"07070707070707070707070707070707070707070001000000000000000a6363"
-        hex"636363636363636300010000000a000000280909090909090909090909090909" hex"090909090909090909090909090909090909";
+    bytes constant FIXTURE = hex"4930142f5283d4a8eab0d24c588f00b21213ae2a47e7ed6c1dc6a57044f1655d"
+        hex"0000000069800e800000003c0000002800000000000000020000000000000000"
+        hex"0000001461616161616161616161616161616161616161610000002800000000"
+        hex"0000001462626262626262626262626262626262626262620000000000000001"
+        hex"0000001400000028070707070707070707070707070707070707070707070707"
+        hex"0707070707070707000000000000000100000000000000000000000a63636363"
+        hex"63636363636300000000000000010000000a0000002809090909090909090909"
+        hex"09090909090909090909090909090909090909090909";
 
-    bytes32 constant FIXTURE_DIGEST = 0x511d91f8a3c13c1824fd1d3e7c011caf09f2f0763f1ede5c786839592ae8d252;
+    bytes32 constant FIXTURE_DIGEST = 0x48162f05bdb27b19b3544bf2aae608745861bf357bb31e07f536b6fb50e95936;
 
     function decode(bytes calldata data) external pure returns (CeremonyAttestation.AttestedData memory) {
         return CeremonyAttestation.decode(data);
@@ -33,9 +32,6 @@ contract CeremonyAttestationTest is Test {
     function test_decodesTheRustEncoderOutput() public view {
         CeremonyAttestation.AttestedData memory a = this.decode(FIXTURE);
 
-        assertEq(a.formatTag, keccak256(bytes("libid.attestation.v1")));
-        assertEq(a.platformId, keccak256(bytes("x")));
-        assertEq(a.operationTag, keccak256(bytes("libid.ceremony.session.identity.v1")));
         assertEq(a.authorityId, keccak256(bytes("api.x.com")));
         assertEq(a.createdAt, 1_770_000_000);
         assertEq(a.sentTranscriptLength, 60);
@@ -70,8 +66,8 @@ contract CeremonyAttestationTest is Test {
         assertEq(keccak256(FIXTURE), FIXTURE_DIGEST);
     }
 
-    function test_headerIsOneHundredAndFortyFourBytes() public pure {
-        assertEq(CeremonyAttestation.HEADER_LEN, 144);
+    function test_headerIsFortyEightBytes() public pure {
+        assertEq(CeremonyAttestation.HEADER_LEN, 48);
     }
 
     function test_rejectsTrailingBytes() public {
@@ -106,7 +102,7 @@ contract CeremonyAttestationTest is Test {
         // The signed length is what makes bytes past the last revealed range
         // visible at all (REQ-COMMON-36). Shrink it and the layout must fail.
         bytes memory tampered = FIXTURE;
-        tampered[139] = 0x32; // sentTranscriptLength 60 -> 50
+        tampered[43] = 0x32; // sentTranscriptLength 60 -> 50
         vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.PastTranscriptEnd.selector, 60, 50));
         this.decode(tampered);
     }
@@ -130,7 +126,7 @@ contract CeremonyAttestationTest is Test {
     ///      region nobody can read.
     function test_coverageRejectsAGap() public {
         bytes memory tampered = FIXTURE;
-        tampered[207] = bytes1(uint8(21)); // sent commitment start 20 -> 21
+        tampered[131] = bytes1(uint8(21)); // sent commitment start 20 -> 21
 
         // decode alone still accepts it, which is why the helper exists.
         this.decode(tampered);
@@ -143,7 +139,7 @@ contract CeremonyAttestationTest is Test {
     ///      invisible without the signed length to close them (REQ-COMMON-36).
     function test_coverageRejectsATrailingGap() public {
         bytes memory tampered = FIXTURE;
-        tampered[139] = 0x50; // sentTranscriptLength 60 -> 80
+        tampered[43] = 0x50; // sentTranscriptLength 60 -> 80
         vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.CoverageGap.selector, 60, 80));
         this.coverSent(tampered);
     }

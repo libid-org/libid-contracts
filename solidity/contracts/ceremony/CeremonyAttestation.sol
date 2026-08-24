@@ -27,8 +27,8 @@ pragma solidity ^0.8.24;
 ///      itself. Those three together are what make the committed range the one
 ///      region nobody can read and everything else visible.
 library CeremonyAttestation {
-    /// @dev Four 32-byte tags, `createdAt`, and the two transcript lengths.
-    uint256 internal constant HEADER_LEN = 144;
+    /// @dev The authority, `createdAt`, and the two transcript lengths.
+    uint256 internal constant HEADER_LEN = 48;
 
     struct RevealedRange {
         uint32 start;
@@ -48,9 +48,12 @@ library CeremonyAttestation {
     }
 
     struct AttestedData {
-        bytes32 formatTag;
-        bytes32 platformId;
-        bytes32 operationTag;
+        /// @dev The TLS server name the notary authenticated, hashed. The only
+        ///      identity in the record, and the one thing here the notary
+        ///      observed rather than was told. Which platform that host belongs
+        ///      to, and which session of a ceremony this is, are read from the
+        ///      revealed request line by the verifier that pins those
+        ///      constants.
         bytes32 authorityId;
         uint64 createdAt;
         uint32 sentTranscriptLength;
@@ -77,8 +80,18 @@ library CeremonyAttestation {
     error NotOneCommitment(uint256 count);
     /// @dev An obsolete line fold in the revealed request bytes.
     error ObsoleteLineFold(uint256 at);
+    /// @dev A line feed not preceded by a carriage return. The needle is
+    ///      CRLF-anchored, so a bare LF starts a header line the count cannot
+    ///      see -- and a platform parser that accepts it would honour that
+    ///      header.
+    error BareLineFeed(uint256 at);
     error NotOneAuthorizationHeader(uint256 count);
     error BadBearerFraming();
+    /// @dev No commitment in this direction is framed by the delimiters the
+    ///      profile pins, so nothing identifies which range holds the bearer.
+    error NoFramedCommitment();
+    /// @dev More than one is, so the framing identifies nothing.
+    error AmbiguousFraming();
 
     /// @notice Parse and shape-check the attested data.
     /// @dev Trailing bytes are refused: the layout accounts for every byte, so
@@ -86,13 +99,10 @@ library CeremonyAttestation {
     function decode(bytes calldata data) internal pure returns (AttestedData memory attested) {
         uint256 at = 0;
 
-        attested.formatTag = _bytes32(data, at);
-        attested.platformId = _bytes32(data, at + 32);
-        attested.operationTag = _bytes32(data, at + 64);
-        attested.authorityId = _bytes32(data, at + 96);
-        attested.createdAt = uint64(_uint(data, at + 128, 8));
-        attested.sentTranscriptLength = uint32(_uint(data, at + 136, 4));
-        attested.recvTranscriptLength = uint32(_uint(data, at + 140, 4));
+        attested.authorityId = _bytes32(data, at);
+        attested.createdAt = uint64(_uint(data, at + 32, 8));
+        attested.sentTranscriptLength = uint32(_uint(data, at + 40, 4));
+        attested.recvTranscriptLength = uint32(_uint(data, at + 44, 4));
         at = HEADER_LEN;
 
         (attested.sent, at) = _direction(data, at);
@@ -121,6 +131,43 @@ library CeremonyAttestation {
     bytes internal constant BEARER_SUFFIX = "\r\n";
     /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts.
     bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:bearer";
+
+    /// @notice The one commitment framed by exactly these revealed bytes.
+    ///
+    /// @dev For a direction that is NOT exactly covered, where several ranges
+    ///      are hidden and only the anchors around one of them are revealed.
+    ///      The X token response is that case: the bearer is committed, the
+    ///      `"access_token":"` delimiter and its closing quote are revealed,
+    ///      and every other response byte sits behind a commitment of its own.
+    ///
+    ///      The framing is what IDENTIFIES the bearer, not its being the only
+    ///      commitment. Without it a received direction revealing nothing at
+    ///      all leaves the committed range indistinguishable from a
+    ///      `refresh_token` value, or any other substring the prover chose to
+    ///      commit (REQ-PLAT-57, REQ-PLAT-58).
+    ///
+    ///      Exactly one commitment may carry the framing. Two would leave
+    ///      nothing to say which the circuit opened.
+    function requireFramedCommitment(DirectionBlock memory block_, bytes memory prefix, bytes memory suffix)
+        internal
+        pure
+        returns (RangeCommitment memory framed)
+    {
+        uint256 found = type(uint256).max;
+        for (uint256 i = 0; i < block_.commitments.length; ++i) {
+            RangeCommitment memory c = block_.commitments[i];
+            if (c.start < prefix.length) continue;
+            bytes memory before_ = _revealedSlice(block_, c.start - uint32(prefix.length), c.start);
+            if (keccak256(before_) != keccak256(prefix)) continue;
+            bytes memory after_ = _revealedSlice(block_, c.end, c.end + uint32(suffix.length));
+            if (keccak256(after_) != keccak256(suffix)) continue;
+
+            if (found != type(uint256).max) revert AmbiguousFraming();
+            found = i;
+        }
+        if (found == type(uint256).max) revert NoFramedCommitment();
+        return block_.commitments[found];
+    }
 
     /// @notice Every check REQ-COMMON-35, -39 and -40 require of an
     ///         identity-session request that commits a credential in an HTTP
@@ -164,6 +211,15 @@ library CeremonyAttestation {
             if (revealed[i] == 0x0d && revealed[i + 1] == 0x0a && (revealed[i + 2] == 0x20 || revealed[i + 2] == 0x09))
             {
                 revert ObsoleteLineFold(i);
+            }
+        }
+        // Every LF must be part of a CRLF. Otherwise
+        // `...\nauthorization: Bearer <victim>\r\n` starts a header line the
+        // CRLF-anchored needle never counts, while a lenient platform parser
+        // honours it.
+        for (uint256 i = 0; i < revealed.length; ++i) {
+            if (revealed[i] == 0x0a && (i == 0 || revealed[i - 1] != 0x0d)) {
+                revert BareLineFeed(i);
             }
         }
 
@@ -312,23 +368,25 @@ library CeremonyAttestation {
         pure
         returns (DirectionBlock memory block_, uint256 next)
     {
-        uint256 count = _uint(data, at, 2);
-        at += 2;
+        // Counts are eight bytes: the encoder writes a `Vec` length, and a
+        // length that cannot be represented is not a shorter length.
+        uint256 count = _uint(data, at, 8);
+        at += 8;
         block_.revealed = new RevealedRange[](count);
         for (uint256 i = 0; i < count; ++i) {
             uint32 start = uint32(_uint(data, at, 4));
-            uint32 end = uint32(_uint(data, at + 4, 4));
-            at += 8;
-            // A start past its end would underflow a length; the shape check
-            // rejects it, so read nothing here rather than compute a huge one.
-            uint256 len = end > start ? end - start : 0;
+            // The range's length is its bytes. There is no separate `end` to
+            // disagree with it, so `end` here is arithmetic rather than a claim.
+            uint256 len = _uint(data, at + 4, 8);
+            at += 12;
             if (at + len > data.length) revert Truncated();
-            block_.revealed[i] = RevealedRange({start: start, end: end, value: data[at:at + len]});
+            if (start + len > type(uint32).max) revert Truncated();
+            block_.revealed[i] = RevealedRange({start: start, end: uint32(start + len), value: data[at:at + len]});
             at += len;
         }
 
-        count = _uint(data, at, 2);
-        at += 2;
+        count = _uint(data, at, 8);
+        at += 8;
         block_.commitments = new RangeCommitment[](count);
         for (uint256 i = 0; i < count; ++i) {
             block_.commitments[i] = RangeCommitment({

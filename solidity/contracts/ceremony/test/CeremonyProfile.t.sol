@@ -10,17 +10,8 @@ import {CeremonyProfile} from "../CeremonyProfile.sol";
 ///      writes them and the verifier compares them; a silent disagreement
 ///      rejects every genuine attestation with no error that says why. The
 ///      expected values below were computed with `cast keccak`, independently
-///      of this library, and `libid-rs/crates/libid-ceremony/src/profile.rs`
-///      carries the same strings.
+///      of this library.
 contract CeremonyProfileTest is Test {
-    function test_attestationTagsArePinned() public pure {
-        assertEq(CeremonyProfile.FORMAT_TAG, 0xf1b67c286f7f90224eb4661a5922406b5092042b9515e4e9e448ec1d4f55b352);
-        assertEq(CeremonyProfile.TOKEN_SESSION_TAG, 0x197620cf765b4e8ce251f1d1f78b0c2997cc15d9e996e5938c6bf2a7bbfd8ab0);
-        assertEq(
-            CeremonyProfile.IDENTITY_SESSION_TAG, 0xe7b961087ec316778e6885d11145cc06f1d75360430f461d0322fb7f105899dd
-        );
-    }
-
     function test_platformIdsArePinnedAndDistinct() public pure {
         assertEq(CeremonyProfile.PLATFORM_GOOGLE, 0x8f2f90d8304f6eb382d037c47a041d8c8b4d18bdd8b082fa32828e016a584ca7);
         assertEq(CeremonyProfile.PLATFORM_X, 0x7521d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83);
@@ -42,11 +33,6 @@ contract CeremonyProfileTest is Test {
     ///      api.github.com, so one pinned authority per profile would be wrong.
     function test_githubNotarizesTwoDifferentAuthorities() public pure {
         assertTrue(CeremonyProfile.AUTHORITY_GITHUB != CeremonyProfile.AUTHORITY_GITHUB_API);
-    }
-
-    /// @dev The two sessions of one ceremony must not be interchangeable.
-    function test_sessionTagsSeparateTheTwoSessions() public pure {
-        assertTrue(CeremonyProfile.TOKEN_SESSION_TAG != CeremonyProfile.IDENTITY_SESSION_TAG);
     }
 
     function test_attestationCountsFollowTheProfiles() public pure {
@@ -78,8 +64,6 @@ contract CeremonyProfileTest is Test {
     ///      these constants and that fixture ever drift apart, one of them is
     ///      wrong.
     function test_theAttestationFixtureUsesTheseConstants() public pure {
-        assertEq(CeremonyProfile.FORMAT_TAG, keccak256(bytes("libid.attestation.v1")));
         assertEq(CeremonyProfile.PLATFORM_X, keccak256(bytes("x")));
-        assertEq(CeremonyProfile.IDENTITY_SESSION_TAG, keccak256(bytes("libid.ceremony.session.identity.v1")));
     }
 }

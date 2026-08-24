@@ -13,7 +13,7 @@
 import { type Hex, keccak256, toHex } from 'viem'
 
 /// Four 32-byte tags, `createdAt`, and the two transcript lengths.
-export const HEADER_LEN = 144
+export const HEADER_LEN = 48
 
 /// Offsets are zero-based into that direction's complete transcript, `start`
 /// inclusive and `end` exclusive.
@@ -41,9 +41,6 @@ export interface DirectionBlock {
 /// The attested data describes the observed session and says nothing about
 /// where the evidence will be spent: no chain, no verifier identity.
 export interface AttestedData {
-  formatTag: Uint8Array
-  platformId: Uint8Array
-  operationTag: Uint8Array
   authorityId: Uint8Array
   createdAt: bigint
   sentTranscriptLength: number
@@ -342,21 +339,19 @@ function requireTag(value: Uint8Array, field: string): Uint8Array {
 export function encodeAttestedData(attested: AttestedData): Uint8Array {
   validate(attested)
   const w = new Writer()
-  w.push(requireTag(attested.formatTag, 'formatTag'))
-  w.push(requireTag(attested.platformId, 'platformId'))
-  w.push(requireTag(attested.operationTag, 'operationTag'))
   w.push(requireTag(attested.authorityId, 'authorityId'))
   w.uint(attested.createdAt, 8)
   w.uint(attested.sentTranscriptLength, 4)
   w.uint(attested.recvTranscriptLength, 4)
   for (const block of [attested.sent, attested.received]) {
-    w.uint(block.revealed.length, 2)
+    w.uint(block.revealed.length, 8)
     for (const range of block.revealed) {
       w.uint(range.start, 4)
-      w.uint(range.end, 4)
+      // The range's length is its bytes; `end` is arithmetic, never encoded.
+      w.uint(range.bytes.length, 8)
       w.push(range.bytes)
     }
-    w.uint(block.commitments.length, 2)
+    w.uint(block.commitments.length, 8)
     for (const commitment of block.commitments) {
       w.uint(commitment.start, 4)
       w.uint(commitment.end, 4)
@@ -367,18 +362,17 @@ export function encodeAttestedData(attested: AttestedData): Uint8Array {
 }
 
 function decodeDirection(r: Reader): DirectionBlock {
-  const revealedCount = r.uint(2, 'revealed range count')
+  const revealedCount = r.uint(8, 'revealed range count')
   const revealed: RevealedRange[] = []
   for (let i = 0; i < revealedCount; i++) {
     const start = r.uint(4, 'revealed range start')
-    const end = r.uint(4, 'revealed range end')
-    // A start past its end would give a negative length; the shape check
-    // rejects it, so read nothing here rather than compute a wild one.
-    const len = end > start ? end - start : 0
-    revealed.push({ start, end, bytes: r.take(len, 'revealed range bytes') })
+    // The range's length is its bytes. There is no separate `end` to disagree
+    // with it, so `end` here is arithmetic rather than a claim.
+    const len = r.uint(8, 'revealed range length')
+    revealed.push({ start, end: start + len, bytes: r.take(len, 'revealed range bytes') })
   }
 
-  const commitmentCount = r.uint(2, 'commitment count')
+  const commitmentCount = r.uint(8, 'commitment count')
   const commitments: RangeCommitment[] = []
   for (let i = 0; i < commitmentCount; i++) {
     commitments.push({
@@ -395,9 +389,6 @@ function decodeDirection(r: Reader): DirectionBlock {
 export function decodeAttestedData(bytes: Uint8Array): AttestedData {
   const r = new Reader(bytes)
   const attested: AttestedData = {
-    formatTag: r.take(32, 'formatTag'),
-    platformId: r.take(32, 'platformId'),
-    operationTag: r.take(32, 'operationTag'),
     authorityId: r.take(32, 'authorityId'),
     createdAt: r.bigUint(8, 'createdAt'),
     sentTranscriptLength: r.uint(4, 'sentTranscriptLength'),

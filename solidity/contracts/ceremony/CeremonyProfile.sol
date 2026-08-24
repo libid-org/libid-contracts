@@ -19,19 +19,6 @@ pragma solidity ^0.8.24;
 ///      attestation, with no error that says why. `libid-rs` carries the same
 ///      strings in `crates/libid-ceremony/src/profile.rs`.
 library CeremonyProfile {
-    // --- Attestation tags ---------------------------------------------------
-
-    /// @dev Names the attested-data layout and its version (REQ-COMMON-53). A
-    ///      change to the field list, to a field's width, or to a field's
-    ///      meaning takes a new version string rather than another field.
-    bytes32 internal constant FORMAT_TAG = keccak256(bytes("libid.attestation.v1"));
-
-    /// @dev Which session of the ceremony an attestation covers
-    ///      (REQ-COMMON-55). One ceremony notarizes more than one session, and
-    ///      two attestations differing only in that would be interchangeable.
-    bytes32 internal constant TOKEN_SESSION_TAG = keccak256(bytes("libid.ceremony.session.token.v1"));
-    bytes32 internal constant IDENTITY_SESSION_TAG = keccak256(bytes("libid.ceremony.session.identity.v1"));
-
     // --- Platform identifiers -----------------------------------------------
 
     bytes32 internal constant PLATFORM_GOOGLE = keccak256(bytes("google"));
