@@ -46,9 +46,7 @@ describe('authorization digest', () => {
   ///      submission dies on `code_verifier` after both fees are charged.
   it('mirrors CeremonyProofVerifier.chainId for an EVM chain', () => {
     // keccak256(abi.encode(uint256(1))) -- 32 bytes, big-endian, left-padded.
-    expect(evmChainId(1)).toBe(
-      keccak256(`0x${'00'.repeat(31)}01`),
-    )
+    expect(evmChainId(1)).toBe(keccak256(`0x${'00'.repeat(31)}01`))
     expect(evmChainId(1n)).toBe(evmChainId(1))
     expect(() => evmChainId(-1)).toThrow(/uint256/)
   })
