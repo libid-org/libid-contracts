@@ -7,7 +7,7 @@
 /// the submission; the two must agree or nothing verifies, so the same
 /// published vectors pin all three implementations.
 
-import { concat, type Hex, keccak256, sha256, toHex } from 'viem'
+import { concat, type Hex, keccak256, numberToBytes, sha256, toHex } from 'viem'
 
 /// Fixed part of the preimage: 32 + 2 + 32 + 32 + 4.
 export const PREIMAGE_FIXED_LEN = 102
@@ -43,8 +43,29 @@ export function operationDomain(domainString: string): Hex {
 }
 
 /// Derive a chain id from the exact bytes its Chain Profile fixes.
+///
+/// The digest commits a HASH of the chain's identifier rather than the
+/// identifier itself, because chains name themselves incompatibly and some too
+/// wide for 64 bits (REQ-COMMON-01C).
 export function chainId(identifierBytes: Uint8Array | Hex): Hex {
-  return keccak256(typeof identifierBytes === 'string' ? identifierBytes : identifierBytes)
+  return keccak256(identifierBytes)
+}
+
+/// The chain id of an EVM chain, exactly as `CeremonyProofVerifier.chainId()`
+/// computes it.
+///
+/// `keccak256(abi.encode(block.chainid))` — the identifier's 32-byte
+/// big-endian encoding, hashed. Deriving it any other way builds a digest the
+/// chain recomputes differently, and the whole submission then fails on the
+/// `code_verifier` comparison after both Notary Fees have been charged, with
+/// nothing in the error saying why. So the one form that matches is spelled
+/// out here rather than left to each caller.
+export function evmChainId(id: bigint | number): Hex {
+  const value = BigInt(id)
+  if (value < 0n || value > 2n ** 256n - 1n) {
+    throw new Error(`chain id ${id} does not fit a uint256`)
+  }
+  return keccak256(numberToBytes(value, { size: 32 }))
 }
 
 /// `PKCE_DOMAIN`.

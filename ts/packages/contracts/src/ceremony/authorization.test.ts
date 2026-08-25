@@ -1,3 +1,4 @@
+import { keccak256 } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   type AuthorizationPreimage,
@@ -5,6 +6,7 @@ import {
   authorizationPreimage,
   base64UrlNoPad,
   chainId,
+  evmChainId,
   codeChallenge,
   codeVerifier,
   operationDomain,
@@ -37,6 +39,18 @@ describe('authorization digest', () => {
       '0x38064d82f31db40935cc75f2a0d07dcfb448d7c08e7484fc30f5de95484a4066',
     )
     expect(pkceDomain()).toBe('0x3961dfe56cd0f2d94e72a15b96df889fbb46968cdb37518830fc0077b0730a01')
+  })
+
+  /// @dev The one form an EVM chain's verifier recomputes. Deriving it any
+  ///      other way builds a digest the chain disagrees with, and the
+  ///      submission dies on `code_verifier` after both fees are charged.
+  it('mirrors CeremonyProofVerifier.chainId for an EVM chain', () => {
+    // keccak256(abi.encode(uint256(1))) -- 32 bytes, big-endian, left-padded.
+    expect(evmChainId(1)).toBe(
+      keccak256(`0x${'00'.repeat(31)}01`),
+    )
+    expect(evmChainId(1n)).toBe(evmChainId(1))
+    expect(() => evmChainId(-1)).toThrow(/uint256/)
   })
 
   it('reproduces the published preimage', () => {
