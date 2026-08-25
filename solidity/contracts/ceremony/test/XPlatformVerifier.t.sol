@@ -510,6 +510,21 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev A second `"username":"` member whose DELIMITER is cut by a range
+    ///      boundary. Neither half holds a whole delimiter, so the per-range
+    ///      scan counted one and read the surviving copy -- which the prover
+    ///      chose. The delimiter is counted over the concatenation for this.
+    function test_rejectsADuplicateDelimiterHiddenUnderARangeBoundary() public {
+        ICeremony.Submission memory s = _submission();
+        // Joined: ...,"username":"alice","username":"mallory"} -- two members,
+        // and the boundary falls through the second one's delimiter.
+        s.attestations[1] = _splitIdentityAttestation(
+            'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice","userna', 'me":"mallory"}'
+        );
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
+        this.run{value: quote}(s);
+    }
+
     /// @dev A handle that exists ONLY across a range boundary.
     ///
     ///      Neither revealed range contains a `username` member. Joined end to

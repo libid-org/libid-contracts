@@ -45,6 +45,44 @@ contract BearerHeaderRequestTest is Test {
         return _request("", "\r\nauthorization: Bearer ");
     }
 
+    /// @dev The prover picks where the reveals are cut. Cutting one through the
+    ///      middle of a second `\r\nauthorization:` used to make neither half
+    ///      contain the needle -- two header lines, a count of one, and the
+    ///      platform answering to whichever bearer it honoured. The count runs
+    ///      over the concatenation for exactly this.
+    function test_rejectsANeedleSplitAcrossAdjacentRanges() public {
+        bytes memory head = "GET /2/users/me HTTP/1.1\r\nhost: api.x.com\r\n";
+        bytes memory victim = "\r\nauthorization: Bearer VICTIMTOKENVICTIM";
+        bytes memory own = "\r\nauthorization: Bearer ";
+        bytes memory tail = "\r\nconnection: close\r\n\r\n";
+
+        // The cut falls six bytes into the victim's needle.
+        uint32 cut = uint32(head.length + 6);
+        bytes memory a = abi.encodePacked(head, _slice(victim, 0, 6));
+        bytes memory b = abi.encodePacked(_slice(victim, 6, victim.length), own);
+        uint32 bearerStart = uint32(a.length + b.length);
+        uint32 bearerEnd = bearerStart + 16;
+        uint32 total = bearerEnd + uint32(tail.length);
+
+        CeremonyAttestation.RevealedRange[] memory rev = new CeremonyAttestation.RevealedRange[](3);
+        rev[0] = CeremonyAttestation.RevealedRange({start: 0, end: cut, value: a});
+        rev[1] = CeremonyAttestation.RevealedRange({start: cut, end: bearerStart, value: b});
+        rev[2] = CeremonyAttestation.RevealedRange({start: bearerEnd, end: total, value: tail});
+        CeremonyAttestation.RangeCommitment[] memory com = new CeremonyAttestation.RangeCommitment[](1);
+        com[0] =
+            CeremonyAttestation.RangeCommitment({start: bearerStart, end: bearerEnd, commitment: bytes32(uint256(1))});
+
+        vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run(CeremonyAttestation.DirectionBlock({revealed: rev, commitments: com}), total);
+    }
+
+    function _slice(bytes memory d, uint256 f, uint256 t) private pure returns (bytes memory o) {
+        o = new bytes(t - f);
+        for (uint256 i = 0; i < o.length; ++i) {
+            o[i] = d[f + i];
+        }
+    }
+
     function test_acceptsAnHonestIdentityRequest() public view {
         (CeremonyAttestation.DirectionBlock memory b, uint32 len) = _honest();
         CeremonyAttestation.RangeCommitment memory c = this.run(b, len);

@@ -223,13 +223,24 @@ library CeremonyAttestation {
             }
         }
 
-        // Counted per range rather than over the concatenation, so joining two
-        // regions cannot manufacture a match at the seam.
-        uint256 count;
-        for (uint256 i = 0; i < block_.revealed.length; ++i) {
-            count += _countNeedle(_normalizeHeaderBytes(block_.revealed[i].value));
+        // Counted over the CONCATENATION, not per range.
+        //
+        // Per range was wrong in the unsafe direction. The prover picks where
+        // the reveals are cut, so cutting one through the middle of a second
+        // `\r\nauthorization:` makes neither half contain the needle: two
+        // header lines, count of one, and the platform answers to whichever
+        // bearer it honoured -- someone else's. Confirmed by proof of concept.
+        //
+        // Joining regions can manufacture a match at a seam, and that is the
+        // direction to err in: a false seam over-rejects an honest session,
+        // which fails closed. Missing a real header does not.
+        //
+        // Reading a VALUE stays per range -- see `_uniqueJsonString`. Counting
+        // and reading want opposite things: a count must not miss, a read must
+        // not splice.
+        if (_countNeedle(_normalizeHeaderBytes(revealed)) != 1) {
+            revert NotOneAuthorizationHeader(_countNeedle(_normalizeHeaderBytes(revealed)));
         }
-        if (count != 1) revert NotOneAuthorizationHeader(count);
 
         // Framing, on RAW bytes at known offsets. Two fixed comparisons make
         // the committed range one header line's value by construction.

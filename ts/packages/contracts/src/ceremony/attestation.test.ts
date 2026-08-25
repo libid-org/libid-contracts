@@ -111,6 +111,36 @@ describe('attested data', () => {
     ).toThrow(AttestationError)
   })
 
+  it('refuses a needle split across adjacent revealed ranges', () => {
+    const enc = new TextEncoder()
+    const head = enc.encode('GET /2/users/me HTTP/1.1\r\nhost: api.x.com\r\n')
+    const victim = enc.encode('\r\nauthorization: Bearer VICTIMTOKENVICTIM')
+    const own = enc.encode('\r\nauthorization: Bearer ')
+    const tail = enc.encode('\r\nconnection: close\r\n\r\n')
+
+    // The cut falls six bytes into the victim's needle, so neither half of the
+    // pair holds a whole one.
+    const a = new Uint8Array([...head, ...victim.slice(0, 6)])
+    const b = new Uint8Array([...victim.slice(6), ...own])
+    const bearerStart = a.length + b.length
+    const bearerEnd = bearerStart + 16
+    const total = bearerEnd + tail.length
+
+    expect(() =>
+      requireBearerHeaderRequest(
+        {
+          revealed: [
+            { start: 0, end: a.length, bytes: a },
+            { start: a.length, end: bearerStart, bytes: b },
+            { start: bearerEnd, end: total, bytes: tail },
+          ],
+          commitments: [{ start: bearerStart, end: bearerEnd, commitment: new Uint8Array(32) }],
+        },
+        total,
+      ),
+    ).toThrow(AttestationError)
+  })
+
   it('finds the one commitment framed by the given bytes', () => {
     const prefix = new TextEncoder().encode('"access_token":"')
     const suffix = new TextEncoder().encode('"')

@@ -107,6 +107,45 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         virtual
         returns (string memory idField, IdShape idShape, string memory handleField);
 
+    /// @dev How many times a field's full delimiter appears across the whole
+    ///      revealed set, seams included.
+    ///
+    ///      Counting and reading want opposite things. A READ must stay inside
+    ///      one authenticated range, or a prover splices a document that never
+    ///      crossed the wire. A COUNT must not miss, or a prover cuts a range
+    ///      through a second delimiter and the duplicate REQ-COMMON-19A exists
+    ///      to reject becomes invisible to it. So the value is read per range
+    ///      and the occurrences are counted over the concatenation -- where a
+    ///      seam can only over-count, which fails closed.
+    function _delimiterCount(CeremonyAttestation.DirectionBlock memory block_, bytes memory delimiter)
+        private
+        pure
+        returns (uint256 count)
+    {
+        uint256 total;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            total += block_.revealed[i].value.length;
+        }
+        bytes memory joined = new bytes(total);
+        uint256 at;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            bytes memory v = block_.revealed[i].value;
+            for (uint256 j = 0; j < v.length; ++j) {
+                joined[at++] = v[j];
+            }
+        }
+        for (uint256 i = 0; i + delimiter.length <= joined.length; ++i) {
+            bool hit = true;
+            for (uint256 j = 0; j < delimiter.length; ++j) {
+                if (joined[i + j] != delimiter[j]) {
+                    hit = false;
+                    break;
+                }
+            }
+            if (hit) ++count;
+        }
+    }
+
     /// @dev Find a JSON string field in exactly one revealed range.
     ///
     ///      Reading from a concatenation of the revealed ranges is what this
@@ -135,6 +174,10 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             }
         }
         if (matches != 1) revert FieldNotUnique(name, matches);
+        // And the delimiter appears once across the whole revealed set, so a
+        // second copy cannot hide under a range boundary.
+        uint256 seen = _delimiterCount(block_, abi.encodePacked('"', name, '":"'));
+        if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
     /// @dev The same, for a bare JSON integer.
@@ -153,6 +196,8 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             }
         }
         if (matches != 1) revert FieldNotUnique(name, matches);
+        uint256 seen = _delimiterCount(block_, abi.encodePacked('"', name, '":'));
+        if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
     // ─── The flow ───────────────────────────────────────────────────

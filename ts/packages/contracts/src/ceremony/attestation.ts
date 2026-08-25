@@ -310,8 +310,17 @@ export function requireBearerHeaderRequest(block: DirectionBlock, length: number
     }
   }
 
-  // Counted per range, so joining two regions cannot manufacture a match.
-  const count = block.revealed.reduce((n, r) => n + countNeedle(normalizeHeaderBytes(r.bytes)), 0)
+  // Counted over the CONCATENATION, not per range. Per range was wrong in the
+  // unsafe direction: the prover picks where the reveals are cut, so cutting
+  // one through a second `\r\nauthorization:` makes neither half contain the
+  // needle. A seam can only over-count, which fails closed.
+  const joined = new Uint8Array(block.revealed.reduce((n, r) => n + r.bytes.length, 0))
+  let at = 0
+  for (const r of block.revealed) {
+    joined.set(r.bytes, at)
+    at += r.bytes.length
+  }
+  const count = countNeedle(normalizeHeaderBytes(joined))
   if (count !== 1) {
     throw new AttestationError(
       `the revealed bytes hold ${count} authorization header lines, not one`,
