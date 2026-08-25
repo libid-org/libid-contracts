@@ -853,31 +853,29 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         return observedAt > allowance ? observedAt - allowance : 0;
     }
 
-    /// @dev A platform answers once it has both halves: a keyspace and at
-    ///      least one verifier. `configured` alone is not enough — between
-    ///      `setPlatform` and `setVerifier` a platform owns a keyspace and can
-    ///      verify nothing, and answering `address(0)` there would tell a
-    ///      caller "nobody holds this name" about a platform that is not wired
-    ///      yet. `latestVersion` only ever leaves zero when a verifier lands,
-    ///      and `retireVerifier` refuses to take the last one away, so it stays
-    ///      the honest test for the whole life of the platform.
+    /// @dev A platform answers once it has both halves: a keyspace, and a way
+    ///      to verify. `configured` alone is not enough — between `setPlatform`
+    ///      and `setVerifier` a platform owns a keyspace and can verify
+    ///      nothing, and answering `address(0)` there would tell a caller
+    ///      "nobody holds this name" about a platform that is not wired yet.
     function _requireUsable(bytes32 platformId) private view returns (Platform memory platform) {
         platform = _s().platforms[platformId];
-        // Between `setPlatform` and wiring a verifier, a platform owns a
-        // keyspace and can verify nothing. Answering `address(0)` there would
-        // tell a caller "nobody holds this name" about a platform that is not
-        // wired yet -- so either path counts, and neither is required. The
-        // ceremony half of that question belongs to the Proof Verifier, which
-        // holds the Supported Version Set, so it is asked rather than mirrored.
-        IProofVerifier pv = _s().proofVerifier;
-        bool canVerify = platform.latestVersion != 0 || (address(pv) != address(0) && pv.verifiesPlatform(platformId));
-        // "Can verify" moves. Governance retiring the last version of a
-        // platform would otherwise stop every name already bound under it from
-        // resolving -- while CeremonyProofVerifier's own documentation promises
-        // that removing a version strands nothing. A name does not belong to
-        // the proof that established it, and does not stop existing when that
-        // proof's format is retired.
-        if (!platform.configured || !(canVerify || _s().everBound[platformId])) {
+        // Three answers, ordered by cost, and any one of them is enough.
+        //
+        // `everBound` leads: it is a storage read, and it settles every name
+        // already bound. "Can verify" moves, and governance retiring the last
+        // version of a platform must not stop those names resolving -- a name
+        // does not belong to the proof that established it.
+        //
+        // The Proof Verifier holds the Supported Version Set, so the ceremony
+        // half is asked rather than mirrored. It is an external call, so it is
+        // asked last, only when the local answers say nothing.
+        bool canVerify = _s().everBound[platformId] || platform.latestVersion != 0;
+        if (!canVerify) {
+            IProofVerifier pv = _s().proofVerifier;
+            canVerify = address(pv) != address(0) && pv.verifiesPlatform(platformId);
+        }
+        if (!platform.configured || !canVerify) {
             revert UnknownPlatform(platformId);
         }
     }
