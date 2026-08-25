@@ -76,6 +76,21 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         uint64 proofLifetime, uint64 maxFutureAttestationSkew, uint64 futureObservationAllowance
     );
 
+    /// @notice Ceilings on the three governance parameters.
+    ///
+    /// @dev Two jobs, the same two `IdentityNames.MAX_FUTURE_OBSERVATION` has.
+    ///      They keep each value meaningful -- the specification's own defaults
+    ///      are an hour, five minutes and an hour -- and they keep the verifier
+    ///      from reverting on its own arithmetic. `blockTime + skew` and
+    ///      `blockTime + allowance` are checked sums, so a value near
+    ///      `type(uint64).max` would panic EVERY verification through this
+    ///      contract rather than widen its window, and only an upgrade could
+    ///      undo it.
+    uint64 public constant MAX_PROOF_LIFETIME = 30 days;
+    uint64 public constant MAX_FUTURE_ATTESTATION_SKEW = 1 days;
+    uint64 public constant MAX_FUTURE_OBSERVATION_ALLOWANCE = 1 days;
+
+    error ParameterTooLarge(uint64 provided, uint64 limit);
     error WrongValue(uint256 required, uint256 provided);
     error WrongAttestationCount(uint256 required, uint256 provided);
     error WrongAuthority(bytes32 expected, bytes32 found);
@@ -143,7 +158,8 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     /// @dev Governance-owned. The Platform Verifier reads the current value
     ///      when it verifies and accepts no caller-supplied substitute
     ///      (REQ-PARAM-02). Lowering one may reject an outstanding proof;
-    ///      raising one may extend an outstanding proof.
+    ///      raising one may extend an outstanding proof. Each is capped, so
+    ///      neither can be raised to a value that breaks the verifier.
     function setProtocolParameters(
         uint64 proofLifetime_,
         uint64 maxFutureAttestationSkew_,
@@ -180,6 +196,15 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         uint64 maxFutureAttestationSkew_,
         uint64 futureObservationAllowance_
     ) private {
+        if (proofLifetime_ > MAX_PROOF_LIFETIME) {
+            revert ParameterTooLarge(proofLifetime_, MAX_PROOF_LIFETIME);
+        }
+        if (maxFutureAttestationSkew_ > MAX_FUTURE_ATTESTATION_SKEW) {
+            revert ParameterTooLarge(maxFutureAttestationSkew_, MAX_FUTURE_ATTESTATION_SKEW);
+        }
+        if (futureObservationAllowance_ > MAX_FUTURE_OBSERVATION_ALLOWANCE) {
+            revert ParameterTooLarge(futureObservationAllowance_, MAX_FUTURE_OBSERVATION_ALLOWANCE);
+        }
         _base().proofLifetime = proofLifetime_;
         _base().maxFutureAttestationSkew = maxFutureAttestationSkew_;
         _base().futureObservationAllowance = futureObservationAllowance_;

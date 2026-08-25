@@ -441,6 +441,47 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev Each parameter is capped, and the cap is not cosmetic.
+    ///      `blockTime + skew` and `blockTime + allowance` are checked sums, so
+    ///      a value near `type(uint64).max` panics EVERY verification through
+    ///      this contract rather than widening its window -- and a governance
+    ///      typo that only an upgrade can undo is the worst shape a parameter
+    ///      can take.
+    function test_refusesAnUnusableSkew() public {
+        vm.prank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.ParameterTooLarge.selector);
+        verifier.setProtocolParameters(LIFETIME, type(uint64).max, SKEW);
+    }
+
+    function test_refusesAnUnusableObservationAllowance() public {
+        vm.prank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.ParameterTooLarge.selector);
+        verifier.setProtocolParameters(LIFETIME, SKEW, type(uint64).max);
+    }
+
+    /// @dev A lifetime past the cap does not panic; it keeps a proof spendable
+    ///      long after the session it attests, which the parameter exists to
+    ///      stop.
+    function test_refusesAnUnboundedLifetime() public {
+        // Read before the cheatcodes: an argument is a call of its own, and
+        // `expectRevert` would bind to it rather than to the setter.
+        uint64 tooLong = verifier.MAX_PROOF_LIFETIME() + 1;
+        vm.prank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.ParameterTooLarge.selector);
+        verifier.setProtocolParameters(tooLong, SKEW, SKEW);
+    }
+
+    /// @dev The caps are ceilings, not targets: the profile's own defaults sit
+    ///      far below them and stay settable.
+    function test_acceptsTheSpecifiedDefaults() public {
+        vm.prank(OWNER);
+        verifier.setProtocolParameters(3600, 300, 3600);
+        (uint64 lifetime, uint64 skew, uint64 allowance) = verifier.protocolParameters();
+        assertEq(lifetime, 3600);
+        assertEq(skew, 300);
+        assertEq(allowance, 3600);
+    }
+
     /// @dev Governance-owned, read at verification time, with no caller
     ///      substitute (REQ-PARAM-02).
     function test_loweringTheLifetimeRejectsAnOutstandingProof() public {
