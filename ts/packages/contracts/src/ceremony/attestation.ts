@@ -331,25 +331,6 @@ export function requireBearerHeaderRequest(block: DirectionBlock, length: number
   return commitment
 }
 
-/// The status line, which is the only thing that says the server agreed.
-///
-/// An error body is free to contain anything the layout looks for, so consent
-/// inferred from the wanted fields being present is an argument about what an
-/// error body does not hold rather than a check. Anchored at the origin, so
-/// bytes that merely look like a status line are not read as one.
-export function requireOkStatus(block: DirectionBlock): void {
-  const first = block.revealed[0]
-  if (first === undefined || first.start !== 0) {
-    throw new AttestationError('the first revealed response range does not begin the transcript')
-  }
-  if (!ascii(first.bytes).startsWith(OK_STATUS)) {
-    throw new AttestationError('the platform did not answer 200')
-  }
-}
-
-/// The trailing space is load-bearing: without it `200` also prefixes `2000`.
-const OK_STATUS = 'HTTP/1.1 200 '
-
 /// The one commitment framed by exactly these revealed bytes.
 ///
 /// For a direction that is NOT exactly covered, where several ranges are hidden

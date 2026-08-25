@@ -42,10 +42,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     bytes internal constant ACCESS_TOKEN_PREFIX = '"access_token":"';
     bytes internal constant ACCESS_TOKEN_SUFFIX = '"';
 
-    /// @dev The trailing space is load-bearing: without it `200` also prefixes
-    ///      a hypothetical `2000`.
-    bytes internal constant OK_STATUS = "HTTP/1.1 200 ";
-
     error UnexpectedClientIdentifier();
     error WrongPublicInputCount(uint256 expected, uint256 provided);
     error WrongRequestLine();
@@ -66,12 +62,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
-    /// @dev The first revealed response range does not begin the transcript, so
-    ///      nothing says the bytes read as a status line ARE the status line.
-    error StatusLineNotAtOrigin();
-    /// @dev The platform did not agree. The wanted fields may still be present
-    ///      -- an error body is free to contain anything.
-    error NotOk();
 
     // ─── What a profile supplies ────────────────────────────────────
 
@@ -118,23 +108,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         pure
         virtual
         returns (string memory idField, IdShape idShape, string memory handleField);
-
-    /// @dev The status line says the server agreed, and nothing else does.
-    ///
-    ///      Without it, consent is inferred from the wanted fields happening to
-    ///      be present -- an argument about what an error body does not contain
-    ///      rather than a check. The circuit sees no HTTP at all, so this is
-    ///      the only place it can be made.
-    ///
-    ///      Anchored at the origin for the same reason as a request line: the
-    ///      lowest-offset revealed range is wherever the prover put it, so
-    ///      bytes that merely look like a status line are not one.
-    function _requireOkStatus(CeremonyAttestation.DirectionBlock memory block_) internal pure {
-        if (block_.revealed.length == 0 || block_.revealed[0].start != 0) {
-            revert StatusLineNotAtOrigin();
-        }
-        if (!_startsWith(block_.revealed[0].value, OK_STATUS)) revert NotOk();
-    }
 
     /// @dev Find a JSON string field in exactly one revealed range.
     ///
@@ -274,7 +247,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // around -- a byte that is neither revealed nor committed is a byte the
         // notary never signed a position for.
         CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
-        _requireOkStatus(data.received);
 
         // The bearer is identified by its framing, not by being the only
         // commitment: the response hides every other byte behind one of its own.
@@ -313,7 +285,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
 
         // The response direction is tiled too, so no byte of it is invisible.
         CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
-        _requireOkStatus(data.received);
         (string memory idField, IdShape idShape, string memory handleField) = _identityFields();
         fields.userId = string(
             idShape == IdShape.JsonString

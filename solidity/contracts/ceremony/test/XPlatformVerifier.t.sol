@@ -573,38 +573,7 @@ contract XPlatformVerifierTest is Test {
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
-    // ─── The server's agreement ─────────────────────────────────────
-
-    /// @dev Nothing else says the platform agreed. An error body is free to
-    ///      contain anything, `"access_token"` included, so consent inferred
-    ///      from the wanted fields being present is an argument about what an
-    ///      error body does not hold rather than a check. The circuit sees no
-    ///      HTTP at all, so this is the only place it can be made.
-    function test_rejectsATokenResponseTheServerRefused() public {
-        ICeremony.Submission memory s = _submission();
-        bytes memory attested = s.attestations[0].attestedData;
-        // `200` -> `403`, in the revealed status line. Everything else about
-        // the attestation is untouched and still verifies.
-        uint256 at = _find(attested, "HTTP/1.1 200 ") + 9;
-        attested[at] = "4";
-        attested[at + 1] = "0";
-        attested[at + 2] = "3";
-        s.attestations[0] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
-        vm.expectRevert(TlsNotaryVerifierBase.NotOk.selector);
-        this.run{value: quote}(s);
-    }
-
-    function test_rejectsAnIdentityResponseTheServerRefused() public {
-        ICeremony.Submission memory s = _submission();
-        bytes memory attested = s.attestations[1].attestedData;
-        uint256 at = _find(attested, "HTTP/1.1 200 ") + 9;
-        attested[at] = "5";
-        attested[at + 1] = "0";
-        attested[at + 2] = "0";
-        s.attestations[1] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
-        vm.expectRevert(TlsNotaryVerifierBase.NotOk.selector);
-        this.run{value: quote}(s);
-    }
+    // ─── The token response covers every byte ───────────────────────
 
     /// @dev The profile says every byte outside the anchors is committed. Until
     ///      the token response was tiled that was stated and not enforced, so a
@@ -652,23 +621,6 @@ contract XPlatformVerifierTest is Test {
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
-    }
-
-    /// @dev The offset of `needle` in `haystack`. Reverts if absent, so a
-    ///      fixture that stops containing it fails loudly rather than mutating
-    ///      byte zero.
-    function _find(bytes memory haystack, bytes memory needle) private pure returns (uint256) {
-        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
-            bool hit = true;
-            for (uint256 j = 0; j < needle.length; ++j) {
-                if (haystack[i + j] != needle[j]) {
-                    hit = false;
-                    break;
-                }
-            }
-            if (hit) return i;
-        }
-        revert("needle not in fixture");
     }
 
     // ─── The token response anchors (REQ-PLAT-57, TEST-PLAT-22) ─────

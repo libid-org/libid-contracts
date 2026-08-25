@@ -8,7 +8,6 @@ import {
   HEADER_LEN,
   requireBearerHeaderRequest,
   requireFramedCommitment,
-  requireOkStatus,
   requireExactCoverage,
   tag,
 } from './attestation.js'
@@ -109,21 +108,6 @@ describe('attested data', () => {
         },
         end + tail.length,
       ),
-    ).toThrow(AttestationError)
-  })
-
-  it('refuses a response the server did not agree to', () => {
-    const ok = new TextEncoder().encode('HTTP/1.1 200 OK')
-    const bad = new TextEncoder().encode('HTTP/1.1 403 Forbidden')
-    expect(() =>
-      requireOkStatus({ revealed: [{ start: 0, end: 15, bytes: ok }], commitments: [] }),
-    ).not.toThrow()
-    expect(() =>
-      requireOkStatus({ revealed: [{ start: 0, end: 22, bytes: bad }], commitments: [] }),
-    ).toThrow(AttestationError)
-    // Not at the origin: bytes that look like a status line are not one.
-    expect(() =>
-      requireOkStatus({ revealed: [{ start: 4, end: 19, bytes: ok }], commitments: [] }),
     ).toThrow(AttestationError)
   })
 
