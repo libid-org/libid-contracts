@@ -7,6 +7,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
+import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 import {INotaryService} from "./INotaryService.sol";
 
 /// @title NotaryService
@@ -98,7 +99,11 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
     // ─── Verification ───────────────────────────────────────────────
 
     /// @inheritdoc INotaryService
-    function verify(bytes calldata attestedData, bytes calldata signature) external payable {
+    function verify(bytes calldata attestedData, bytes calldata signature)
+        external
+        payable
+        returns (CeremonyAttestation.AttestedData memory)
+    {
         uint256 required = _s().fee;
         if (msg.value != required) revert WrongFee(required, msg.value);
 
@@ -111,6 +116,12 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, signature);
         if (err != ECDSA.RecoverError.NoError) revert MalformedSignature();
         if (!_s().trusted[recovered]) revert UntrustedNotary(recovered);
+
+        // Decoded only now. Everything above touches unauthenticated bytes with
+        // a hash and nothing else, which has no shape to attack; the forward
+        // parser runs on what a trusted key has already signed. Do not hoist
+        // this above the check to fail earlier -- earlier is not the point.
+        return CeremonyAttestation.decode(attestedData);
     }
 
     /// @inheritdoc INotaryService

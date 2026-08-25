@@ -2,9 +2,11 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {CeremonyAttestation} from "../CeremonyAttestation.sol";
 import {NotaryService} from "../NotaryService.sol";
 
 /// @notice The Notary Service of ceremony-common section 9.2.
@@ -19,21 +21,29 @@ contract NotaryServiceTest is Test {
     uint256 constant FEE = 0.001 ether;
 
     /// The same bytes libid-rs encodes and CeremonyAttestation decodes.
-    bytes constant ATTESTED = hex"f1b67c286f7f90224eb4661a5922406b5092042b9515e4e9e448ec1d4f55b352"
-        hex"7521d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83"
-        hex"e7b961087ec316778e6885d11145cc06f1d75360430f461d0322fb7f105899dd"
-        hex"4930142f5283d4a8eab0d24c588f00b21213ae2a47e7ed6c1dc6a57044f1655d" hex"0000000069800e800000003c00000028"
-        hex"000200000000000000146161616161616161616161616161616161616161"
-        hex"000000280000003c6262626262626262626262626262626262626262" hex"00010000001400000028"
-        hex"0707070707070707070707070707070707070707070707070707070707070707"
-        hex"0001000000000000000a63636363636363636363" hex"00010000000a00000028"
-        hex"0909090909090909090909090909090909090909090909090909090909090909";
+    ///
+    /// @dev Signed at test time rather than pinned as a literal. The old
+    ///      pinned signature outlived two format changes unnoticed, because
+    ///      this contract only hashed these bytes and never read them.
+    bytes constant ATTESTED = hex"4930142f5283d4a8eab0d24c588f00b21213ae2a47e7ed6c1dc6a57044f1655d"
+        hex"0000000069800e800000003c0000002800000000000000020000000000000000"
+        hex"0000001461616161616161616161616161616161616161610000002800000000"
+        hex"0000001462626262626262626262626262626262626262620000000000000001"
+        hex"0000001400000028070707070707070707070707070707070707070707070707"
+        hex"0707070707070707000000000000000100000000000000000000000a63636363"
+        hex"63636363636300000000000000010000000a0000002809090909090909090909"
+        hex"09090909090909090909090909090909090909090909";
 
-    /// EIP-191 over keccak256(ATTESTED), signed by NOTARY.
-    bytes constant SIG = hex"c789f9960c36dd89768bb3ba6858ede8cda4d5d785dca5e8b7edd23396cf17c8"
-        hex"4f55c6fa3eaa4da2a6ccd04c89cf916ef87a08059a72b87c48d17413b5a5552d" hex"1b";
+    /// @dev The anvil key whose address is `NOTARY`.
+    uint256 constant NOTARY_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+
+    bytes SIG;
 
     function setUp() public {
+        (uint8 v, bytes32 r, bytes32 sVal) =
+            vm.sign(NOTARY_KEY, MessageHashUtils.toEthSignedMessageHash(keccak256(ATTESTED)));
+        SIG = abi.encodePacked(r, sVal, v);
+
         NotaryService impl = new NotaryService();
         service = NotaryService(
             address(new ERC1967Proxy(address(impl), abi.encodeCall(NotaryService.initialize, (OWNER, NOTARY, FEE))))
@@ -178,6 +188,32 @@ contract NotaryServiceTest is Test {
         service.verify(ATTESTED, SIG);
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, 0, 1));
         service.verify{value: 1}(ATTESTED, SIG);
+    }
+
+    /// @dev The record comes back decoded, so a caller cannot hold the fields
+    ///      without having paid for the check that vouches for them. With a
+    ///      bare accept, nothing but two adjacent statements kept
+    ///      "authenticate, then read" true.
+    function test_handsBackTheDecodedRecord() public {
+        CeremonyAttestation.AttestedData memory a = service.verify{value: FEE}(ATTESTED, SIG);
+
+        assertEq(a.authorityId, keccak256(bytes("api.x.com")));
+        assertEq(a.createdAt, 1_770_000_000);
+        assertEq(a.sentTranscriptLength, 60);
+        assertEq(a.recvTranscriptLength, 40);
+        assertEq(a.sent.revealed.length, 2);
+        assertEq(a.received.commitments.length, 1);
+    }
+
+    /// @dev A record the key vouched for but that this format cannot read is
+    ///      refused here rather than one hop up. Decoding moved behind the
+    ///      signature check, so this is where the shape is first seen.
+    function test_refusesSignedBytesThatAreNotARecord() public {
+        bytes memory junk = hex"deadbeef";
+        (uint8 v, bytes32 r, bytes32 sVal) =
+            vm.sign(NOTARY_KEY, MessageHashUtils.toEthSignedMessageHash(keccak256(junk)));
+        vm.expectRevert();
+        service.verify{value: FEE}(junk, abi.encodePacked(r, sVal, v));
     }
 
     function test_renouncingIsDisabled() public {

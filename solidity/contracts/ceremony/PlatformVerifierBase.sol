@@ -188,9 +188,12 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         internal
         returns (CeremonyAttestation.AttestedData memory data)
     {
-        _base().notary.verify{value: fee}(attestation.attestedData, attestation.signature);
-
-        data = CeremonyAttestation.decode(attestation.attestedData);
+        // Authenticated and decoded in one call, deliberately. The Notary
+        // Service owns the format its key vouches for, and handing back the
+        // decoded view rather than a bare accept is what makes "read only what
+        // was authenticated" a property of the call rather than of two
+        // statements staying next to each other.
+        data = _base().notary.verify{value: fee}(attestation.attestedData, attestation.signature);
 
         // The one comparison left, and the only one the notary could honestly
         // have supplied: the TLS server name it authenticated in the handshake.

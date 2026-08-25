@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyAttestation} from "./CeremonyAttestation.sol";
+
 /// @title INotaryService
 /// @notice The bottom of the verification path of ceremony-common section 5.1.
 /// @dev It answers one question -- is this attestation authentic -- and knows
@@ -23,9 +25,26 @@ interface INotaryService {
     ///      path to get wrong. Returning a boolean would offer a second way to
     ///      say "rejected" that keeps the fee and lets a caller miss it.
     ///
+    ///      It returns the decoded record rather than a bare accept, because
+    ///      the format is this service's to know: REQ-COMMON-18 has a profile
+    ///      pin the exact Notary Service AND the attestation format it accepts,
+    ///      as a pair, so pinning the service is what pins the format. A caller
+    ///      that decoded the bytes itself would be holding the second half of
+    ///      that pair independently, free to drift from the first.
+    ///
+    ///      It also removes a shape rather than a bug. With `void` here, the
+    ///      decoder is reachable without the signature check -- nothing but two
+    ///      statements staying adjacent keeps "authenticate, then read" true.
+    ///      Handed back, the fields cannot be reached without paying for the
+    ///      check that vouches for them.
+    ///
     /// @param attestedData The exact bytes of ceremony-common section 9.1.
     /// @param signature    The notary signature over `keccak256(attestedData)`.
-    function verify(bytes calldata attestedData, bytes calldata signature) external payable;
+    /// @return attested    Those bytes decoded, once the key has vouched.
+    function verify(bytes calldata attestedData, bytes calldata signature)
+        external
+        payable
+        returns (CeremonyAttestation.AttestedData memory attested);
 
     /// @notice The fee one verification currently costs, in the chain's native
     ///         asset.
