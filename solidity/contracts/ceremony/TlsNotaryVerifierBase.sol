@@ -63,7 +63,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
 
     // ─── What a profile supplies ────────────────────────────────────
 
-    function _platform() internal pure virtual returns (bytes32);
     function _tokenAuthority() internal pure virtual returns (bytes32);
     function _identityAuthority() internal pure virtual returns (bytes32);
     function _tokenRequestLine() internal pure virtual returns (bytes memory);

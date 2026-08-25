@@ -67,7 +67,7 @@ contract GooglePlatformVerifierTest is Test {
                         GooglePlatformVerifier.initialize,
                         (
                             OWNER,
-                            INotaryService(address(0xDEAD)),
+                            INotaryService(address(0)),
                             IHonkVerifier(address(honk)),
                             address(honk).codehash,
                             GOOGLE_ALLOWANCE,
@@ -188,6 +188,36 @@ contract GooglePlatformVerifierTest is Test {
     // ─── Zero attestations, zero fee ────────────────────────────────
 
     /// @dev A path with nothing to verify carries no value.
+    /// @dev A profile that verifies no attestation holds no Notary Service.
+    ///      Requiring a live address would make a deployer supply a dependency
+    ///      purely to satisfy a check, and `notaryService()` would then report
+    ///      a collaborator this contract is forbidden to call.
+    function test_refusesANotaryItWouldNeverCall() public {
+        GooglePlatformVerifier impl = new GooglePlatformVerifier();
+        vm.expectPartialRevert(PlatformVerifierBase.WrongNotaryForProfile.selector);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                GooglePlatformVerifier.initialize,
+                (
+                    OWNER,
+                    INotaryService(address(0xDEAD)),
+                    IHonkVerifier(address(honk)),
+                    address(honk).codehash,
+                    GOOGLE_ALLOWANCE,
+                    IJwksRoots(address(roots))
+                )
+            )
+        );
+    }
+
+    /// @dev REQ-COMMON-05D: a profile requiring no attestation must not reach a
+    ///      Notary Service. It holds none at all, so there is nothing to reach
+    ///      and nothing for `setTrustRoots` to rotate.
+    function test_holdsNoNotary() public view {
+        assertEq(verifier.notaryService(), address(0));
+    }
+
     function test_quotesNothing() public view {
         assertEq(verifier.quote(), 0);
     }
@@ -198,15 +228,6 @@ contract GooglePlatformVerifierTest is Test {
         ICeremony.Submission memory s = _submission();
         vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongValue.selector, 0, 1));
         this.run{value: 1}(s);
-    }
-
-    /// @dev REQ-COMMON-05D: a profile requiring no attestation must not reach a
-    ///      Notary Service. The one configured here is address(0xDEAD) with no
-    ///      code — calling it would revert, so the happy path passing is the
-    ///      proof it is never called.
-    function test_neverCallsTheNotaryService() public {
-        assertEq(verifier.notaryService(), address(0xDEAD));
-        this.run(_submission());
     }
 
     function test_refusesAnyAttestation() public {

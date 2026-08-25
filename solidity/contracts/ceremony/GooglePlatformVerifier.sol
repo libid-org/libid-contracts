@@ -124,6 +124,10 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         emit JwksRootsChanged(address(roots));
     }
 
+    function _platform() internal pure override returns (bytes32) {
+        return CeremonyProfile.PLATFORM_GOOGLE;
+    }
+
     /// @inheritdoc IPlatformVerifier
     function platformId() external pure returns (bytes32) {
         return CeremonyProfile.PLATFORM_GOOGLE;

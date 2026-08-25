@@ -90,6 +90,9 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     uint64 public constant MAX_FUTURE_ATTESTATION_SKEW = 1 days;
     uint64 public constant MAX_FUTURE_OBSERVATION_ALLOWANCE = 1 days;
 
+    /// @dev A profile that verifies no attestation holds a Notary Service, or
+    ///      one that verifies some holds none.
+    error WrongNotaryForProfile(bytes32 platformId, address notary);
     error ParameterTooLarge(uint64 provided, uint64 limit);
     error WrongValue(uint256 required, uint256 provided);
     error WrongAttestationCount(uint256 required, uint256 provided);
@@ -168,11 +171,25 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         _setProtocolParameters(proofLifetime_, maxFutureAttestationSkew_, futureObservationAllowance_);
     }
 
+    /// @dev The platform this verifier answers for. Asked during
+    ///      initialization, so it must not read storage.
+    function _platform() internal pure virtual returns (bytes32);
+
     function _setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_, bytes32 honkVerifierCodehash_)
         private
     {
-        if (address(notary_) == address(0) || address(honkVerifier_) == address(0)) {
-            revert ZeroAddress();
+        if (address(honkVerifier_) == address(0)) revert ZeroAddress();
+
+        // The profile decides whether a Notary Service belongs here at all.
+        // A profile whose Attestation Count is zero must not reach one
+        // (REQ-COMMON-05D), so requiring a live address from it would make a
+        // deployer supply a dependency purely to satisfy a check --
+        // `notaryService()` would then report a collaborator that does not
+        // exist, and `setTrustRoots` could rotate a root nothing reads.
+        bytes32 platform = _platform();
+        bool wantsNotary = CeremonyProfile.attestationCount(platform) != 0;
+        if (wantsNotary != (address(notary_) != address(0))) {
+            revert WrongNotaryForProfile(platform, address(notary_));
         }
         // An account with no code hashes to zero (EIP-1052) and an account
         // with empty code to keccak256(""), so either as the EXPECTED value
