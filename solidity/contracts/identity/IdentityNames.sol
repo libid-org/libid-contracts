@@ -11,7 +11,6 @@ import {ICeremony} from "../ceremony/ICeremony.sol";
 import {IProofVerifier} from "../ceremony/IProofVerifier.sol";
 import {HandleNormalizer} from "./HandleNormalizer.sol";
 import {IdentityNodes} from "./IdentityNodes.sol";
-import {IdentityClaim, IIdentityVerifier} from "./IIdentityVerifier.sol";
 
 /// @title IdentityNames - proof-derived names for any wallet.
 ///
@@ -75,26 +74,16 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      proofs of one handle are ordered by when the platform said it, not
     ///      by when somebody got around to submitting.
     ///
-    ///      It is that moment on the scale every version of the platform
-    ///      shares: what the verifier reported, less that version's future
-    ///      allowance. The nodes are shared by all versions, so raw values
-    ///      would compare two clocks and the looser one would win — see
-    ///      `_onSharedScale`. Which side subtracted differs by path: a legacy
-    ///      binding is scaled here, from `VerifierSlot.maxFutureObservation`; a
-    ///      ceremony binding arrives already scaled, because the Platform
-    ///      Verifier owns that number. So recovering what the verifier stated
-    ///      means adding back the allowance THAT path used, not a single one.
+    ///      It is that moment on the scale every platform shares: the Platform
+    ///      Verifier subtracts its own profile's future allowance before it
+    ///      returns, because profiles disagree about what "now" is. Raw values
+    ///      would compare two clocks and the looser one would always win.
     ///
     ///      `version` is what makes retiring an old proof format possible. The
     ///      owner may only stop accepting a version once nobody depends on it,
     ///      and this is the on-chain record of who still does. It rides in the
     ///      same slot: 20 + 8 + 4 bytes is exactly one word, so keeping it
     ///      costs no extra storage.
-    ///
-    ///      The two paths number their versions independently and both start at
-    ///      one, so a ceremony version is stored with [`CEREMONY_VERSION_BIT`]
-    ///      set. Without it "is anybody still on legacy v1" would count every
-    ///      ceremony v1 binding and the retirement would never come.
     struct Binding {
         address owner;
         uint64 observedAt;
@@ -144,35 +133,14 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      about the account" — not in configuration, which sees an address
     ///      and nothing else.
     ///
-    /// @param rules         How this platform's handles normalize.
-    /// @param latestVersion The version plain `bind` uses. Zero means the
-    ///                      platform has no verifier yet.
-    /// @param configured    Whether the platform exists at all. A platform with
-    ///                      every version retired still owns its keyspace, so
-    ///                      "is it wired" cannot be read off a verifier address.
+    /// @param rules      How this platform's handles normalize.
+    /// @param configured Whether the platform exists at all. A platform whose
+    ///                   every version has been retired still owns its
+    ///                   keyspace, so "is it wired" cannot be read off the
+    ///                   Supported Version Set.
     struct Platform {
         HandleNormalizer.Rules rules;
-        uint32 latestVersion;
         bool configured;
-    }
-
-    /// @notice One proof format for one platform.
-    ///
-    /// @dev Versions exist because a platform's proof can change shape without
-    ///      the account behind it changing — X gaining OIDC, say. Both formats
-    ///      have to be accepted while users migrate, so the verifier is keyed
-    ///      by version rather than replaced.
-    ///
-    /// @param verifier             Reads this version of the platform's proof.
-    /// @param maxFutureObservation How far ahead of the chain this version's
-    ///                             observations may claim to be. Per version,
-    ///                             not per platform: a notary states wall-clock
-    ///                             time and is never ahead, while an OIDC claim
-    ///                             carries the token's `exp` and reads about an
-    ///                             hour ahead. See `_requireNotAhead`.
-    struct VerifierSlot {
-        IIdentityVerifier verifier;
-        uint64 maxFutureObservation;
     }
 
     // ─── State ──────────────────────────────────────────────────────
@@ -202,12 +170,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// meantime keeps it.
         mapping(bytes32 => bytes32) handleOfId;
         mapping(bytes32 => bytes32) idOfHandle;
-        /// platformId -> version -> the verifier that reads that format.
-        ///
-        /// Retiring a version is `delete` on one entry here. The keyspace and
-        /// every name already bound under it are untouched: a name does not
-        /// belong to the proof that established it.
-        mapping(bytes32 => mapping(uint32 => VerifierSlot)) verifiers;
         // ── Appended for the ceremony path. The struct's rule is append-only,
         //    so these sit after everything above and disturb no stored slot.
         /// The one component this Consumer calls to verify a proof.
@@ -288,14 +250,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      `version` names the proof format that established the binding. It
     ///      is what tells an operator whether a version is still in use, and
     ///      therefore whether retiring it would strand anybody.
-    ///
-    ///      `clientIdentifier` names the OAuth client the ceremony ran under,
-    ///      in the exact bytes the platform authenticated. The contract has no
-    ///      use for it -- the digest already binds the transaction -- but an
-    ///      operator answering "which application produced these bindings"
-    ///      after the fact has no other source, and the value exists only
-    ///      inside the call that writes the binding. It is empty on the legacy
-    ///      path, which authenticates no client.
     event IdentityBound(
         address indexed owner,
         bytes32 indexed idNode,
@@ -305,8 +259,25 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         string handle,
         uint64 observedAt,
         bool published,
-        uint32 version,
-        bytes clientIdentifier
+        uint32 version
+    );
+
+    /// @notice What a ceremony carried that a binding does not keep.
+    ///
+    /// @dev Beside `IdentityBound`, not inside it. The two paths share that
+    ///      event, and only a ceremony authenticates an OAuth client -- a field
+    ///      the legacy path could never fill is a field an indexer must always
+    ///      test for emptiness.
+    ///
+    ///      `clientIdentifier` is the exact bytes the platform authenticated.
+    ///      The contract has no use for them: the digest already binds the
+    ///      transaction. But an operator answering "which application produced
+    ///      these bindings", after a client is found compromised, has no other
+    ///      source -- the value exists only inside the call that writes the
+    ///      binding. The digest keys it, because the digest is what identifies
+    ///      one ceremony.
+    event CeremonyBound(
+        bytes32 indexed authorizationDigest, address indexed owner, bytes32 indexed platformId, bytes clientIdentifier
     );
 
     /// @notice A handle stopped resolving because the account that held it
@@ -322,17 +293,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     event ProofVerifierConfigured(address verifier);
 
     /// @notice A legacy proof version gained or replaced its verifier.
-    event VerifierConfigured(
-        bytes32 indexed platformId, uint32 indexed version, address verifier, uint64 maxFutureObservation
-    );
-
-    /// @notice A proof version stopped being accepted.
-    /// @dev The names bound under it stay exactly where they are.
-    event VerifierRetired(bytes32 indexed platformId, uint32 indexed version);
-
-    /// @notice The version plain `bind` now uses.
-    event LatestVersionChanged(bytes32 indexed platformId, uint32 indexed version);
-
     /// @notice A wallet withdrew its published handle.
     /// @dev An indexer that mirrors `reverseOf` needs this to stop showing it.
     event NameUnpublished(address indexed owner, bytes32 indexed platformId);
@@ -341,8 +301,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// This platform has no keyspace configured.
     error UnknownPlatform(bytes32 platformId);
-    /// This platform has no verifier for that proof version, or it was retired.
-    error UnknownVersion(bytes32 platformId, uint32 version);
     /// Version zero is the "no version" sentinel and cannot name a verifier.
     /// @notice The one operation this Consumer owns.
     ///
@@ -352,14 +310,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      about: a digest is spendable once at EACH Consumer accepting this
     ///      domain, so two deployments choosing the same string share a digest
     ///      space.
-    /// @dev Set on `Binding.version` for a binding established through the
-    ///      ceremony path. The two Supported Version Sets are independent and
-    ///      both count from one, so without a marker their records collide.
-    uint32 internal constant CEREMONY_VERSION_BIT = 0x80000000;
-
     bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity"));
 
-    error ZeroVersion();
     error ZeroAddress();
     /// @dev The submission names an operation this Consumer does not own
     ///      (REQ-COMMON-06A).
@@ -371,24 +323,14 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      (REQ-COMMON-01F).
     error BadTransactionData(uint256 length);
     error WrongClaimValue(uint256 required, uint256 provided);
-    /// Retiring the version `bind` defaults to would leave the platform unusable.
-    error VersionInUseAsLatest(bytes32 platformId, uint32 version);
     /// The proof names a different address than the caller.
     error NotProofTarget(address proved, address caller);
-    /// The proof names nobody. Such a claim is one anybody could redirect.
-    error NoTarget();
     /// The proof carries no observation time, so it cannot be ordered.
     error NoObservationTime();
     /// The proof names no account id. A binding is anchored on the id.
     error NoUserId();
-    /// A version needs a real verifier. Removing one is `retireVerifier`.
-    error NoVerifier();
-    /// The allowance for future observations is larger than any version needs.
-    error AllowanceTooLarge(uint64 allowance, uint64 max);
     /// A newer proof already wrote one of these nodes.
     error StaleProof(uint64 observedAt, uint64 known);
-    /// The proof claims an observation further ahead than its version allows.
-    error ObservedInTheFuture(uint64 observedAt, uint64 limit);
 
     // ─── Setup ──────────────────────────────────────────────────────
 
@@ -404,22 +346,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         __ReentrancyGuard_init();
     }
 
-    /// @notice The largest allowance a version may carry.
-    ///
-    /// @dev Two jobs. It keeps the allowance meaningful — the versions that
-    ///      need one report an expiry about an hour ahead, so a day is already
-    ///      generous and anything past it is a typo. And it keeps
-    ///      `_requireNotAhead` from reverting on its own arithmetic: that sum
-    ///      is checked, so an allowance near `type(uint64).max` would panic
-    ///      every `bind` through that version instead of widening its window.
-    uint64 public constant MAX_FUTURE_OBSERVATION = 1 days;
-
     /// @notice The version a platform's first verifier is registered under.
     ///
-    /// @dev Numbering starts at one because zero is the "no verifier" sentinel:
-    ///      an unconfigured platform reads `latestVersion == 0`, and a retired
-    ///      version reads back as the zero address. A version zero would be
-    ///      indistinguishable from both.
+    /// @dev Numbering starts at one because zero is the Proof Verifier's "no
+    ///      such version" sentinel. A version zero would be indistinguishable
+    ///      from a pair it does not serve.
     uint32 public constant INITIAL_VERSION = 1;
 
     /// @notice Add a platform or change how its handles normalize.
@@ -440,175 +371,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         emit PlatformConfigured(platformId);
     }
 
-    /// @notice Install the verifier for one proof version of a platform.
-    ///
-    /// @dev This is how a new proof format arrives. Registering it does NOT
-    ///      redirect anybody: `bind` keeps using `latestVersion` until the
-    ///      owner moves it, so existing clients carry on unchanged while the
-    ///      new format is exercised by callers that name it. The exception is
-    ///      the first version a platform gets, where there is nothing to
-    ///      protect and requiring two calls would only invite a half-configured
-    ///      platform.
-    ///
-    ///      **Installed means live for anyone who asks for it by version.**
-    ///      There is no staging state: `bindAtVersion` accepts any version with
-    ///      a verifier, which is what makes it possible to exercise a new
-    ///      format against the real chain at all. What `latestVersion` protects
-    ///      is the callers who name no version, not the verifier itself. Do not
-    ///      install a verifier here that must not be used yet.
-    ///
-    ///      **The verifier proves the same accounts this platform's other
-    ///      versions do, and reports the same ids for them.** A format that
-    ///      reports different ids is proving different accounts, which makes it
-    ///      a second platform rather than a version of this one — see
-    ///      `Platform`. Nothing on chain can catch the mistake.
-    ///
-    ///      Re-registering an existing version replaces its verifier, which is
-    ///      the repair path for a verifier found to be wrong.
-    function setVerifier(bytes32 platformId, uint32 version, IIdentityVerifier verifier, uint64 maxFutureObservation)
-        external
-        onlyOwner
-    {
-        if (version == 0) revert ZeroVersion();
-        if (address(verifier) == address(0)) revert NoVerifier();
-        if (maxFutureObservation > MAX_FUTURE_OBSERVATION) {
-            revert AllowanceTooLarge(maxFutureObservation, MAX_FUTURE_OBSERVATION);
-        }
-        Platform storage platform = _s().platforms[platformId];
-        if (!platform.configured) revert UnknownPlatform(platformId);
-
-        _s().verifiers[platformId][version] =
-            VerifierSlot({verifier: verifier, maxFutureObservation: maxFutureObservation});
-        emit VerifierConfigured(platformId, version, address(verifier), maxFutureObservation);
-
-        if (platform.latestVersion == 0) {
-            platform.latestVersion = version;
-            emit LatestVersionChanged(platformId, version);
-        }
-    }
-
-    /// @notice Point plain `bind` at a different version.
-    ///
-    /// @dev The migration switch. Both versions keep working either side of it
-    ///      — this only decides which one a caller that names no version gets.
-    function setLatestVersion(bytes32 platformId, uint32 version) external onlyOwner {
-        if (version == 0) revert ZeroVersion();
-        if (!_s().platforms[platformId].configured) revert UnknownPlatform(platformId);
-        if (address(_s().verifiers[platformId][version].verifier) == address(0)) {
-            revert UnknownVersion(platformId, version);
-        }
-        _s().platforms[platformId].latestVersion = version;
-        emit LatestVersionChanged(platformId, version);
-    }
-
-    /// @notice Stop accepting a proof version.
-    ///
-    /// @dev The end of a migration. Names bound under this version are NOT
-    ///      touched: a name belongs to the account that proved it, not to the
-    ///      format the proof was written in. What stops is minting new ones.
-    ///
-    ///      The version `bind` defaults to cannot be retired, because that
-    ///      would leave the platform accepting nothing while still answering
-    ///      `bind` — move `latestVersion` first, then retire.
-    ///
-    ///      Whether anybody still depends on a version is answerable before
-    ///      calling this: every `IdentityBound` carries the version, and
-    ///      `byId`/`byHandle` record it per binding.
-    function retireVerifier(bytes32 platformId, uint32 version) external onlyOwner {
-        if (address(_s().verifiers[platformId][version].verifier) == address(0)) {
-            revert UnknownVersion(platformId, version);
-        }
-        if (_s().platforms[platformId].latestVersion == version) {
-            revert VersionInUseAsLatest(platformId, version);
-        }
-        delete _s().verifiers[platformId][version];
-        emit VerifierRetired(platformId, version);
-    }
-
-    /// @notice The verifier for one version of a platform, or the zero address.
-    function verifierOf(bytes32 platformId, uint32 version) external view returns (IIdentityVerifier) {
-        return _s().verifiers[platformId][version].verifier;
-    }
-
-    /// @notice The version plain `bind` uses, or zero if the platform has none.
-    function latestVersionOf(bytes32 platformId) external view returns (uint32) {
-        return _s().platforms[platformId].latestVersion;
-    }
-
     // ─── Binding ────────────────────────────────────────────────────
-
-    /// @notice Prove an identity and bind it to the caller.
-    ///
-    /// @param platformId  Which platform the proof is for.
-    /// @param proof       The platform's proof, opaque to this contract.
-    /// @param publishName Also store the handle as a string, so a contract can
-    ///                    read the reverse direction on chain. The event
-    ///                    carries the plaintext either way.
-    function bind(bytes32 platformId, bytes calldata proof, bool publishName) external {
-        // Zero means "whichever version this platform defaults to". `_bind`
-        // resolves it from the record it has to load anyway, so the default
-        // path — the one every unpinned client takes — reads the platform once.
-        _bind(platformId, 0, proof, publishName);
-    }
-
-    /// @notice Prove an identity with a named proof version.
-    ///
-    /// @dev The caller states the version rather than the contract inferring
-    ///      it. Inferring would mean either a version header every verifier has
-    ///      to agree on — which couples the formats together, the thing
-    ///      versioning exists to avoid — or trying each verifier in turn, which
-    ///      costs gas per retired version and risks a proof for one format
-    ///      accidentally satisfying another.
-    ///
-    ///      A client that does not care passes none: `bind` uses the platform's
-    ///      latest. A client mid-migration names the version it built its proof
-    ///      for, and keeps working the day the default moves.
-    ///
-    /// @param version Which proof format `proof` is written in.
-    function bindAtVersion(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) external {
-        // Zero is `bind`'s private shorthand for the default, and letting it
-        // through here would make "name a version" and "name none" the same
-        // call with different spellings.
-        if (version == 0) revert ZeroVersion();
-        _bind(platformId, version, proof, publishName);
-    }
-
-    function _bind(bytes32 platformId, uint32 version, bytes calldata proof, bool publishName) private {
-        Platform memory platform = _requireUsable(platformId);
-        if (version == 0) version = platform.latestVersion;
-
-        VerifierSlot memory slot = _s().verifiers[platformId][version];
-        if (address(slot.verifier) == address(0)) revert UnknownVersion(platformId, version);
-
-        IdentityClaim memory attested = slot.verifier.verify(proof);
-
-        if (attested.target == address(0)) revert NoTarget();
-        // The one authorization rule. A proof read from the mempool is useless
-        // to a reader, because spending it requires being the address it names.
-        if (attested.target != msg.sender) revert NotProofTarget(attested.target, msg.sender);
-        if (attested.observedAt == 0) revert NoObservationTime();
-        // Every shipped verifier rejects an empty id before returning, so this
-        // is the check that keeps that true for the next one. Without it every
-        // account a lax verifier reported would land on the single node
-        // `idNode(platformId, "")` and take turns owning it.
-        if (bytes(attested.userId).length == 0) revert NoUserId();
-        _requireNotAhead(attested.observedAt, slot.maxFutureObservation);
-
-        _write(
-            platformId,
-            version,
-            attested.userId,
-            attested.handle,
-            attested.observedAt,
-            slot.maxFutureObservation,
-            publishName,
-            platform,
-            // The legacy path authenticates no OAuth client.
-            ""
-        );
-    }
-
-    // ─── The ceremony path ──────────────────────────────────────────
 
     /// @notice Bind an identity from a ceremony submission.
     ///
@@ -682,19 +445,18 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
         _write(
             submission.platformId,
-            CEREMONY_VERSION_BIT | uint32(submission.version),
+            uint32(submission.version),
             claimed.userId,
             claimed.handle,
+            // Already on the shared scale, and already below the profile's own
+            // ceiling: the Platform Verifier owns both, because only it knows
+            // what "now" means for the evidence it read.
             claimed.metadataObservedAt,
-            // Zero, because the Platform Verifier already put its evidence
-            // time on the shared scale and refused anything above its own
-            // ceiling. Subtracting an allowance twice would push a ceremony
-            // claim below every legacy one.
-            0,
             publishName,
-            platform,
-            claimed.clientIdentifier
+            platform
         );
+
+        emit CeremonyBound(claimed.authorizationDigest, msg.sender, submission.platformId, claimed.clientIdentifier);
     }
 
     /// @notice What `claim` requires to be delivered for this pair.
@@ -739,11 +501,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         uint32 version,
         string memory userId,
         string memory rawHandle,
-        uint64 rawObservedAt,
-        uint64 futureAllowance,
+        uint64 observedAt,
         bool publishName,
-        Platform memory platform,
-        bytes memory clientIdentifier
+        Platform memory platform
     ) private {
         // This platform has now verified something, and no later retirement of
         // its versions makes that untrue. The resolvers read it so a name
@@ -766,7 +526,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // so subtracting it recovers the moment the observation describes.
         // Ordering inside one version is untouched: every claim shifts by the
         // same amount.
-        uint64 observedAt = _onSharedScale(rawObservedAt, futureAllowance);
 
         // Normalize here rather than trusting the verifier or the caller. The
         // key has to come from the same transform every reader uses.
@@ -801,9 +560,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             _s().published[msg.sender][platformId] = handle;
         }
 
-        emit IdentityBound(
-            msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version, clientIdentifier
-        );
+        emit IdentityBound(msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version);
     }
 
     /// @dev Stop resolving the handle this account used to hold.
@@ -857,83 +614,41 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         emit NameUnpublished(msg.sender, platformId);
     }
 
-    /// @dev Recover the moment an observation describes, from a clock that
-    ///      may run ahead of it.
-    ///
-    ///      Saturates at zero rather than reverting. Reaching it needs a
-    ///      provider timestamp below one day, which no live chain will see, and
-    ///      a zero cannot beat any watermark — so the degenerate case fails
-    ///      closed instead of wrapping into a huge one.
-    function _onSharedScale(uint64 observedAt, uint64 allowance) private pure returns (uint64) {
-        return observedAt > allowance ? observedAt - allowance : 0;
-    }
-
-    /// @dev A platform answers once it has both halves: a keyspace, and a way
-    ///      to verify. `configured` alone is not enough — between `setPlatform`
-    ///      and `setVerifier` a platform owns a keyspace and can verify
-    ///      nothing, and answering `address(0)` there would tell a caller
-    ///      "nobody holds this name" about a platform that is not wired yet.
-    function _requireUsable(bytes32 platformId) private view returns (Platform memory platform) {
-        platform = _s().platforms[platformId];
-        // Three answers, ordered by cost, and any one of them is enough.
-        //
-        // `everBound` leads: it is a storage read, and it settles every name
-        // already bound. "Can verify" moves, and governance retiring the last
-        // version of a platform must not stop those names resolving -- a name
-        // does not belong to the proof that established it.
-        //
-        // The Proof Verifier holds the Supported Version Set, so the ceremony
-        // half is asked rather than mirrored. It is an external call, so it is
-        // asked last, only when the local answers say nothing.
-        bool canVerify = _s().everBound[platformId] || platform.latestVersion != 0;
-        if (!canVerify) {
-            IProofVerifier pv = _s().proofVerifier;
-            canVerify = address(pv) != address(0) && pv.verifiesPlatform(platformId);
-        }
-        if (!platform.configured || !canVerify) {
-            revert UnknownPlatform(platformId);
-        }
-    }
-
-    /// @dev The ceremony path's gate: the keyspace exists, and nothing more.
-    ///
-    ///      `_requireUsable` additionally wants a `latestVersion`, which is the
-    ///      LEGACY dispatch's notion of a default. The ceremony path keeps its
-    ///      own Supported Version Set and names its version explicitly, so
-    ///      requiring the other one would make a deployment register a legacy
-    ///      verifier it never intends to use.
+    /// @dev The write path's gate: the keyspace exists, and nothing more. What
+    ///      may be claimed against it is the Proof Verifier's question, and it
+    ///      is asked there.
     function _requireConfigured(bytes32 platformId) private view returns (Platform memory platform) {
         platform = _s().platforms[platformId];
         if (!platform.configured) revert UnknownPlatform(platformId);
     }
 
-    function _requireNewer(uint64 observedAt, uint64 known) private pure {
-        if (observedAt <= known) revert StaleProof(observedAt, known);
+    /// @dev A resolver answers once the platform has both halves: a keyspace,
+    ///      and a way to verify. `configured` alone is not enough — between
+    ///      `setPlatform` and the first registered version a platform owns a
+    ///      keyspace and can verify nothing, and answering `address(0)` there
+    ///      would tell a caller "nobody holds this name" about a platform that
+    ///      is not wired yet.
+    function _requireUsable(bytes32 platformId) private view returns (Platform memory platform) {
+        platform = _requireConfigured(platformId);
+        // `everBound` first: it is a storage read the resolvers already make,
+        // and it settles every name already bound. "Can verify" moves, and
+        // governance retiring the last version of a platform must not stop
+        // those names resolving -- a name does not belong to the proof that
+        // established it.
+        //
+        // The Proof Verifier holds the Supported Version Set, so it is asked
+        // rather than mirrored. It is an external call, so it is asked only
+        // when the local answer says nothing.
+        if (_s().everBound[platformId]) return platform;
+
+        IProofVerifier pv = _s().proofVerifier;
+        if (address(pv) == address(0) || !pv.verifiesPlatform(platformId)) {
+            revert UnknownPlatform(platformId);
+        }
     }
 
-    /// @dev Refuse an observation dated further ahead than the platform allows.
-    ///
-    ///      This is what keeps a name recoverable. A binding is superseded only
-    ///      by a strictly newer `observedAt`, so a proof dated far enough ahead
-    ///      would make every honest later proof look stale and hold the name
-    ///      until the clock caught up. Proving again is the whole remedy for a
-    ///      name bound by somebody else, so it must not be possible to take
-    ///      that remedy away.
-    ///
-    ///      The allowance belongs to the VERSION because that is where the
-    ///      clock differs. A notary states wall-clock time, so its proofs are
-    ///      never ahead. An OIDC circuit exposes no `iat`, so the claim carries
-    ///      the token's `exp` — roughly an hour ahead of issuance. One number
-    ///      for both would either reject every OIDC binding or hand the notary
-    ///      version a griefing window it never needed, and the two can now be
-    ///      versions of ONE platform rather than two platforms.
-    ///
-    ///      What is checked here is the raw value the verifier reported. What
-    ///      is stored and compared is that value less this allowance — see
-    ///      `_onSharedScale`.
-    function _requireNotAhead(uint64 observedAt, uint64 allowance) private view {
-        uint64 limit = uint64(block.timestamp) + allowance;
-        if (observedAt > limit) revert ObservedInTheFuture(observedAt, limit);
+    function _requireNewer(uint64 observedAt, uint64 known) private pure {
+        if (observedAt <= known) revert StaleProof(observedAt, known);
     }
 
     // ─── Reading ────────────────────────────────────────────────────

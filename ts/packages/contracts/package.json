@@ -41,8 +41,7 @@
     "codegen:check": "node scripts/codegen.mjs --check",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "regen:fixtures": "tsx src/identity/fixtures/regen.ts"
+    "test": "vitest run"
   },
   "peerDependencies": {
     "viem": "^2.48.11"

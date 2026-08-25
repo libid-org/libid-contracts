@@ -13,56 +13,13 @@ import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
 import {HandleNormalizer} from "../HandleNormalizer.sol";
 import {IdentityNames} from "../IdentityNames.sol";
 import {IdentityNodes} from "../IdentityNodes.sol";
-
-/// @notice Stands in for a Platform Verifier. Everything it would check is
-///         covered by its own suite; here it only has to charge, answer, and
-///         let the Consumer's own duties be exercised.
-contract StubVerifier is IPlatformVerifier {
-    bytes32 private immutable PLATFORM;
-    uint256 public fee;
-    string public userId = "2244994945";
-    string public handle = "alice";
-    uint64 public observedAt = 1_770_000_000;
-    bytes32 public lastDigest;
-    uint256 public lastValue;
-
-    constructor(bytes32 platform, uint256 fee_) {
-        PLATFORM = platform;
-        fee = fee_;
-    }
-
-    function set(string memory u, string memory h) external {
-        userId = u;
-        handle = h;
-    }
-
-    function setObservedAt(uint64 t) external {
-        observedAt = t;
-    }
-
-    function platformId() external view returns (bytes32) {
-        return PLATFORM;
-    }
-
-    function quote() external view returns (uint256) {
-        return fee;
-    }
-
-    function verify(bytes32 digest, Submission calldata) external payable returns (PlatformFields memory f) {
-        lastDigest = digest;
-        lastValue = msg.value;
-        f.userId = userId;
-        f.handle = handle;
-        f.clientIdentifier = "client";
-        f.metadataObservedAt = observedAt;
-    }
-}
+import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
 
 /// @notice IdentityNames wearing the Proof Verifier and Consumer roles.
 contract CeremonyClaimTest is Test {
     IdentityNames names;
     CeremonyProofVerifier proofVerifier;
-    StubVerifier verifier;
+    StubPlatformVerifier verifier;
 
     address constant OWNER = address(0xA11CE);
     address constant WALLET = address(0xBEEF);
@@ -88,7 +45,7 @@ contract CeremonyClaimTest is Test {
                 maxLength: 15, stripLeadingAt: true, isEmail: false, allowUnderscore: true, allowHyphen: false
             })
         );
-        verifier = new StubVerifier(PLATFORM, FEE);
+        verifier = new StubPlatformVerifier(PLATFORM, FEE);
         proofVerifier.setVerifier(PLATFORM, 1, IPlatformVerifier(address(verifier)));
         vm.stopPrank();
         vm.deal(WALLET, 100 ether);
@@ -130,23 +87,21 @@ contract CeremonyClaimTest is Test {
 
     /// @dev Which OAuth client produced a binding is answerable only from the
     ///      call that wrote it -- nothing stores the value, and the contract
-    ///      has no use for it. So the log carries it, in the exact bytes the
-    ///      platform authenticated.
+    ///      has no use for it. So a ceremony logs it, in the exact bytes the
+    ///      platform authenticated, keyed by the digest that identifies the
+    ///      ceremony.
     function test_logsTheAuthenticatedClientIdentifier() public {
         vm.recordLogs();
         _claim(_submission(WALLET, bytes32(uint256(11))), FEE);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic =
-            keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32,bytes)");
+        bytes32 topic = keccak256("CeremonyBound(bytes32,address,bytes32,bytes)");
         for (uint256 i = logs.length; i > 0; i--) {
             if (logs[i - 1].topics[0] != topic) continue;
-            (,,,,,, bytes memory clientIdentifier) =
-                abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32, bytes));
-            assertEq(string(clientIdentifier), "client");
+            assertEq(string(abi.decode(logs[i - 1].data, (bytes))), "client");
             return;
         }
-        revert("no IdentityBound in the logs");
+        revert("no CeremonyBound in the logs");
     }
 
     function test_quotesAndForwardsTheWholePath() public {
@@ -235,7 +190,7 @@ contract CeremonyClaimTest is Test {
     /// @dev REQ-COMMON-05B: more than one version of one platform at a time, so
     ///      a deployment runs a new one beside the one it replaces.
     function test_supportsTwoVersionsAtOnce() public {
-        StubVerifier second = new StubVerifier(PLATFORM, FEE);
+        StubPlatformVerifier second = new StubPlatformVerifier(PLATFORM, FEE);
         second.set("999", "bob");
         vm.prank(OWNER);
         proofVerifier.setVerifier(PLATFORM, 2, IPlatformVerifier(address(second)));
@@ -249,15 +204,14 @@ contract CeremonyClaimTest is Test {
         assertEq(names.resolveHandle(PLATFORM, "bob"), WALLET);
     }
 
-    /// @dev Both Supported Version Sets count from one. Storing a ceremony v1
-    ///      as plain 1 would make "is anybody still on legacy v1" -- the
-    ///      question `retireVerifier` exists to answer -- count every ceremony
-    ///      binding, and the retirement would never come.
-    function test_aCeremonyVersionIsNotALegacyVersion() public {
+    /// @dev One Supported Version Set, so the stored version is the submitted
+    ///      one and nothing marks it. Whether anybody still depends on a
+    ///      version has to be answerable before retiring it, and this is the
+    ///      record that answers.
+    function test_theBindingRecordsTheVersionItWasClaimedAt() public {
         _claim(_submission(WALLET, bytes32(uint256(88))), FEE);
         (,, uint32 version) = names.byId(IdentityNodes.idNode(PLATFORM, "2244994945"));
-        assertTrue(version != 1, "a ceremony v1 must not read as legacy v1");
-        assertEq(version & 0x7fffffff, 1, "and it must still say which version");
+        assertEq(version, 1);
     }
 
     /// @dev CeremonyProofVerifier's own doc says removing a version "strands no
@@ -286,7 +240,7 @@ contract CeremonyClaimTest is Test {
     /// @dev A verifier for another platform in this platform's slot would
     ///      dispatch a submission to code that reads a different format.
     function test_refusesAVerifierForAnotherPlatform() public {
-        StubVerifier other = new StubVerifier(CeremonyProfile.PLATFORM_GITHUB, FEE);
+        StubPlatformVerifier other = new StubPlatformVerifier(CeremonyProfile.PLATFORM_GITHUB, FEE);
         vm.prank(OWNER);
         vm.expectRevert(
             abi.encodeWithSelector(

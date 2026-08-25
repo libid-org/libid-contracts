@@ -37,19 +37,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "MAX_FUTURE_OBSERVATION",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "UPGRADE_INTERFACE_VERSION",
     "inputs": [],
     "outputs": [
@@ -65,57 +52,6 @@ export const identityNamesAbi = [
     "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "bind",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "proof",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "publishName",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "bindAtVersion",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "proof",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "publishName",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -290,25 +226,6 @@ export const identityNamesAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "latestVersionOf",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -501,24 +418,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "retireVerifier",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "reverseOf",
     "inputs": [
       {
@@ -540,24 +439,6 @@ export const identityNamesAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setLatestVersion",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -619,34 +500,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "setVerifier",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "verifier",
-        "type": "address",
-        "internalType": "contract IIdentityVerifier"
-      },
-      {
-        "name": "maxFutureObservation",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -690,28 +543,35 @@ export const identityNamesAbi = [
     "stateMutability": "payable"
   },
   {
-    "type": "function",
-    "name": "verifierOf",
+    "type": "event",
+    "name": "CeremonyBound",
     "inputs": [
       {
-        "name": "platformId",
+        "name": "authorizationDigest",
         "type": "bytes32",
+        "indexed": true,
         "internalType": "bytes32"
       },
       {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
+        "name": "owner",
         "type": "address",
-        "internalType": "contract IIdentityVerifier"
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "platformId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "clientIdentifier",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
-    "stateMutability": "view"
+    "anonymous": false
   },
   {
     "type": "event",
@@ -795,12 +655,6 @@ export const identityNamesAbi = [
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
-      },
-      {
-        "name": "clientIdentifier",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -814,25 +668,6 @@ export const identityNamesAbi = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LatestVersionChanged",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -934,56 +769,6 @@ export const identityNamesAbi = [
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "VerifierConfigured",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "verifier",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "maxFutureObservation",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VerifierRetired",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AddressEmptyCode",
     "inputs": [
@@ -991,22 +776,6 @@ export const identityNamesAbi = [
         "name": "target",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "AllowanceTooLarge",
-    "inputs": [
-      {
-        "name": "allowance",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "max",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },
@@ -1096,17 +865,7 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
-    "name": "NoTarget",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoUserId",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoVerifier",
     "inputs": []
   },
   {
@@ -1127,22 +886,6 @@ export const identityNamesAbi = [
         "name": "caller",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ObservedInTheFuture",
-    "inputs": [
-      {
-        "name": "observedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "limit",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },
@@ -1218,38 +961,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "error",
-    "name": "UnknownVersion",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "VersionInUseAsLatest",
-    "inputs": [
-      {
-        "name": "platformId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "WrongClaimValue",
     "inputs": [
       {
@@ -1267,11 +978,6 @@ export const identityNamesAbi = [
   {
     "type": "error",
     "name": "ZeroAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroVersion",
     "inputs": []
   }
 ] as const satisfies Abi

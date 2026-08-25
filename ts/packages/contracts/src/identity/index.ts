@@ -6,7 +6,7 @@
 /// the generated ABIs in `../abis`, so this layer and the contracts cannot
 /// drift apart silently.
 
-export * from './bind.js'
+export * from './calls.js'
 export * from './handle.js'
 export * from './handleVectors.js'
 export * from './resolve.js'
