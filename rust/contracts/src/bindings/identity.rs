@@ -34,8 +34,33 @@ mod names_inner {
             /// version is that contract's call, not this one's.
             function setProofVerifier(address verifier) external;
             function proofVerifier() external view returns (address);
-            function INITIAL_VERSION() external view returns (uint32);
 
+            /// The ceremony records the Consumer takes, in `ICeremony`'s
+            /// declaration order -- the encoding depends on it.
+            struct Attestation {
+                bytes attestedData;
+                bytes signature;
+            }
+
+            struct Submission {
+                bytes32 platformId;
+                uint16 version;
+                bytes32 operationDomain;
+                bytes32 authorizationNonce;
+                bytes transactionData;
+                bytes32 pkceNonce;
+                bytes proof;
+                bytes32[] publicInputs;
+                Attestation[] attestations;
+                bytes clientIdentifier;
+            }
+
+            /// The one write. `submission` is the ceremony record of
+            /// ceremony-common section 5.1; the value attached must equal
+            /// `quoteClaim` for the same pair exactly.
+            function claim(Submission calldata submission, bool publishName) external payable;
+            function quoteClaim(bytes32 platformId, uint16 version) external view returns (uint256);
+            function digestSpent(bytes32 digest) external view returns (bool);
             function unpublish(bytes32 platformId) external;
             function resolveId(bytes32 platformId, string calldata userId) external view returns (address);
             function resolveHandle(bytes32 platformId, string calldata handle) external view returns (address);
@@ -45,9 +70,8 @@ mod names_inner {
 
             /// Carries the proof version that established the binding, which
             /// is how an operator learns whether a format is still in use
-            /// before retiring it, and the OAuth client the ceremony ran
-            /// under, which nothing else records. The client is empty on the
-            /// legacy path, which authenticates none.
+            /// before retiring it. What the ceremony authenticated beyond the
+            /// binding rides on `CeremonyBound` instead.
             event IdentityBound(
                 address indexed owner,
                 bytes32 indexed idNode,

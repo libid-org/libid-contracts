@@ -58,8 +58,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
-    /// @dev The last revealed range does not reach the signed transcript end.
-    error BodyNotAtTranscriptEnd(uint32 end, uint32 length);
 
     // ─── What a profile supplies ────────────────────────────────────
 

@@ -10,6 +10,7 @@ import {IdentityNames} from "../IdentityNames.sol";
 import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
 import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
 import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
+import {GooglePlatformVerifier} from "../../ceremony/GooglePlatformVerifier.sol";
 import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
 
 /// The deploy wires three platforms into one naming contract. A wrong rule set
@@ -78,7 +79,8 @@ contract IdentityDeployWiringTest is Test {
         address g = _wireIdentityPlatform(HandleVectors.PLATFORM_GOOGLE);
         vm.stopPrank();
 
-        uint16 v = uint16(names.INITIAL_VERSION());
+        // The version a deployment registers its first verifier under.
+        uint16 v = 1;
         assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_X, v)), x);
         assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_GITHUB, v)), gh);
         assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_GOOGLE, v)), g);
@@ -90,11 +92,34 @@ contract IdentityDeployWiringTest is Test {
         assertEq(names.resolveHandle(HandleVectors.PLATFORM_GOOGLE, "nobody@example.com"), address(0));
     }
 
+    /// The generated allowance is what a Platform Verifier must be initialized
+    /// with, and nothing else derives it. Without a reader the table drifts
+    /// silently: a verifier accepts any value up to its cap, so a
+    /// mis-typed allowance is taken without complaint and mis-orders every
+    /// cross-platform watermark from then on.
+    function test_everyGeneratedAllowanceIsOneAVerifierWillAccept() public {
+        // Read off a real verifier, not restated: a second copy of the cap
+        // is the drift this test exists to catch.
+        uint64 cap = new GooglePlatformVerifier().MAX_FUTURE_OBSERVATION_ALLOWANCE();
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X), cap, "X");
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB), cap, "GitHub");
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE), cap, "Google");
+
+        // And the ordering the numbers exist for: an OIDC claim carries the
+        // token's `exp` and reads about an hour ahead, a notarized observation
+        // is wall-clock and never is.
+        assertGt(
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),
+            HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X),
+            "an OIDC claim is dated ahead, a notarized one is not"
+        );
+    }
+
     /// The deploy script's wiring, mirrored. Both sides call one helper so this
     /// test cannot drift from the script it exists to prove.
     function _wireIdentityPlatform(bytes32 platformId) internal returns (address verifier) {
         names.setPlatform(platformId, HandleVectors.rulesFor(platformId));
         verifier = address(new StubPlatformVerifier(platformId, 0));
-        proofVerifier.setVerifier(platformId, uint16(names.INITIAL_VERSION()), IPlatformVerifier(verifier));
+        proofVerifier.setVerifier(platformId, 1, IPlatformVerifier(verifier));
     }
 }

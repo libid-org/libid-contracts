@@ -346,13 +346,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         __ReentrancyGuard_init();
     }
 
-    /// @notice The version a platform's first verifier is registered under.
-    ///
-    /// @dev Numbering starts at one because zero is the Proof Verifier's "no
-    ///      such version" sentinel. A version zero would be indistinguishable
-    ///      from a pair it does not serve.
-    uint32 public constant INITIAL_VERSION = 1;
-
     /// @notice Add a platform or change how its handles normalize.
     ///
     /// @dev Owner-managed, and this is the keyspace half: it says what a handle

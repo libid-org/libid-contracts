@@ -28,8 +28,6 @@ interface IHonkVerifier {
 ///      authoritative reader; a shared implementation would blur which role
 ///      owns what.
 abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
-    using CeremonyAttestation for bytes;
-
     /// @custom:storage-location erc7201:libid.storage.PlatformVerifier
     struct PlatformVerifierStorage {
         /// Authenticates an attestation and charges for it. Pinned by the
@@ -78,8 +76,7 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
 
     /// @notice Ceilings on the three governance parameters.
     ///
-    /// @dev Two jobs, the same two `IdentityNames.MAX_FUTURE_OBSERVATION` has.
-    ///      They keep each value meaningful -- the specification's own defaults
+    /// @dev Two jobs. They keep each value meaningful -- the specification's own defaults
     ///      are an hour, five minutes and an hour -- and they keep the verifier
     ///      from reverting on its own arithmetic. `blockTime + skew` and
     ///      `blockTime + allowance` are checked sums, so a value near
