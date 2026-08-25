@@ -201,18 +201,47 @@ export function validateTokenExchangeRequest(request: TokenExchangeRequestV1): v
   }
 }
 
+/// Canonical unpadded base64url: the alphabet, and no length a decoder cannot
+/// have produced. Four characters carry three bytes, so a remainder of one is
+/// unreachable.
+const BASE64URL_NOPAD = /^[A-Za-z0-9_-]+$/
+
 /// Bounded parsing, per REQ-PLAT-39.
+///
+/// The response is checked as strictly as the request. It arrives from the
+/// network, and everything downstream of it -- the bearer that goes into a
+/// circuit, the attestation a verifier decodes -- assumes the shape stated
+/// here. An empty or non-printable `accessToken` fails much later, inside the
+/// prover, where the reason is unrecoverable.
 export function validateTokenExchangeResponse(response: TokenExchangeResponseV1): void {
   if (response.schema !== 1) throw new TokenExchangeError(`unknown schema ${response.schema}`)
+  if (response.accessToken.length === 0) throw new TokenExchangeError('accessToken is empty')
   if (response.accessToken.length > MAX_GITHUB_ACCESS_TOKEN_BYTES) {
     throw new TokenExchangeError('accessToken is over the bound')
   }
+  // Non-empty printable ASCII with no CR and no LF (REQ-PLAT-30, REQ-PLAT-36,
+  // REQ-COMMON-37). That is also what makes the length above a byte count.
+  if (!/^[\x21-\x7e]+$/.test(response.accessToken)) {
+    throw new TokenExchangeError('accessToken carries a byte outside printable ASCII')
+  }
+  requireBase64Url(response.bearerOpening, 'bearerOpening')
+  requireBase64Url(response.tokenAttestation, 'tokenAttestation')
   // The bounds are on the DECODED lengths, so base64url expands by 4/3.
   if (decodedLength(response.bearerOpening) > MAX_GITHUB_BEARER_OPENING_BYTES) {
     throw new TokenExchangeError('bearerOpening is over the bound')
   }
   if (decodedLength(response.tokenAttestation) > MAX_GITHUB_TOKEN_ATTESTATION_BYTES) {
     throw new TokenExchangeError('tokenAttestation is over the bound')
+  }
+}
+
+function requireBase64Url(value: string, field: string): void {
+  if (value.length === 0) throw new TokenExchangeError(`${field} is empty`)
+  if (!BASE64URL_NOPAD.test(value)) {
+    throw new TokenExchangeError(`${field} is not unpadded base64url`)
+  }
+  if (value.length % 4 === 1) {
+    throw new TokenExchangeError(`${field} has a length no encoder produces`)
   }
 }
 

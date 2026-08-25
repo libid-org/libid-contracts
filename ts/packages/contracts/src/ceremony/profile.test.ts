@@ -140,7 +140,9 @@ describe('token exchange', () => {
   })
 
   it('accepts a 256-byte opening, which is the bound', () => {
-    const opening = 'A'.repeat((256 / 3) * 4) // 256 bytes decodes from 344 chars
+    // 342 characters is what 256 bytes encodes to: 85 whole groups and a
+    // remainder of two, which carries one byte.
+    const opening = 'A'.repeat(342)
     expect(() =>
       validateTokenExchangeResponse({
         schema: 1,
@@ -149,5 +151,51 @@ describe('token exchange', () => {
         bearerOpening: opening,
       }),
     ).not.toThrow()
+  })
+
+  // The response arrives from the network and is checked as strictly as the
+  // request. Every one of these failed much later before -- inside the prover,
+  // or inside a verifier decoding the attestation -- where the reason is gone.
+  const goodResponse = {
+    schema: 1,
+    accessToken: 'gho_16C7e42F292c6912E7710c838347Ae178B4a',
+    tokenAttestation: 'AAAA',
+    bearerOpening: 'AAAA',
+  } as const
+
+  it('rejects an empty accessToken', () => {
+    expect(() => validateTokenExchangeResponse({ ...goodResponse, accessToken: '' })).toThrow(
+      /accessToken is empty/,
+    )
+  })
+
+  it('rejects an accessToken outside printable ASCII', () => {
+    for (const token of ['gho_ab\r\ncd', 'gho_ab cd', 'gho_ab\u00e9']) {
+      expect(() => validateTokenExchangeResponse({ ...goodResponse, accessToken: token })).toThrow(
+        /printable ASCII/,
+      )
+    }
+  })
+
+  it('rejects base64url fields outside the alphabet', () => {
+    expect(() =>
+      validateTokenExchangeResponse({ ...goodResponse, tokenAttestation: 'AA+/' }),
+    ).toThrow(/tokenAttestation is not unpadded base64url/)
+    expect(() => validateTokenExchangeResponse({ ...goodResponse, bearerOpening: 'AAA=' })).toThrow(
+      /bearerOpening is not unpadded base64url/,
+    )
+  })
+
+  it('rejects a base64url length no encoder produces', () => {
+    // Four characters carry three bytes, so a remainder of one is unreachable.
+    expect(() =>
+      validateTokenExchangeResponse({ ...goodResponse, tokenAttestation: 'AAAAA' }),
+    ).toThrow(/length no encoder produces/)
+  })
+
+  it('rejects empty base64url fields', () => {
+    expect(() => validateTokenExchangeResponse({ ...goodResponse, bearerOpening: '' })).toThrow(
+      /bearerOpening is empty/,
+    )
   })
 })
