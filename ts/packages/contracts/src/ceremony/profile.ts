@@ -16,10 +16,25 @@
 
 import { type Hex, keccak256 } from 'viem'
 
-const tag = (s: string): Hex => keccak256(new TextEncoder().encode(s))
+import {
+  ALLOW_HYPHEN_GITHUB,
+  ALLOW_HYPHEN_GOOGLE,
+  ALLOW_HYPHEN_X,
+  ALLOW_UNDERSCORE_GITHUB,
+  ALLOW_UNDERSCORE_GOOGLE,
+  ALLOW_UNDERSCORE_X,
+  IS_EMAIL_GITHUB,
+  IS_EMAIL_GOOGLE,
+  IS_EMAIL_X,
+  MAX_LENGTH_GITHUB,
+  MAX_LENGTH_GOOGLE,
+  MAX_LENGTH_X,
+  STRIP_LEADING_AT_GITHUB,
+  STRIP_LEADING_AT_GOOGLE,
+  STRIP_LEADING_AT_X,
+} from '../identity/handleVectors.js'
 
-/// Names the attested-data layout and its version (REQ-COMMON-53).
-/// Which session of the ceremony an attestation covers (REQ-COMMON-55).
+const tag = (s: string): Hex => keccak256(new TextEncoder().encode(s))
 
 /// How a profile binds the Authorization Digest to its evidence — exactly one
 /// of the two, never both and never neither (REQ-COMMON-02C).
@@ -67,12 +82,15 @@ export const GOOGLE_V1: PlatformProfile = {
   platformId: tag('google'),
   platformVerifierVersion: 1,
   digestBinding: 'public-proof-input',
+  // Read from the generated table, never restated. `handles.json` is the
+  // one source; a second copy here would drift and the browser would
+  // normalize to a node the chain never writes.
   handle: {
-    maxLength: 62,
-    stripLeadingAt: false,
-    isEmail: true,
-    allowUnderscore: false,
-    allowHyphen: false,
+    maxLength: MAX_LENGTH_GOOGLE,
+    stripLeadingAt: STRIP_LEADING_AT_GOOGLE,
+    isEmail: IS_EMAIL_GOOGLE,
+    allowUnderscore: ALLOW_UNDERSCORE_GOOGLE,
+    allowHyphen: ALLOW_HYPHEN_GOOGLE,
   },
 }
 
@@ -92,12 +110,15 @@ export const X_V1: PlatformProfile = {
     method: 'GET',
     path: '/2/users/me',
   },
+  // Read from the generated table, never restated. `handles.json` is the
+  // one source; a second copy here would drift and the browser would
+  // normalize to a node the chain never writes.
   handle: {
-    maxLength: 15,
-    stripLeadingAt: true,
-    isEmail: false,
-    allowUnderscore: true,
-    allowHyphen: false,
+    maxLength: MAX_LENGTH_X,
+    stripLeadingAt: STRIP_LEADING_AT_X,
+    isEmail: IS_EMAIL_X,
+    allowUnderscore: ALLOW_UNDERSCORE_X,
+    allowHyphen: ALLOW_HYPHEN_X,
   },
 }
 
@@ -119,12 +140,15 @@ export const GITHUB_V1: PlatformProfile = {
     method: 'GET',
     path: '/user',
   },
+  // Read from the generated table, never restated. `handles.json` is the
+  // one source; a second copy here would drift and the browser would
+  // normalize to a node the chain never writes.
   handle: {
-    maxLength: 39,
-    stripLeadingAt: true,
-    isEmail: false,
-    allowUnderscore: false,
-    allowHyphen: true,
+    maxLength: MAX_LENGTH_GITHUB,
+    stripLeadingAt: STRIP_LEADING_AT_GITHUB,
+    isEmail: IS_EMAIL_GITHUB,
+    allowUnderscore: ALLOW_UNDERSCORE_GITHUB,
+    allowHyphen: ALLOW_HYPHEN_GITHUB,
   },
 }
 
@@ -161,6 +185,9 @@ export const GITHUB_CODE_VERIFIER_LEN = 43
 export const MAX_GITHUB_ACCESS_TOKEN_BYTES = 4096
 export const MAX_GITHUB_BEARER_OPENING_BYTES = 256
 export const MAX_GITHUB_TOKEN_ATTESTATION_BYTES = 2 * 1024 * 1024
+/// The whole response body, which a transport bounds before this module ever
+/// parses it (REQ-PLAT-39). Exported so a server or a fetch wrapper can apply
+/// it; `validateTokenExchangeResponse` bounds the fields, not the envelope.
 export const MAX_GITHUB_TOKEN_EXCHANGE_RESPONSE_BYTES = 3 * 1024 * 1024
 
 export interface TokenExchangeRequestV1 {

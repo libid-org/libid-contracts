@@ -36,7 +36,12 @@ library CeremonyFields {
     enum Found {
         None,
         One,
-        Several
+        Several,
+        /// The delimiter is here, but the value has no end inside this range.
+        /// A caller scanning range by range treats it as `None` -- a value
+        /// with no established extent is one it must not read, and splicing
+        /// the rest out of a neighbouring range is what these reads forbid.
+        Unterminated
     }
 
     /// @notice `jsonString`, reporting instead of reverting.
@@ -62,7 +67,7 @@ library CeremonyFields {
         // A value with no closing quote inside THIS range has no established
         // extent, and splicing the rest from a neighbouring range is exactly
         // what these reads must not do.
-        if (end == data.length) return (Found.None, "");
+        if (end == data.length) return (Found.Unterminated, "");
 
         value = new bytes(end - at);
         for (uint256 i = 0; i < value.length; ++i) {
@@ -120,49 +125,28 @@ library CeremonyFields {
     }
 
     /// @notice The value of `"name":"value"`, by its full delimiter.
+    /// @notice `tryJsonString`, with the outcome expressed as a revert.
+    ///
+    /// @dev A mapping, not a second implementation. The extraction rules --
+    ///      where a value ends, what terminates an integer, whether a leading
+    ///      zero is canonical -- are security-relevant and belong in one copy,
+    ///      or a fix applied to one leaves the other passing its tests while
+    ///      the live path is wrong.
     function jsonString(bytes memory data, string memory name) internal pure returns (bytes memory value) {
-        bytes memory needle = abi.encodePacked('"', name, '":"');
-        uint256 at = _uniqueMatch(data, needle, name) + needle.length;
-
-        uint256 end = at;
-        while (end < data.length && data[end] != '"') {
-            ++end;
-        }
-        if (end == data.length) revert UnterminatedField(name);
-
-        value = new bytes(end - at);
-        for (uint256 i = 0; i < value.length; ++i) {
-            value[i] = data[at + i];
-        }
+        (Found found, bytes memory v) = tryJsonString(data, name);
+        if (found == Found.Several) revert AmbiguousField(name);
+        if (found == Found.Unterminated) revert UnterminatedField(name);
+        if (found == Found.None) revert FieldNotFound(name);
+        return v;
     }
 
-    /// @notice The digits of `"name":123`, with the structural byte after them.
-    ///
-    /// @dev The profile fixes that byte as `,` or `}` and no other
-    ///      (REQ-PLAT-51). JSON member order does not say which one closes the
-    ///      field, so both are accepted and nothing else is.
+    /// @notice The same, for a bare JSON integer.
     function jsonInteger(bytes memory data, string memory name) internal pure returns (bytes memory digits) {
-        bytes memory needle = abi.encodePacked('"', name, '":');
-        uint256 at = _uniqueMatch(data, needle, name) + needle.length;
-
-        uint256 end = at;
-        while (end < data.length && data[end] >= "0" && data[end] <= "9") {
-            ++end;
-        }
-        if (end == at) revert NoncanonicalInteger(name);
-        // A canonical unsigned integer is `0` or has no leading zero. A quoted,
-        // signed, fractional or exponent form never reaches here: the first
-        // byte would not be a digit, or the terminator check below refuses it.
-        if (end - at > 1 && data[at] == "0") revert NoncanonicalInteger(name);
-        if (end == data.length) revert UnterminatedField(name);
-        if (data[end] != "," && data[end] != "}") {
-            revert BadIntegerTerminator(name, data[end]);
-        }
-
-        digits = new bytes(end - at);
-        for (uint256 i = 0; i < digits.length; ++i) {
-            digits[i] = data[at + i];
-        }
+        (Found found, bytes memory v) = tryJsonInteger(data, name);
+        if (found == Found.Several) revert AmbiguousField(name);
+        if (found == Found.Unterminated) revert UnterminatedField(name);
+        if (found == Found.None) revert FieldNotFound(name);
+        return v;
     }
 
     /// @notice The value of `name=value` in an `application/x-www-form-urlencoded`
@@ -213,21 +197,6 @@ library CeremonyFields {
             if (!ok) return false;
         }
         return true;
-    }
-
-    function _uniqueMatch(bytes memory data, bytes memory needle, string memory name)
-        private
-        pure
-        returns (uint256 at)
-    {
-        uint256 found = type(uint256).max;
-        for (uint256 i = 0; i + needle.length <= data.length; ++i) {
-            if (!_matchesAt(data, needle, i)) continue;
-            if (found != type(uint256).max) revert AmbiguousField(name);
-            found = i;
-        }
-        if (found == type(uint256).max) revert FieldNotFound(name);
-        return found;
     }
 
     function _matchesAt(bytes memory data, bytes memory needle, uint256 at) private pure returns (bool) {

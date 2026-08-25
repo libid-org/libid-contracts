@@ -109,8 +109,9 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
 
         // The digest is computed HERE, from the bytes the caller passed, and
         // never accepted from the caller. This one line is the whole point of
-        // the contract.
-        bytes32 digest = keccak256(attestedData);
+        // the contract -- and it goes through the library that owns the format,
+        // so what is signed is stated in one place rather than two.
+        bytes32 digest = CeremonyAttestation.digest(attestedData);
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
 
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, signature);

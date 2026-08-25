@@ -229,7 +229,7 @@ library CeremonyAttestation {
         // `authorization:\r\nbearer`, because normalization strips the space
         // but keeps the CRLF the fold introduced. The header is then never
         // counted, and a server honouring the fold authenticates with it.
-        bytes memory revealed = _concatRevealed(block_);
+        bytes memory revealed = concatRevealed(block_);
         for (uint256 i = 0; i + 2 < revealed.length; ++i) {
             if (revealed[i] == 0x0d && revealed[i + 1] == 0x0a && (revealed[i + 2] == 0x20 || revealed[i + 2] == 0x09))
             {
@@ -261,9 +261,12 @@ library CeremonyAttestation {
         // Reading a VALUE stays per range -- see `_uniqueJsonString`. Counting
         // and reading want opposite things: a count must not miss, a read must
         // not splice.
-        if (_countNeedle(_normalizeHeaderBytes(revealed)) != 1) {
-            revert NotOneAuthorizationHeader(_countNeedle(_normalizeHeaderBytes(revealed)));
-        }
+        // Counted once. Filling the error argument with a second call would
+        // copy the whole revealed transcript again and rescan it, so every
+        // rejected submission would pay twice for the check that rejected it --
+        // on a buffer the prover sizes.
+        uint256 headers = _countNeedle(_normalizeHeaderBytes(revealed));
+        if (headers != 1) revert NotOneAuthorizationHeader(headers);
 
         // Framing, on RAW bytes at known offsets. Two fixed comparisons make
         // the committed range one header line's value by construction.
@@ -310,7 +313,13 @@ library CeremonyAttestation {
         }
     }
 
-    function _concatRevealed(DirectionBlock memory block_) private pure returns (bytes memory out) {
+    /// @notice The revealed bytes of one direction, in offset order.
+    ///
+    /// @dev `internal` so a verifier joins once and passes the result down,
+    ///      rather than each scan rebuilding it. A join is security-relevant --
+    ///      it is what a cross-range COUNT reads, where a seam may only
+    ///      over-count -- so one implementation of it, not two.
+    function concatRevealed(DirectionBlock memory block_) internal pure returns (bytes memory out) {
         uint256 total;
         for (uint256 i = 0; i < block_.revealed.length; ++i) {
             total += block_.revealed[i].value.length;

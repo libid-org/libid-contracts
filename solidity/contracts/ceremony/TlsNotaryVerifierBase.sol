@@ -53,13 +53,13 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The first revealed range does not begin the transcript, so nothing
     ///      says the bytes read as a request line ARE the request line.
     error RequestLineNotAtOrigin(uint32 start);
-    /// @dev The last revealed range does not reach the signed transcript end.
-    error BodyNotAtTranscriptEnd(uint32 end, uint32 length);
     /// @dev The token request does not have the exact shape the profile fixes.
     error WrongTokenRequestLayout(uint256 revealedRanges, uint256 commitments);
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
+    /// @dev The last revealed range does not reach the signed transcript end.
+    error BodyNotAtTranscriptEnd(uint32 end, uint32 length);
 
     // ─── What a profile supplies ────────────────────────────────────
 
@@ -116,23 +116,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      to reject becomes invisible to it. So the value is read per range
     ///      and the occurrences are counted over the concatenation -- where a
     ///      seam can only over-count, which fails closed.
-    function _delimiterCount(CeremonyAttestation.DirectionBlock memory block_, bytes memory delimiter)
-        private
-        pure
-        returns (uint256 count)
-    {
-        uint256 total;
-        for (uint256 i = 0; i < block_.revealed.length; ++i) {
-            total += block_.revealed[i].value.length;
-        }
-        bytes memory joined = new bytes(total);
-        uint256 at;
-        for (uint256 i = 0; i < block_.revealed.length; ++i) {
-            bytes memory v = block_.revealed[i].value;
-            for (uint256 j = 0; j < v.length; ++j) {
-                joined[at++] = v[j];
-            }
-        }
+    function _delimiterCount(bytes memory joined, bytes memory delimiter) private pure returns (uint256 count) {
         for (uint256 i = 0; i + delimiter.length <= joined.length; ++i) {
             bool hit = true;
             for (uint256 j = 0; j < delimiter.length; ++j) {
@@ -158,11 +142,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      Requiring the whole match to sit inside one authenticated range
     ///      means every byte of it came from one contiguous run the notary
     ///      signed, at the offsets it signed them at.
-    function _uniqueJsonString(CeremonyAttestation.DirectionBlock memory block_, string memory name)
-        private
-        pure
-        returns (bytes memory value)
-    {
+    function _uniqueJsonString(
+        CeremonyAttestation.DirectionBlock memory block_,
+        bytes memory joined,
+        string memory name
+    ) private pure returns (bytes memory value) {
         uint256 matches;
         for (uint256 i = 0; i < block_.revealed.length; ++i) {
             (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonString(block_.revealed[i].value, name);
@@ -175,16 +159,16 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         if (matches != 1) revert FieldNotUnique(name, matches);
         // And the delimiter appears once across the whole revealed set, so a
         // second copy cannot hide under a range boundary.
-        uint256 seen = _delimiterCount(block_, abi.encodePacked('"', name, '":"'));
+        uint256 seen = _delimiterCount(joined, abi.encodePacked('"', name, '":"'));
         if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
     /// @dev The same, for a bare JSON integer.
-    function _uniqueJsonInteger(CeremonyAttestation.DirectionBlock memory block_, string memory name)
-        private
-        pure
-        returns (bytes memory digits)
-    {
+    function _uniqueJsonInteger(
+        CeremonyAttestation.DirectionBlock memory block_,
+        bytes memory joined,
+        string memory name
+    ) private pure returns (bytes memory digits) {
         uint256 matches;
         for (uint256 i = 0; i < block_.revealed.length; ++i) {
             (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonInteger(block_.revealed[i].value, name);
@@ -195,7 +179,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             }
         }
         if (matches != 1) revert FieldNotUnique(name, matches);
-        uint256 seen = _delimiterCount(block_, abi.encodePacked('"', name, '":'));
+        uint256 seen = _delimiterCount(joined, abi.encodePacked('"', name, '":'));
         if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
@@ -338,13 +322,16 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // field and reveal the one it chose -- and every reader below scans
         // revealed bytes, so the committed one is invisible to all of them.
         CeremonyAttestation.requireFullyRevealed(data.received, data.recvTranscriptLength);
+        // Joined once, for both readers. The join is what a cross-range COUNT
+        // reads; the per-range values are what a READ reads.
+        bytes memory joined = CeremonyAttestation.concatRevealed(data.received);
         (string memory idField, IdShape idShape, string memory handleField) = _identityFields();
         fields.userId = string(
             idShape == IdShape.JsonString
-                ? _uniqueJsonString(data.received, idField)
-                : _uniqueJsonInteger(data.received, idField)
+                ? _uniqueJsonString(data.received, joined, idField)
+                : _uniqueJsonInteger(data.received, joined, idField)
         );
-        fields.handle = string(_uniqueJsonString(data.received, handleField));
+        fields.handle = string(_uniqueJsonString(data.received, joined, handleField));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
