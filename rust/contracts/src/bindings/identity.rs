@@ -63,7 +63,9 @@ mod names_inner {
 
             /// Carries the proof version that established the binding, which
             /// is how an operator learns whether a format is still in use
-            /// before retiring it.
+            /// before retiring it, and the OAuth client the ceremony ran
+            /// under, which nothing else records. The client is empty on the
+            /// legacy path, which authenticates none.
             event IdentityBound(
                 address indexed owner,
                 bytes32 indexed idNode,
@@ -73,7 +75,8 @@ mod names_inner {
                 string handle,
                 uint64 observedAt,
                 bool published,
-                uint32 version
+                uint32 version,
+                bytes clientIdentifier
             );
             event HandleRetired(bytes32 indexed platformId, bytes32 indexed handleNode, address indexed owner);
             event PlatformConfigured(bytes32 indexed platformId);

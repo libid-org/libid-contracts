@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {CeremonyAuthorization} from "../../ceremony/CeremonyAuthorization.sol";
@@ -126,6 +126,27 @@ contract CeremonyClaimTest is Test {
             s.operationDomain, s.version, proofVerifier.chainId(), s.authorizationNonce, s.transactionData
         );
         assertEq(verifier.lastDigest(), expected);
+    }
+
+    /// @dev Which OAuth client produced a binding is answerable only from the
+    ///      call that wrote it -- nothing stores the value, and the contract
+    ///      has no use for it. So the log carries it, in the exact bytes the
+    ///      platform authenticated.
+    function test_logsTheAuthenticatedClientIdentifier() public {
+        vm.recordLogs();
+        _claim(_submission(WALLET, bytes32(uint256(11))), FEE);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic =
+            keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32,bytes)");
+        for (uint256 i = logs.length; i > 0; i--) {
+            if (logs[i - 1].topics[0] != topic) continue;
+            (,,,,,, bytes memory clientIdentifier) =
+                abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32, bytes));
+            assertEq(string(clientIdentifier), "client");
+            return;
+        }
+        revert("no IdentityBound in the logs");
     }
 
     function test_quotesAndForwardsTheWholePath() public {

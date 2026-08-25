@@ -288,6 +288,14 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      `version` names the proof format that established the binding. It
     ///      is what tells an operator whether a version is still in use, and
     ///      therefore whether retiring it would strand anybody.
+    ///
+    ///      `clientIdentifier` names the OAuth client the ceremony ran under,
+    ///      in the exact bytes the platform authenticated. The contract has no
+    ///      use for it -- the digest already binds the transaction -- but an
+    ///      operator answering "which application produced these bindings"
+    ///      after the fact has no other source, and the value exists only
+    ///      inside the call that writes the binding. It is empty on the legacy
+    ///      path, which authenticates no client.
     event IdentityBound(
         address indexed owner,
         bytes32 indexed idNode,
@@ -297,7 +305,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         string handle,
         uint64 observedAt,
         bool published,
-        uint32 version
+        uint32 version,
+        bytes clientIdentifier
     );
 
     /// @notice A handle stopped resolving because the account that held it
@@ -593,7 +602,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             attested.observedAt,
             slot.maxFutureObservation,
             publishName,
-            platform
+            platform,
+            // The legacy path authenticates no OAuth client.
+            ""
         );
     }
 
@@ -681,7 +692,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             // claim below every legacy one.
             0,
             publishName,
-            platform
+            platform,
+            claimed.clientIdentifier
         );
     }
 
@@ -730,7 +742,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         uint64 rawObservedAt,
         uint64 futureAllowance,
         bool publishName,
-        Platform memory platform
+        Platform memory platform,
+        bytes memory clientIdentifier
     ) private {
         // This platform has now verified something, and no later retirement of
         // its versions makes that untrue. The resolvers read it so a name
@@ -788,7 +801,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             _s().published[msg.sender][platformId] = handle;
         }
 
-        emit IdentityBound(msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version);
+        emit IdentityBound(
+            msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version, clientIdentifier
+        );
     }
 
     /// @dev Stop resolving the handle this account used to hold.

@@ -448,21 +448,36 @@ contract IdentityNamesTest is Test {
         assertTrue(_lastBindPublished(), "the flag was false, the name is still on display");
     }
 
-    /// The `published` flag and the proof version out of the last
-    /// `IdentityBound` in the recorded logs.
-    function _lastBind() internal returns (bool published, uint32 version) {
+    /// The `published` flag, the proof version and the client identifier out of
+    /// the last `IdentityBound` in the recorded logs.
+    function _lastBind() internal returns (bool published, uint32 version, bytes memory clientIdentifier) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32)");
+        bytes32 topic =
+            keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32,bytes)");
         for (uint256 i = logs.length; i > 0; i--) {
             if (logs[i - 1].topics[0] != topic) continue;
-            (,,,, published, version) = abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32));
-            return (published, version);
+            (,,,, published, version, clientIdentifier) =
+                abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32, bytes));
+            return (published, version, clientIdentifier);
         }
         revert("no IdentityBound in the logs");
     }
 
     function _lastBindPublished() internal returns (bool published) {
-        (published,) = _lastBind();
+        (published,,) = _lastBind();
+    }
+
+    /// @dev The legacy path authenticates no OAuth client, so the field is
+    ///      there and empty rather than absent -- one event shape for both
+    ///      paths, which is what lets an indexer read them together.
+    function test_theLegacyPathLogsNoClientIdentifier() public {
+        verifier.stage("123", "alice", alice, 100);
+        vm.recordLogs();
+        vm.prank(alice);
+        names.bind(X, hex"", false);
+
+        (,, bytes memory clientIdentifier) = _lastBind();
+        assertEq(clientIdentifier.length, 0);
     }
 
     /// One wallet's withdrawal is its own. There is no path to another's.
@@ -716,7 +731,7 @@ contract IdentityNamesTest is Test {
         assertEq(idVersion, 2, "the id node");
         assertEq(handleVersion, 2, "the handle node");
 
-        (, uint32 logged) = _lastBind();
+        (, uint32 logged,) = _lastBind();
         assertEq(logged, 2, "and the log an indexer reads");
     }
 
