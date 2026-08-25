@@ -14,6 +14,9 @@ import {XHonkVerifier} from "../contracts/login/zk/XHonkVerifier.sol";
 import {XZkVerifier, IHonkVerifier} from "../contracts/login/zk/XZkVerifier.sol";
 import {IZkSessionVerifier} from "../contracts/login/zk/IZkSessionVerifier.sol";
 import {IdentityNames} from "../contracts/identity/IdentityNames.sol";
+import {NotaryService} from "../contracts/ceremony/NotaryService.sol";
+import {CeremonyProofVerifier} from "../contracts/ceremony/CeremonyProofVerifier.sol";
+import {IProofVerifier} from "../contracts/ceremony/IProofVerifier.sol";
 import {HandleVectors} from "../contracts/identity/HandleVectors.sol";
 import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
 
@@ -151,9 +154,30 @@ contract Deploy is Script, BankDiamondDeployer {
             address(new ERC1967Proxy(address(namesImpl), abi.encodeCall(IdentityNames.initialize, (deployer))));
         IdentityNames names = IdentityNames(identityNamesAddr);
 
-        // A keyspace per platform, and nothing more. Wiring a verifier is
-        // `CeremonyProofVerifier.setVerifier`, and a Platform Verifier needs
-        // the ceremony circuit's artifact and its code hash -- neither of which
+        // The ceremony core the Consumer dispatches through. Without it
+        // `proofVerifier` reads zero, `quoteClaim` calls address zero and every
+        // resolver reverts `UnknownPlatform` -- a deployment that can bind
+        // nothing.
+        //
+        // The Notary Service is separate from `Notary` above and must be: that
+        // one takes a caller-supplied digest, which REQ-COMMON-49 forbids. Both
+        // are trusted with the same signing key.
+        NotaryService notaryServiceImpl = new NotaryService();
+        address notaryServiceAddr = address(
+            new ERC1967Proxy(
+                address(notaryServiceImpl),
+                abi.encodeCall(NotaryService.initialize, (deployer, notaryAddr, vm.envOr("NOTARY_FEE_WEI", uint256(0))))
+            )
+        );
+
+        CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
+        address proofVerifierAddr =
+            address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (deployer))));
+        names.setProofVerifier(IProofVerifier(proofVerifierAddr));
+
+        // A keyspace per platform. Registering a Platform Verifier against a
+        // version is `CeremonyProofVerifier.setVerifier`, and one needs the
+        // ceremony circuit's artifact and its code hash -- neither of which
         // this script has until that release lands.
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_X);
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_GITHUB);
@@ -182,10 +206,13 @@ contract Deploy is Script, BankDiamondDeployer {
         console.log("XHonkVerifier:          ", address(xHonk));
         console.log("XZkVerifier:            ", xZkVerifierAddr);
         console.log("IDENTITY_NAMES_ADDRESS= ", identityNamesAddr);
+        console.log("NOTARY_SERVICE_ADDRESS= ", notaryServiceAddr);
+        console.log("CEREMONY_PROOF_VERIFIER_ADDRESS= ", proofVerifierAddr);
         console.log("IDENTITY_JWKS_ROOTS_ADDRESS= ", jwksRootsAddr);
-        console.log("NOTE: no Platform Verifier is wired. Register one with");
+        console.log("NOTE: no Platform Verifier is registered yet. Add one with");
         console.log("      CeremonyProofVerifier.setVerifier once the ceremony");
-        console.log("      circuit artifacts are released.");
+        console.log("      circuit artifacts are released. Until then a platform");
+        console.log("      owns its keyspace and can verify nothing.");
         // Nothing is trusted until a notarized reading of Google's JWKS lands.
         // Until then every Google claim reverts `UntrustedModulus`, which reads
         // as a bad proof rather than an unseeded list.
