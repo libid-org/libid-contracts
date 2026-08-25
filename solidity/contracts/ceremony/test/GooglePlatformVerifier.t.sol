@@ -245,6 +245,50 @@ contract GooglePlatformVerifierTest is Test {
         this.run(s);
     }
 
+    /// @dev The audience hash arrives as two halves, and only the high one is
+    ///      shifted. So an over-wide LOW half alone reproduces any 256-bit
+    ///      value -- here the true hash of a client identifier the prover
+    ///      never held -- and the audience check passes for free. The contract
+    ///      cannot see the circuit's range constraints, so it states its own.
+    function test_rejectsAnOverwideLowAudienceHalf() public {
+        ICeremony.Submission memory s = _submission();
+        bytes32 aud = sha256(CLIENT_ID);
+        s.publicInputs[32] = bytes32(0);
+        s.publicInputs[33] = aud;
+        vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
+        this.run(s);
+    }
+
+    /// @dev The high half is shifted, so bits above its 128th fall off the top
+    ///      and many values agree. Same rule, same reason.
+    function test_rejectsAnOverwideHighAudienceHalf() public {
+        ICeremony.Submission memory s = _submission();
+        s.publicInputs[32] = bytes32(uint256(s.publicInputs[32]) | (uint256(1) << 128));
+        vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
+        this.run(s);
+    }
+
+    // ─── The packed identity fields ─────────────────────────────────
+
+    /// @dev `_unpack` reads 31 bytes of a field element and drops whatever
+    ///      sits above them in silence. Dropped, the `sub` this returns is not
+    ///      the one the circuit proved -- so a binding would be anchored on an
+    ///      id nothing attested.
+    function test_rejectsAnOverwideUserIdField() public {
+        ICeremony.Submission memory s = _submission();
+        s.publicInputs[34] = bytes32(uint256(s.publicInputs[34]) | (uint256(1) << 248));
+        vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
+        this.run(s);
+    }
+
+    /// @dev The email is two such elements, and the same silence covers both.
+    function test_rejectsAnOverwideEmailField() public {
+        ICeremony.Submission memory s = _submission();
+        s.publicInputs[36] = bytes32(uint256(s.publicInputs[36]) | (uint256(1) << 248));
+        vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
+        this.run(s);
+    }
+
     // ─── The trusted modulus ────────────────────────────────────────
 
     /// @dev REQ-PLAT-23. The circuit exposes the modulus that verified the JWS

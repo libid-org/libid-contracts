@@ -76,6 +76,8 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     error EmptyUserId();
     /// @dev A public input the circuit declares as a byte carried more.
     error PublicInputNotAByte(uint256 index, uint256 value);
+    /// @dev A packed public input carries more bits than its slot reads.
+    error PublicInputOverwide(uint256 index, uint256 value, uint256 bits);
     /// @dev The signed expiry does not fit the width every timestamp uses.
     error ExpiryNotAUint64(uint256 value);
 
@@ -207,6 +209,18 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     function _audienceFromInputs(bytes32[] calldata publicInputs) private pure returns (bytes32) {
         uint256 high = uint256(publicInputs[OFF_AUDIENCE]);
         uint256 low = uint256(publicInputs[OFF_AUDIENCE + 1]);
+        // Each half must fit the 128 bits it stands for, and the reason is the
+        // same one `_digestFromInputs` states: this contract cannot see the
+        // circuit's range constraints, so it does not rest on them.
+        //
+        // The failure is not cosmetic. `high` is shifted, so bits above its
+        // 128th fall off the top and several `high` values agree. `low` is
+        // NOT shifted, so bits above its 128th land in the high half -- one
+        // over-wide `low` alone can produce any 256-bit result, which is a
+        // free match against the audience hash and a token minted for another
+        // client identifier accepted as this one.
+        if (high >> 128 != 0) revert PublicInputOverwide(OFF_AUDIENCE, high, 128);
+        if (low >> 128 != 0) revert PublicInputOverwide(OFF_AUDIENCE + 1, low, 128);
         return bytes32((high << 128) | low);
     }
 
@@ -222,6 +236,11 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         bytes memory full = new bytes(count * 31);
         for (uint256 f = 0; f < count; ++f) {
             uint256 v = uint256(publicInputs[offset + f]);
+            // A field element holds more than the 31 bytes read below, and
+            // whatever sits above them is dropped in silence -- so the `sub`
+            // or the email this returns would not be the one the circuit
+            // proved. Refuse instead (REQ-COMMON-28 in spirit: no truncation).
+            if (v >> 248 != 0) revert PublicInputOverwide(offset + f, v, 248);
             for (uint256 i = 0; i < 31; ++i) {
                 full[f * 31 + (30 - i)] = bytes1(uint8(v >> (8 * i)));
             }
