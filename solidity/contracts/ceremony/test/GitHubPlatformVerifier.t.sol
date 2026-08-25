@@ -106,7 +106,9 @@ contract GitHubPlatformVerifierTest is Test {
             length: secretEnd
         });
 
+        bytes memory status = "HTTP/1.1 200 OK";
         bytes memory anchor = '"access_token":"';
+        uint32 statusEnd = uint32(status.length);
         uint32 headEnd = 17;
         uint32 anchorEnd = headEnd + uint32(anchor.length);
         uint32 bearerEnd = anchorEnd + 40;
@@ -114,11 +116,13 @@ contract GitHubPlatformVerifierTest is Test {
         uint32 total = quoteEnd + 20;
 
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.two(
+            revealed: AttestationBuilder.three(
+                AttestationBuilder.Range({start: 0, value: status}),
                 AttestationBuilder.Range({start: headEnd, value: anchor}),
                 AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
-            commitments: AttestationBuilder.two(
+            commitments: AttestationBuilder.three(
+                AttestationBuilder.Commitment({start: statusEnd, end: headEnd, value: bytes32(uint256(0x88))}),
                 AttestationBuilder.Commitment({start: anchorEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
                 AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x99))})
             ),
@@ -147,7 +151,9 @@ contract GitHubPlatformVerifierTest is Test {
             ),
             length: sentLen
         });
-        bytes memory b = bytes(body);
+        // The status line rides at the front, revealed with the rest, so the
+        // verifier reads the server's agreement at offset zero.
+        bytes memory b = abi.encodePacked("HTTP/1.1 200 OK\r\n\r\n", body);
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: b})),
             commitments: AttestationBuilder.none(),

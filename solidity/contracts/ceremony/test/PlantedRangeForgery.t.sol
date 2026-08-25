@@ -152,7 +152,7 @@ contract PlantedRangeForgeryTest is Test {
             ),
             length: sentLen
         });
-        bytes memory body = abi.encodePacked('"id":"2244994945","username":"alice"');
+        bytes memory body = abi.encodePacked('HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice"}');
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),

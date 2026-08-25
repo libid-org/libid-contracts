@@ -149,36 +149,49 @@ contract XPlatformVerifierTest is Test {
     }
 
     /// A token response shaped like the real one:
-    ///   [0,17)  hidden status line and headers, behind their own commitment
+    ///   [0,15)  revealed `HTTP/1.1 200 OK` -- the server's agreement
+    ///   [15,17) the CRLF closing it, committed
     ///   [17,33) revealed `"access_token":"`
     ///   [33,45) the committed bearer
     ///   [45,46) revealed closing quote
     ///   [46,70) the rest of the JSON, behind another commitment
+    ///
+    /// Every byte accounted for: the direction tiles, like the other three.
     function _tokenResponse(bool framed) private pure returns (AttestationBuilder.Direction memory received) {
+        bytes memory status = "HTTP/1.1 200 OK";
         bytes memory prefix = '"access_token":"';
+        uint32 statusEnd = uint32(status.length);
         uint32 headEnd = 17;
         uint32 prefixEnd = headEnd + uint32(prefix.length);
         uint32 bearerEnd = prefixEnd + 12;
         uint32 quoteEnd = bearerEnd + 1;
         uint32 total = quoteEnd + 24;
 
-        AttestationBuilder.Range[] memory revealed;
         if (framed) {
-            revealed = AttestationBuilder.two(
-                AttestationBuilder.Range({start: headEnd, value: prefix}),
-                AttestationBuilder.Range({start: bearerEnd, value: '"'})
-            );
-        } else {
-            // Nothing revealed at all — the shape REQ-PLAT-57 refuses, because
-            // the committed range could equally be a `refresh_token` value.
-            revealed = new AttestationBuilder.Range[](0);
+            return AttestationBuilder.Direction({
+                revealed: AttestationBuilder.three(
+                    AttestationBuilder.Range({start: 0, value: status}),
+                    AttestationBuilder.Range({start: headEnd, value: prefix}),
+                    AttestationBuilder.Range({start: bearerEnd, value: '"'})
+                ),
+                commitments: AttestationBuilder.three(
+                    AttestationBuilder.Commitment({start: statusEnd, end: headEnd, value: bytes32(uint256(0x8888))}),
+                    AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
+                    AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x9999))})
+                ),
+                length: total
+            });
         }
 
-        received = AttestationBuilder.Direction({
-            revealed: revealed,
-            commitments: AttestationBuilder.two(
+        // The status line and nothing else: the bearer commitment has no
+        // revealed anchors around it, which is the shape REQ-PLAT-57 refuses,
+        // because it could equally be a `refresh_token` value.
+        return AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: status})),
+            commitments: AttestationBuilder.three(
+                AttestationBuilder.Commitment({start: statusEnd, end: prefixEnd, value: bytes32(uint256(0x8888))}),
                 AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
-                AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x9999))})
+                AttestationBuilder.Commitment({start: bearerEnd, end: total, value: bytes32(uint256(0x9999))})
             ),
             length: total
         });
@@ -211,7 +224,10 @@ contract XPlatformVerifierTest is Test {
             length: sentLen
         });
 
-        bytes memory body = abi.encodePacked('"id":"', idValue, '","username":"', username, '"');
+        // The status line rides at the front, revealed with the rest: the
+        // verifier reads the server's agreement at offset zero.
+        bytes memory body =
+            abi.encodePacked('HTTP/1.1 200 OK\r\n\r\n{"id":"', idValue, '","username":"', username, '"}');
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
             commitments: AttestationBuilder.none(),
@@ -502,7 +518,7 @@ contract XPlatformVerifierTest is Test {
     }
 
     function _identityAttestationSplicedHandle() private pure returns (ICeremony.Attestation memory) {
-        bytes memory first = '{"id":"2244994945","usern';
+        bytes memory first = 'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","usern';
         bytes memory second = 'ame":"mallory"}';
         return _splitIdentityAttestation(first, second);
     }
@@ -511,7 +527,9 @@ contract XPlatformVerifierTest is Test {
     ///      `username` member. The ranges still tile the signed length, so
     ///      nothing but the cross-range count rejects it.
     function _identityAttestationSplitAcrossRanges() private pure returns (ICeremony.Attestation memory) {
-        return _splitIdentityAttestation('{"id":"2244994945","username":"alice"', ',"username":"mallory"}');
+        return _splitIdentityAttestation(
+            'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice"', ',"username":"mallory"}'
+        );
     }
 
     /// @dev One identity attestation whose received direction is exactly the two
@@ -553,6 +571,104 @@ contract XPlatformVerifierTest is Test {
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
+    // ─── The server's agreement ─────────────────────────────────────
+
+    /// @dev Nothing else says the platform agreed. An error body is free to
+    ///      contain anything, `"access_token"` included, so consent inferred
+    ///      from the wanted fields being present is an argument about what an
+    ///      error body does not hold rather than a check. The circuit sees no
+    ///      HTTP at all, so this is the only place it can be made.
+    function test_rejectsATokenResponseTheServerRefused() public {
+        ICeremony.Submission memory s = _submission();
+        bytes memory attested = s.attestations[0].attestedData;
+        // `200` -> `403`, in the revealed status line. Everything else about
+        // the attestation is untouched and still verifies.
+        uint256 at = _find(attested, "HTTP/1.1 200 ") + 9;
+        attested[at] = "4";
+        attested[at + 1] = "0";
+        attested[at + 2] = "3";
+        s.attestations[0] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        vm.expectRevert(TlsNotaryVerifierBase.NotOk.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsAnIdentityResponseTheServerRefused() public {
+        ICeremony.Submission memory s = _submission();
+        bytes memory attested = s.attestations[1].attestedData;
+        uint256 at = _find(attested, "HTTP/1.1 200 ") + 9;
+        attested[at] = "5";
+        attested[at + 1] = "0";
+        attested[at + 2] = "0";
+        s.attestations[1] = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        vm.expectRevert(TlsNotaryVerifierBase.NotOk.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev The profile says every byte outside the anchors is committed. Until
+    ///      the token response was tiled that was stated and not enforced, so a
+    ///      prover could leave bytes neither revealed nor committed -- bytes the
+    ///      notary signed no position for at all.
+    function test_rejectsATokenResponseWithAnUncoveredByte() public {
+        ICeremony.Submission memory s = _submission();
+        s.attestations[0] = _tokenAttestationWithGap();
+        vm.expectPartialRevert(CeremonyAttestation.CoverageGap.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A token response with one byte belonging to neither list: the
+    ///      status line's CRLF is left out of both.
+    function _tokenAttestationWithGap() private pure returns (ICeremony.Attestation memory) {
+        bytes memory whole =
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\ngrant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I";
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(whole.length)
+        });
+
+        bytes memory status = "HTTP/1.1 200 OK";
+        bytes memory prefix = '"access_token":"';
+        uint32 headEnd = 17;
+        uint32 prefixEnd = headEnd + uint32(prefix.length);
+        uint32 bearerEnd = prefixEnd + 12;
+        uint32 quoteEnd = bearerEnd + 1;
+        uint32 total = quoteEnd + 24;
+
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.three(
+                AttestationBuilder.Range({start: 0, value: status}),
+                AttestationBuilder.Range({start: headEnd, value: prefix}),
+                AttestationBuilder.Range({start: bearerEnd, value: '"'})
+            ),
+            // The CRLF at [15,17) is covered by nothing.
+            commitments: AttestationBuilder.two(
+                AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
+                AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x9999))})
+            ),
+            length: total
+        });
+
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
+    /// @dev The offset of `needle` in `haystack`. Reverts if absent, so a
+    ///      fixture that stops containing it fails loudly rather than mutating
+    ///      byte zero.
+    function _find(bytes memory haystack, bytes memory needle) private pure returns (uint256) {
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool hit = true;
+            for (uint256 j = 0; j < needle.length; ++j) {
+                if (haystack[i + j] != needle[j]) {
+                    hit = false;
+                    break;
+                }
+            }
+            if (hit) return i;
+        }
+        revert("needle not in fixture");
     }
 
     // ─── The token response anchors (REQ-PLAT-57, TEST-PLAT-22) ─────

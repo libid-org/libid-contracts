@@ -64,6 +64,24 @@ library AttestationBuilder {
         out[0] = c;
     }
 
+    function three(Range memory a, Range memory b, Range memory c) internal pure returns (Range[] memory out) {
+        out = new Range[](3);
+        out[0] = a;
+        out[1] = b;
+        out[2] = c;
+    }
+
+    function three(Commitment memory a, Commitment memory b, Commitment memory c)
+        internal
+        pure
+        returns (Commitment[] memory out)
+    {
+        out = new Commitment[](3);
+        out[0] = a;
+        out[1] = b;
+        out[2] = c;
+    }
+
     function none() internal pure returns (Commitment[] memory out) {
         out = new Commitment[](0);
     }
