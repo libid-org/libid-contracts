@@ -569,6 +569,65 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev And the same again, with the genuine member behind a COMMITMENT.
+    ///
+    ///      The scan reads revealed bytes, so a commitment is invisible to it.
+    ///      A response that genuinely names the field twice -- one of them
+    ///      echoed out of a user-controlled profile string -- lets the prover
+    ///      commit the real member and reveal the one it chose. Both the
+    ///      per-range read and the cross-range delimiter count then see exactly
+    ///      one, and the handle written is the prover's.
+    ///
+    ///      The identity response carries no credential, so nothing in it may
+    ///      be hidden at all.
+    function test_rejectsAnIdentityResponseHidingBytes() public {
+        ICeremony.Submission memory s = _submission();
+        s.attestations[1] = _identityAttestationHidingAMember();
+        vm.expectPartialRevert(CeremonyAttestation.UnexpectedCommitment.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// The bytes `","username":"victim` sit inside the response, committed, and
+    /// the prover reveals a second `"username":"alice"` after them.
+    function _identityAttestationHidingAMember() private pure returns (ICeremony.Attestation memory) {
+        bytes memory head =
+            "GET /2/users/me HTTP/1.1\r\naccept: application/json\r\nhost: api.x.com\r\n\r\nauthorization: Bearer ";
+        bytes memory bearer = "TOKENTOKENTOKEN";
+        bytes memory tail = "\r\nconnection: close\r\n\r\n";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: end + uint32(tail.length)
+        });
+
+        bytes memory open = 'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","name":"';
+        bytes memory hidden = '","username":"victim';
+        bytes memory shown = '","username":"alice"}';
+        uint32 hiddenStart = uint32(open.length);
+        uint32 hiddenEnd = hiddenStart + uint32(hidden.length);
+
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: open}),
+                AttestationBuilder.Range({start: hiddenEnd, value: shown})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: hiddenStart, end: hiddenEnd, value: keccak256("hidden")})
+            ),
+            length: hiddenEnd + uint32(shown.length)
+        });
+
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+    }
+
     /// @dev The same, with the two members in SEPARATE revealed ranges.
     ///
     ///      The test above puts both inside one range, where the field reader's

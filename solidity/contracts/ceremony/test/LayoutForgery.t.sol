@@ -76,19 +76,19 @@ contract LayoutForgeryTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// Wholly honest token session, exactly the shape XPlatformVerifier.t.sol uses.
+    /// Wholly honest token session. ONE revealed sent range, which is what
+    /// `_tokenBody` requires -- two would revert `WrongTokenRequestLayout`
+    /// before the identity session this file exists to exercise ever runs.
     function _honestToken() private view returns (ICeremony.Attestation memory) {
         bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
-        bytes memory line = "POST /2/oauth2/token HTTP/1.1\r\n";
-        bytes memory body =
-            abi.encodePacked("grant_type=authorization_code&client_id=attackerapp&code=abc&code_verifier=", v);
-        uint32 lineEnd = uint32(line.length);
-        uint32 bodyEnd = lineEnd + uint32(body.length);
+        bytes memory request = abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
+            "grant_type=authorization_code&client_id=attackerapp&code=abc&code_verifier=",
+            v
+        );
+        uint32 bodyEnd = uint32(request.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.two(
-                AttestationBuilder.Range({start: 0, value: line}),
-                AttestationBuilder.Range({start: lineEnd, value: body})
-            ),
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: request})),
             commitments: AttestationBuilder.none(),
             length: bodyEnd
         });
@@ -99,12 +99,20 @@ contract LayoutForgeryTest is Test {
         uint32 bearerEnd = prefixEnd + 12;
         uint32 quoteEnd = bearerEnd + 1;
         uint32 total = quoteEnd + 24;
+        // Tiled, like the shape XPlatformVerifier.t.sol proves: the status line
+        // revealed at the origin, the CRLF closing it committed, then the
+        // framed bearer.
+        bytes memory status = "HTTP/1.1 200 OK";
         AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
-            revealed: AttestationBuilder.two(
+            revealed: AttestationBuilder.three(
+                AttestationBuilder.Range({start: 0, value: status}),
                 AttestationBuilder.Range({start: headEnd, value: prefix}),
                 AttestationBuilder.Range({start: bearerEnd, value: '"'})
             ),
-            commitments: AttestationBuilder.two(
+            commitments: AttestationBuilder.three(
+                AttestationBuilder.Commitment({
+                    start: uint32(status.length), end: headEnd, value: bytes32(uint256(0x8888))
+                }),
                 AttestationBuilder.Commitment({start: prefixEnd, end: bearerEnd, value: TOKEN_COMMITMENT}),
                 AttestationBuilder.Commitment({start: quoteEnd, end: total, value: bytes32(uint256(0x9999))})
             ),
@@ -169,17 +177,26 @@ contract LayoutForgeryTest is Test {
     }
 
     /// A response whose revealed ranges are spliced must not read as a document.
+    ///
+    /// @dev Was: returned userId 44196397, spliced out of the display name,
+    ///      while the account's real id is 999. Reading fields from a
+    ///      CONCATENATION of revealed ranges discarded every offset, so
+    ///      disjoint fragments joined into a document that never existed on the
+    ///      wire -- and the duplicate-delimiter check had nothing to fire on,
+    ///      because the genuine member was not in the buffer at all.
+    ///
+    ///      COVERAGE is what closes it, and that is worth being exact about.
+    ///      The fragments have to be disjoint for the splice to say anything
+    ///      new, and disjoint means a gap -- which `requireFullyRevealed`
+    ///      refuses before any reader runs. The per-range read is the second
+    ///      line, for a TILED response whose members sit in different ranges;
+    ///      `XPlatformVerifier.t.sol` proves that one, because it cannot be
+    ///      reached from here.
     function test_aSplicedResponseCannotForgeAnIdentity() public {
         ICeremony.Submission memory s = _submission();
         s.attestations[0] = _honestToken();
         s.attestations[1] = _identity(_seamIdentity());
-        // Was: returned userId 44196397, spliced out of the display name, while
-        // the account's real id is 999. Reading fields from a CONCATENATION of
-        // revealed ranges discarded every offset, so disjoint fragments joined
-        // into a document that never existed on the wire -- and the
-        // duplicate-delimiter check had nothing to fire on, because the genuine
-        // member was not in the buffer at all.
-        vm.expectPartialRevert(TlsNotaryVerifierBase.WrongTokenRequestLayout.selector);
+        vm.expectPartialRevert(CeremonyAttestation.CoverageGap.selector);
         this.run{value: quote}(s);
     }
 

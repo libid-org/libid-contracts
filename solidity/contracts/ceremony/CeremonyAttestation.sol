@@ -78,6 +78,8 @@ library CeremonyAttestation {
     ///      commitments would leave the framed range and the proved range
     ///      unrelated.
     error NotOneCommitment(uint256 count);
+    /// @dev A direction that must hide nothing carries a commitment anyway.
+    error UnexpectedCommitment(uint256 count);
     /// @dev An obsolete line fold in the revealed request bytes.
     error ObsoleteLineFold(uint256 at);
     /// @dev A line feed not preceded by a carriage return. The needle is
@@ -112,6 +114,27 @@ library CeremonyAttestation {
 
         _check(attested.sent, attested.sentTranscriptLength);
         _check(attested.received, attested.recvTranscriptLength);
+    }
+
+    /// @notice Require a direction to be revealed WHOLE: tiled, and hiding
+    ///         nothing at all.
+    ///
+    /// @dev For the identity response, which carries no credential. Coverage
+    ///      alone is not enough there, and the gap it leaves is not small.
+    ///
+    ///      Every field read scans revealed bytes, so a commitment is invisible
+    ///      to it -- to the per-range read AND to the cross-range delimiter
+    ///      count. A response that genuinely names an authoritative field twice
+    ///      (one member echoed out of a profile string the account controls)
+    ///      then lets the prover commit the real one and reveal the one it
+    ///      chose. Both checks see exactly one member, and the handle written
+    ///      is the prover's rather than the account's.
+    ///
+    ///      Coverage says where the bytes are, not that they can be read. This
+    ///      says they can.
+    function requireFullyRevealed(DirectionBlock memory block_, uint32 length) internal pure {
+        if (block_.commitments.length != 0) revert UnexpectedCommitment(block_.commitments.length);
+        requireExactCoverage(block_, length);
     }
 
     /// @notice Require the revealed ranges and commitments of one direction to

@@ -334,8 +334,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             CeremonyAttestation.requireBearerHeaderRequest(data.sent, data.sentTranscriptLength);
         identityCommitment = bearer.commitment;
 
-        // The response direction is tiled too, so no byte of it is invisible.
-        CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
+        // The response is revealed WHOLE, not merely tiled. Tiling alone leaves
+        // a prover free to commit the authoritative member of a duplicated
+        // field and reveal the one it chose -- and every reader below scans
+        // revealed bytes, so the committed one is invisible to all of them.
+        CeremonyAttestation.requireFullyRevealed(data.received, data.recvTranscriptLength);
         (string memory idField, IdShape idShape, string memory handleField) = _identityFields();
         fields.userId = string(
             idShape == IdShape.JsonString
