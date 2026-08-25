@@ -77,14 +77,6 @@ contract PlantedRangeForgeryTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _publicInputs() private pure returns (bytes32[] memory pi) {
-        pi = new bytes32[](64);
-        for (uint256 i = 0; i < 32; ++i) {
-            pi[i] = bytes32(uint256(uint8(TOKEN_COMMITMENT[i])));
-            pi[32 + i] = bytes32(uint256(uint8(IDENTITY_COMMITMENT[i])));
-        }
-    }
-
     function _tokenResponse() private pure returns (AttestationBuilder.Direction memory received) {
         bytes memory prefix = '"access_token":"';
         uint32 headEnd = 17;
@@ -167,7 +159,6 @@ contract PlantedRangeForgeryTest is Test {
         s.version = 1;
         s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
-        s.publicInputs = _publicInputs();
         s.attestations = new ICeremony.Attestation[](2);
     }
 

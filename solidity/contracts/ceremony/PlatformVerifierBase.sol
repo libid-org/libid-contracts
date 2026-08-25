@@ -253,7 +253,7 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     /// @dev Verify the proof under the artifact governance selected. Without
     ///      this, every public input the surrounding checks compare is a number
     ///      the caller wrote down (REQ-COMMON-45).
-    function _requireProof(bytes calldata proof, bytes32[] calldata publicInputs) internal view {
+    function _requireProof(bytes calldata proof, bytes32[] memory publicInputs) internal view {
         if (!_base().honkVerifier.verify(proof, publicInputs)) revert BadProof();
     }
 

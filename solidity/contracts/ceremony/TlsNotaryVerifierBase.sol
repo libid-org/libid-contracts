@@ -43,13 +43,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     bytes internal constant ACCESS_TOKEN_SUFFIX = '"';
 
     error UnexpectedClientIdentifier();
-    error WrongPublicInputCount(uint256 expected, uint256 provided);
+    /// @dev The caller supplied public inputs. This verifier derives them.
+    error UnexpectedPublicInputs();
     error WrongRequestLine();
     error CodeVerifierMismatch();
     error ClientIdentifierNotSerializerSafe(bytes found);
-    error CommitmentMismatch(bytes32 proved, bytes32 attested);
-    /// @dev A public input the circuit declares as a byte carried more.
-    error PublicInputNotAByte(uint256 index, uint256 value);
     /// @dev A field was found in no revealed range, or in more than one.
     error FieldNotUnique(string name, uint256 rangesMatching);
     /// @dev The first revealed range does not begin the transcript, so nothing
@@ -188,14 +186,19 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // caller-supplied copy would duplicate a value the attested data
         // already carries (REQ-COMMON-52).
         if (submission.clientIdentifier.length != 0) revert UnexpectedClientIdentifier();
-        if (submission.publicInputs.length != PUBLIC_INPUTS) {
-            revert WrongPublicInputCount(PUBLIC_INPUTS, submission.publicInputs.length);
-        }
+        // Nor any public input. They are not the caller's to state: both are
+        // commitments this verifier has just read out of attestations it
+        // authenticated, so accepting a copy would be accepting a second
+        // representation of a fact it already holds -- and then having to
+        // check the two agree.
+        if (submission.publicInputs.length != 0) revert UnexpectedPublicInputs();
 
-        uint64 observedAt = _tokenSession(authorizationDigest, submission, fee, fields);
-        _identitySession(submission, fee, fields);
+        (uint64 observedAt, bytes32 tokenCommitment) = _tokenSession(authorizationDigest, submission, fee, fields);
+        bytes32 identityCommitment = _identitySession(submission, fee, fields);
 
-        _requireProof(submission.proof, submission.publicInputs);
+        // Built, not compared. The proof verifies against the commitments the
+        // notary signed and nothing else can be substituted for them.
+        _requireProof(submission.proof, _publicInputs(tokenCommitment, identityCommitment));
         fields.metadataObservedAt = observedAt;
     }
 
@@ -204,7 +207,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         Submission calldata submission,
         uint256 fee,
         PlatformFields memory fields
-    ) private returns (uint64 observedAt) {
+    ) private returns (uint64 observedAt, bytes32 tokenCommitment) {
         CeremonyAttestation.AttestedData memory data = _authenticate(submission.attestations[0], _tokenAuthority(), fee);
 
         // REQ-COMMON-18A applies to THIS direction too. Without tiling, a
@@ -252,14 +255,17 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // commitment: the response hides every other byte behind one of its own.
         CeremonyAttestation.RangeCommitment memory bearer =
             CeremonyAttestation.requireFramedCommitment(data.received, ACCESS_TOKEN_PREFIX, ACCESS_TOKEN_SUFFIX);
-        _requireCommitmentValue(bearer.commitment, submission.publicInputs, OFF_TOKEN_COMMITMENT);
+        tokenCommitment = bearer.commitment;
 
         // The token attestation is the one-time PKCE and digest binding, so it
         // alone supplies evidence time (section 2.2).
-        return _requireFresh(data.createdAt);
+        observedAt = _requireFresh(data.createdAt);
     }
 
-    function _identitySession(Submission calldata submission, uint256 fee, PlatformFields memory fields) private {
+    function _identitySession(Submission calldata submission, uint256 fee, PlatformFields memory fields)
+        private
+        returns (bytes32 identityCommitment)
+    {
         CeremonyAttestation.AttestedData memory data =
             _authenticate(submission.attestations[1], _identityAuthority(), fee);
 
@@ -281,7 +287,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // gap and the count still says one.
         CeremonyAttestation.RangeCommitment memory bearer =
             CeremonyAttestation.requireBearerHeaderRequest(data.sent, data.sentTranscriptLength);
-        _requireCommitmentValue(bearer.commitment, submission.publicInputs, OFF_IDENTITY_COMMITMENT);
+        identityCommitment = bearer.commitment;
 
         // The response direction is tiled too, so no byte of it is invisible.
         CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
@@ -300,18 +306,30 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      Without this the circuit could prove a link between two
     ///      attestations other than the ones submitted (REQ-PLAT-32C,
     ///      REQ-PLAT-52B).
-    function _requireCommitmentValue(bytes32 attested, bytes32[] calldata publicInputs, uint256 offset) internal pure {
-        bytes32 proved;
+    /// @dev The circuit's public inputs, as this verifier derives them.
+    ///
+    ///      Two 32-byte commitments as 64 field elements of one byte each,
+    ///      token first. The circuit fixes that order; this contract fixes
+    ///      where the bytes come from -- the attestations it just
+    ///      authenticated, never the caller.
+    ///
+    ///      There used to be a comparison here instead, against inputs the
+    ///      caller supplied. It cost 64 words of calldata to say something the
+    ///      verifier already knew, and it could be got wrong: reconstructing a
+    ///      byte with `uint8(...)` accepted a field element of 0x0101 as 0x01,
+    ///      so the binding rested on the circuit range-constraining outputs
+    ///      this contract cannot see. Derived, there is nothing to constrain
+    ///      and nothing to disagree with.
+    function _publicInputs(bytes32 tokenCommitment, bytes32 identityCommitment)
+        private
+        pure
+        returns (bytes32[] memory inputs)
+    {
+        inputs = new bytes32[](PUBLIC_INPUTS);
         for (uint256 i = 0; i < 32; ++i) {
-            uint256 element = uint256(publicInputs[offset + i]);
-            // The circuit declares these as bytes and the proof system
-            // constrains them, but this contract cannot see that. Truncating
-            // instead would accept 0x0101 as 0x01 and rest the whole
-            // commitment binding on an invariant stated nowhere it can check.
-            if (element > 0xff) revert PublicInputNotAByte(offset + i, element);
-            proved |= bytes32(element << (8 * (31 - i)));
+            inputs[OFF_TOKEN_COMMITMENT + i] = bytes32(uint256(uint8(tokenCommitment[i])));
+            inputs[OFF_IDENTITY_COMMITMENT + i] = bytes32(uint256(uint8(identityCommitment[i])));
         }
-        if (proved != attested) revert CommitmentMismatch(proved, attested);
     }
 
     /// @dev The HTTP message body of the token request.

@@ -76,14 +76,6 @@ contract LayoutForgeryTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _publicInputs() private pure returns (bytes32[] memory pi) {
-        pi = new bytes32[](64);
-        for (uint256 i = 0; i < 32; ++i) {
-            pi[i] = bytes32(uint256(uint8(TOKEN_COMMITMENT[i])));
-            pi[32 + i] = bytes32(uint256(uint8(IDENTITY_COMMITMENT[i])));
-        }
-    }
-
     /// Wholly honest token session, exactly the shape XPlatformVerifier.t.sol uses.
     function _honestToken() private view returns (ICeremony.Attestation memory) {
         bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
@@ -169,7 +161,6 @@ contract LayoutForgeryTest is Test {
         s.version = 1;
         s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
-        s.publicInputs = _publicInputs();
         s.attestations = new ICeremony.Attestation[](2);
     }
 

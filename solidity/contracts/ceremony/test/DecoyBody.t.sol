@@ -144,11 +144,6 @@ contract DecoyBodyTest is Test {
         s.version = 1;
         s.pkceNonce = NONCE;
         s.proof = hex"00";
-        s.publicInputs = new bytes32[](64);
-        for (uint256 i = 0; i < 32; ++i) {
-            s.publicInputs[i] = bytes32(uint256(uint8(TOKEN_C[i])));
-            s.publicInputs[32 + i] = bytes32(uint256(uint8(ID_C[i])));
-        }
         s.attestations = new ICeremony.Attestation[](2);
         s.attestations[0] = _decoyToken();
         s.attestations[1] = _identity();

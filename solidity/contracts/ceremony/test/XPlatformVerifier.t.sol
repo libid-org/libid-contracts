@@ -239,21 +239,12 @@ contract XPlatformVerifierTest is Test {
     }
 
     /// Public inputs are the two commitments, one byte per field element.
-    function _publicInputs() private pure returns (bytes32[] memory pi) {
-        pi = new bytes32[](64);
-        for (uint256 i = 0; i < 32; ++i) {
-            pi[i] = bytes32(uint256(uint8(TOKEN_COMMITMENT[i])));
-            pi[32 + i] = bytes32(uint256(uint8(IDENTITY_COMMITMENT[i])));
-        }
-    }
-
     function _submission() private view returns (ICeremony.Submission memory s) {
         string memory verifierValue = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
         s.platformId = CeremonyProfile.PLATFORM_X;
         s.version = 1;
         s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
-        s.publicInputs = _publicInputs();
         s.attestations = new ICeremony.Attestation[](2);
         s.attestations[0] = _tokenAttestation("authorization_code", "myClient-1", verifierValue);
         s.attestations[1] = _identityAttestation("2244994945", "alice", "");
@@ -377,12 +368,30 @@ contract XPlatformVerifierTest is Test {
 
     // ─── The circuit link ───────────────────────────────────────────
 
-    /// @dev Without this the circuit could prove a link between two
-    ///      attestations other than the ones submitted (REQ-PLAT-32C).
-    function test_rejectsAProofLinkingOtherAttestations() public {
+    /// @dev The inputs the proof is checked against are BUILT from the two
+    ///      attestations, so "the circuit proved a link between other
+    ///      attestations" (REQ-PLAT-32C) is not a case to reject -- it is a
+    ///      case that cannot be stated. This asserts what the verifier derived.
+    function test_provesAgainstTheCommitmentsTheNotarySigned() public {
+        bytes32[] memory expected = new bytes32[](64);
+        for (uint256 i = 0; i < 32; ++i) {
+            expected[i] = bytes32(uint256(uint8(TOKEN_COMMITMENT[i])));
+            expected[32 + i] = bytes32(uint256(uint8(IDENTITY_COMMITMENT[i])));
+        }
+
         ICeremony.Submission memory s = _submission();
-        s.publicInputs[40] = bytes32(uint256(0xff));
-        vm.expectPartialRevert(TlsNotaryVerifierBase.CommitmentMismatch.selector);
+        // Exact arguments: the proof as submitted, and inputs the caller never
+        // supplied.
+        vm.expectCall(address(honk), abi.encodeCall(IHonkVerifier.verify, (s.proof, expected)));
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the caller cannot state them. There is no field to disagree
+    ///      with the attestations in.
+    function test_refusesCallerSuppliedPublicInputs() public {
+        ICeremony.Submission memory s = _submission();
+        s.publicInputs = new bytes32[](64);
+        vm.expectRevert(TlsNotaryVerifierBase.UnexpectedPublicInputs.selector);
         this.run{value: quote}(s);
     }
 
@@ -635,20 +644,6 @@ contract XPlatformVerifierTest is Test {
         ICeremony.Submission memory s = _submission();
         s.attestations[0] = _tokenAttestation("authorization_code", "myClient-1", v, false);
         vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
-        this.run{value: quote}(s);
-    }
-
-    /// @dev And the framing must land on the range the circuit opened. Here the
-    ///      anchors are present but the proof names the OTHER committed range —
-    ///      which is what committing a `refresh_token` value and proving over
-    ///      it would look like.
-    function test_rejectsAProofOverTheWrongCommittedRange() public {
-        ICeremony.Submission memory s = _submission();
-        bytes32 other = bytes32(uint256(0x9999));
-        for (uint256 i = 0; i < 32; ++i) {
-            s.publicInputs[i] = bytes32(uint256(uint8(other[i])));
-        }
-        vm.expectPartialRevert(TlsNotaryVerifierBase.CommitmentMismatch.selector);
         this.run{value: quote}(s);
     }
 

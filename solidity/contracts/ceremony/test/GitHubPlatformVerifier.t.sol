@@ -163,20 +163,11 @@ contract GitHubPlatformVerifierTest is Test {
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
-    function _publicInputs() private pure returns (bytes32[] memory pi) {
-        pi = new bytes32[](64);
-        for (uint256 i = 0; i < 32; ++i) {
-            pi[i] = bytes32(uint256(uint8(TOKEN_COMMITMENT[i])));
-            pi[32 + i] = bytes32(uint256(uint8(IDENTITY_COMMITMENT[i])));
-        }
-    }
-
     function _submission() private pure returns (ICeremony.Submission memory s) {
         s.platformId = CeremonyProfile.PLATFORM_GITHUB;
         s.version = 1;
         s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
-        s.publicInputs = _publicInputs();
         s.attestations = new ICeremony.Attestation[](2);
         s.attestations[0] = _exchange(CeremonyProfile.AUTHORITY_GITHUB);
         s.attestations[1] = _identity('{"login":"octocat","id":583231}', CeremonyProfile.AUTHORITY_GITHUB_API);
