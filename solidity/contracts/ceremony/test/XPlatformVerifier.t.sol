@@ -454,6 +454,25 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev `maxFutureAttestationSkew` and `futureObservationAllowance` are
+    ///      two numbers for two jobs -- how far ahead a notary's clock may
+    ///      read, and how far ahead the watermark may sit -- and governance
+    ///      sets them apart. Passing the first said nothing about the second,
+    ///      so an attestation inside the skew but past the allowance wrote a
+    ///      watermark in the future, and every honest later proof of that name
+    ///      read as stale until the clock caught up.
+    function test_rejectsAnAttestationPastTheObservationAllowanceButInsideTheSkew() public {
+        vm.prank(OWNER);
+        verifier.setProtocolParameters(LIFETIME, SKEW, 0);
+
+        // T0 is SKEW ahead of the warp in setUp, so it passes the skew and not
+        // a zero allowance.
+        vm.warp(T0 - SKEW);
+        ICeremony.Submission memory s = _submission();
+        vm.expectPartialRevert(PlatformVerifierBase.ObservedInTheFuture.selector);
+        this.run{value: quote}(s);
+    }
+
     // ─── The proof artifact (REQ-COMMON-45) ─────────────────────────
 
     /// @dev An address alone does not say WHICH circuit answers behind it.
@@ -471,6 +490,20 @@ contract XPlatformVerifierTest is Test {
 
     /// @dev An account with no code hashes to the empty-code hash, which no
     ///      real artifact matches, so a plain address cannot be wired either.
+    /// @dev A non-existent account hashes to zero (EIP-1052) and an empty one
+    ///      to `keccak256("")`, so either as the EXPECTED value is a hash any
+    ///      such address satisfies -- and the mis-wiring surfaces at the first
+    ///      user's proof, which is what this check exists to prevent.
+    function test_refusesAnExpectedCodehashAnEmptyAccountWouldSatisfy() public {
+        address untouched = address(0xDEAD0001);
+        vm.startPrank(OWNER);
+        vm.expectPartialRevert(PlatformVerifierBase.WrongVerifierArtifact.selector);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(untouched), bytes32(0));
+        vm.expectPartialRevert(PlatformVerifierBase.WrongVerifierArtifact.selector);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(untouched), keccak256(""));
+        vm.stopPrank();
+    }
+
     function test_rejectsAnAddressHoldingNoCode() public {
         address eoa = address(0xB0B);
         vm.prank(OWNER);

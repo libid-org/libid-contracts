@@ -158,6 +158,14 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         if (address(notary_) == address(0) || address(honkVerifier_) == address(0)) {
             revert ZeroAddress();
         }
+        // An account with no code hashes to zero (EIP-1052) and an account
+        // with empty code to keccak256(""), so either as the EXPECTED value
+        // turns this comparison into one that any such address satisfies --
+        // and the mis-wiring surfaces at the first user's proof, which is the
+        // production failure the check exists to prevent.
+        if (honkVerifierCodehash_ == bytes32(0) || honkVerifierCodehash_ == keccak256("")) {
+            revert WrongVerifierArtifact(honkVerifierCodehash_, honkVerifierCodehash_);
+        }
         bytes32 found = address(honkVerifier_).codehash;
         if (found != honkVerifierCodehash_) revert WrongVerifierArtifact(honkVerifierCodehash_, found);
 
@@ -226,6 +234,15 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
         }
         uint64 validUntil = createdAt + _base().proofLifetime;
         if (blockTime >= validUntil) revert ProofExpired(validUntil, blockTime);
+
+        // And the ceiling. `maxFutureAttestationSkew` above is a different
+        // number for a different job -- how far ahead a notary's clock may
+        // legitimately read -- so passing it says nothing about how far ahead
+        // the WATERMARK may sit. Without this the two could be configured
+        // apart and an attestation dated inside the skew but past the allowance
+        // would write a watermark in the future, making every honest later
+        // proof of that name read as stale until the clock caught up.
+        _requireNotAhead(createdAt);
 
         // Onto the shared scale, so a Consumer can compare this against a
         // profile whose evidence time runs further ahead without one of them
