@@ -18,12 +18,12 @@ interface INotaryService {
     ///      digest authenticates whatever the caller hashed, which need not be
     ///      the bytes the Platform Verifier goes on to read (REQ-COMMON-49).
     ///
-    ///      Rejection is a revert, and this returns nothing. REQ-COMMON-42
+    ///      Rejection is a revert, never a returned failure. REQ-COMMON-42
     ///      requires the fees of one submission to take effect together or not
     ///      at all, and to leave nothing delivered once the submission is
     ///      rejected -- reverting gives both by construction, with no refund
-    ///      path to get wrong. Returning a boolean would offer a second way to
-    ///      say "rejected" that keeps the fee and lets a caller miss it.
+    ///      path to get wrong. A boolean would offer a second way to say
+    ///      "rejected" that keeps the fee and lets a caller miss it.
     ///
     ///      It returns the decoded record rather than a bare accept, because
     ///      the format is this service's to know: REQ-COMMON-18 has a profile

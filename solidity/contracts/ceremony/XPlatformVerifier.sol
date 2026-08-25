@@ -13,8 +13,10 @@ import {TlsNotaryVerifierBase} from "./TlsNotaryVerifierBase.sol";
 ///      profile to list the exact ranges a session reveals but does not fix
 ///      them, so `x/v1` pins them here:
 ///
-///        token request  — two revealed sent ranges: the request line at offset
-///                         0, then the whole form body. X hides no body field.
+///        token request  — ONE revealed sent range, from offset 0 through the
+///                         whole form body. X uses a public client and hides no
+///                         body field, so the request is revealed entire and
+///                         `_tokenBody` refuses any other count.
 ///        token response — the `"access_token":"` delimiter and its closing
 ///                         quote revealed; the bearer and every other byte
 ///                         committed.

@@ -28,11 +28,23 @@ import {TlsNotaryVerifierBase} from "./TlsNotaryVerifierBase.sol";
 ///
 ///      THE REVEALED LAYOUT IS A PROFILE DECISION, as it is for X:
 ///
-///        token exchange — the request line at offset 0, then the revealed body
-///                         PREFIX. `client_secret` is ordered last per
-///                         REQ-COMMON-22 and committed, so the prefix ends
-///                         where it begins and every field a verifier reads
-///                         sits inside it.
+///        token exchange — ONE revealed sent range, from offset 0 through the
+///                         body PREFIX; `_tokenBody` refuses any other count.
+///                         `client_secret` is ordered last per REQ-COMMON-22
+///                         and committed, so the prefix ends where it begins
+///                         and every field a verifier reads sits inside it.
+///
+///                         Nothing frames that commitment, unlike the bearer's:
+///                         its `&client_secret=` opener is on the hidden side,
+///                         so there is no revealed anchor to compare. A prover
+///                         starting it earlier hides a body suffix, and
+///                         `formField` cannot see a duplicate in there. What
+///                         closes that is ASM-PROV-07 -- the platform rejects a
+///                         body carrying a profile field twice -- backed by the
+///                         recurring probes REQ-COMMON-32 requires. Framing it
+///                         here would mean revealing `&client_secret=`, which
+///                         the profile's reveal table marks `no`, so it is a
+///                         specification question rather than a contract one.
 ///        token response — the `"access_token":"` delimiter and closing quote
 ///                         revealed; the bearer and everything else committed.
 ///        identity request — the bearer committed, every other byte revealed
