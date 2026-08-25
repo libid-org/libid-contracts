@@ -59,9 +59,9 @@ contract CeremonyAuthorizationTest is Test {
     function test_pkceValuesAreFortyThreeUnpaddedCharacters() public pure {
         bytes memory verifier = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, PKCE_NONCE);
         bytes memory challenge = CeremonyAuthorization.codeChallenge(verifier);
-        assertEq(verifier.length, 43);
-        assertEq(challenge.length, 43);
-        for (uint256 i = 0; i < 43; ++i) {
+        assertEq(verifier.length, CeremonyAuthorization.PKCE_LEN);
+        assertEq(challenge.length, CeremonyAuthorization.PKCE_LEN);
+        for (uint256 i = 0; i < CeremonyAuthorization.PKCE_LEN; ++i) {
             assertTrue(verifier[i] != "=" && verifier[i] != "+" && verifier[i] != "/");
             assertTrue(challenge[i] != "=" && challenge[i] != "+" && challenge[i] != "/");
         }
@@ -122,7 +122,7 @@ contract CeremonyAuthorizationTest is Test {
 
     function testFuzz_encodedVerifierIsAlwaysPkceCharset(bytes32 digest_, bytes32 pkceNonce) public pure {
         bytes memory verifier = CeremonyAuthorization.codeVerifier(digest_, pkceNonce);
-        assertEq(verifier.length, 43);
+        assertEq(verifier.length, CeremonyAuthorization.PKCE_LEN);
         for (uint256 i = 0; i < verifier.length; ++i) {
             bytes1 c = verifier[i];
             bool ok = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "-" || c == "_";

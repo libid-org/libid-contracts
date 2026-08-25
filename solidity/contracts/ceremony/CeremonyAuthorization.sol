@@ -1,3 +1,4 @@
+import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
@@ -27,9 +28,6 @@ library CeremonyAuthorization {
     /// @dev Raised when the Authorized Transaction Data cannot be described by
     ///      the layout's four-byte length field.
     error TransactionDataTooLong(uint256 length);
-
-    /// @dev The unpadded base64url alphabet, one byte per index.
-    bytes internal constant B64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     /// @notice Build the preimage of section 5, exactly.
     /// @dev `abi.encodePacked` concatenates without padding, which is what the
@@ -93,24 +91,10 @@ library CeremonyAuthorization {
     /// 32 bytes are ten whole three-byte groups plus a two-byte tail, so the
     /// output length is fixed and there is no padding branch. The tail emits
     /// three characters, never four, and never an `=`.
-    function _base64UrlNoPad32(bytes32 value) private pure returns (bytes memory out) {
-        bytes memory alphabet = B64URL_ALPHABET;
-        out = new bytes(PKCE_LEN);
-
-        for (uint256 g = 0; g < 10; ++g) {
-            uint256 b0 = uint8(value[3 * g]);
-            uint256 b1 = uint8(value[3 * g + 1]);
-            uint256 b2 = uint8(value[3 * g + 2]);
-            out[4 * g] = alphabet[b0 >> 2];
-            out[4 * g + 1] = alphabet[((b0 & 3) << 4) | (b1 >> 4)];
-            out[4 * g + 2] = alphabet[((b1 & 15) << 2) | (b2 >> 6)];
-            out[4 * g + 3] = alphabet[b2 & 63];
-        }
-
-        uint256 t0 = uint8(value[30]);
-        uint256 t1 = uint8(value[31]);
-        out[40] = alphabet[t0 >> 2];
-        out[41] = alphabet[((t0 & 3) << 4) | (t1 >> 4)];
-        out[42] = alphabet[(t1 & 15) << 2];
+    /// @dev `Base64.encodeURL` is the section 7 encoder exactly: the URL
+    ///      alphabet, and no `=` padding, which is what RFC 4648 §5 asks for.
+    ///      32 bytes encode to `PKCE_LEN` characters.
+    function _base64UrlNoPad32(bytes32 value) private pure returns (bytes memory) {
+        return bytes(Base64.encodeURL(bytes.concat(value)));
     }
 }
