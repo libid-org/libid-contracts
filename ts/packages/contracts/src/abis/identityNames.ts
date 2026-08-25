@@ -179,19 +179,6 @@ export const identityNamesAbi = [
   },
   {
     "type": "function",
-    "name": "chainId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "claim",
     "inputs": [
       {
@@ -1236,22 +1223,6 @@ export const identityNamesAbi = [
         "name": "version",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "VerifierPlatformMismatch",
-    "inputs": [
-      {
-        "name": "expected",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "found",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

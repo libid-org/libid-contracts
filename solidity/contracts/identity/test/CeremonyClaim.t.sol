@@ -123,7 +123,7 @@ contract CeremonyClaimTest is Test {
         ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(7)));
         _claim(s, FEE);
         bytes32 expected = CeremonyAuthorization.digest(
-            s.operationDomain, s.version, names.chainId(), s.authorizationNonce, s.transactionData
+            s.operationDomain, s.version, proofVerifier.chainId(), s.authorizationNonce, s.transactionData
         );
         assertEq(verifier.lastDigest(), expected);
     }
@@ -149,7 +149,7 @@ contract CeremonyClaimTest is Test {
         ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(9)));
         _claim(s, FEE);
         bytes32 digest = CeremonyAuthorization.digest(
-            s.operationDomain, s.version, names.chainId(), s.authorizationNonce, s.transactionData
+            s.operationDomain, s.version, proofVerifier.chainId(), s.authorizationNonce, s.transactionData
         );
         assertTrue(names.digestSpent(digest));
 

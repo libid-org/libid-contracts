@@ -362,7 +362,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      (REQ-COMMON-01F).
     error BadTransactionData(uint256 length);
     error WrongClaimValue(uint256 required, uint256 provided);
-    error VerifierPlatformMismatch(bytes32 expected, bytes32 found);
     /// Retiring the version `bind` defaults to would leave the platform unusable.
     error VersionInUseAsLatest(bytes32 platformId, uint32 version);
     /// The proof names a different address than the caller.
@@ -716,18 +715,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         if (address(verifier) == address(0)) revert ZeroAddress();
         _s().proofVerifier = verifier;
         emit ProofVerifierConfigured(address(verifier));
-    }
-
-    /// @notice The Chain ID this Consumer commits in every digest.
-    ///
-    /// @dev THE CHAIN PROFILE FIXES THIS, and the runtime must derive it the
-    ///      same way or no digest ever matches. For an EVM chain the identifier
-    ///      is `block.chainid`, and the bytes it contributes are its 32-byte
-    ///      big-endian encoding. The digest commits a HASH of the identifier
-    ///      rather than the identifier itself, because chains name themselves
-    ///      incompatibly and some too wide for 64 bits (REQ-COMMON-01C).
-    function chainId() public view returns (bytes32) {
-        return keccak256(abi.encode(block.chainid));
     }
 
     /// @dev Everything after authentication, shared by both entry points.
