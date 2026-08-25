@@ -1,6 +1,7 @@
-import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
+
+import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 
 /// @title CeremonyAuthorization
 /// @notice The Authorization Digest of ceremony-common section 5, and the PKCE

@@ -292,7 +292,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @notice This Consumer was pointed at a Proof Verifier.
     event ProofVerifierConfigured(address verifier);
 
-    /// @notice A legacy proof version gained or replaced its verifier.
     /// @notice A wallet withdrew its published handle.
     /// @dev An indexer that mirrors `reverseOf` needs this to stop showing it.
     event NameUnpublished(address indexed owner, bytes32 indexed platformId);
@@ -301,7 +300,6 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// This platform has no keyspace configured.
     error UnknownPlatform(bytes32 platformId);
-    /// Version zero is the "no version" sentinel and cannot name a verifier.
     /// @notice The one operation this Consumer owns.
     ///
     /// @dev A new operation, or a change to what its transaction data means,
@@ -381,10 +379,18 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     function claim(ICeremony.Submission calldata submission, bool publishName) external payable nonReentrant {
         // ── Is this operation ours at all? ────────────────────────────
         //
-        // Checked here on the submission so one for someone else's operation is
-        // refused before any fee moves, and again below on what came back
-        // authenticated -- that second check is the one REQ-COMMON-06A means,
-        // because the first reads a value the caller wrote.
+        // Refused here, before any fee moves. What AUTHENTICATES the domain is
+        // neither this comparison nor the one below it: the Proof Verifier
+        // recomputes the Authorization Digest from this value, and the proof
+        // binds that digest -- through the revealed `code_verifier` for X and
+        // GitHub, through a public input for Google. Name another domain and
+        // the digest changes, so no proof opens against it.
+        //
+        // These two comparisons are cheap consistency guards, and the second
+        // guards a different thing than the first: today the Proof Verifier
+        // copies the submitted domain through, so it can only agree, but the
+        // Consumer holds that contract by an owner-set address and must not
+        // apply an effect for a domain a future one reports instead.
         if (submission.operationDomain != CLAIM_IDENTITY_DOMAIN) {
             revert ForeignOperationDomain(submission.operationDomain);
         }
@@ -397,7 +403,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
         ICeremony.VerifiedClaim memory claimed = pv.verify{value: required}(submission);
 
-        // ── Reject a domain we do not own (REQ-COMMON-06A) ────────────
+        // ── And on the way back, whatever it reports (REQ-COMMON-06A) ─
         if (claimed.operationDomain != CLAIM_IDENTITY_DOMAIN) {
             revert ForeignOperationDomain(claimed.operationDomain);
         }
@@ -503,22 +509,14 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // outlives the format that established it.
         _s().everBound[platformId] = true;
 
-        // Put the observation on the scale every version of this platform
-        // shares, BEFORE it is compared with or written to a node.
-        //
-        // Versions read different clocks: a notary states wall-clock time,
-        // while an OIDC claim carries the token's `exp` and runs about an hour
-        // ahead. The nodes are shared by every version, so comparing the raw
-        // values compares two clocks — and the looser one wins every time. A
-        // user who bound through the OIDC version could not re-prove through
-        // the notary version until the hour it borrowed had passed, because
-        // their honest wall-clock observation read as stale against a watermark
-        // dated in the future.
-        //
-        // The allowance already states how far ahead a version's clock reads,
-        // so subtracting it recovers the moment the observation describes.
-        // Ordering inside one version is untouched: every claim shifts by the
-        // same amount.
+        // `observedAt` arrives already on the shared scale. Profiles disagree
+        // about what "now" is -- a notary states wall-clock time, an OIDC claim
+        // carries the token's `exp` and runs about an hour ahead -- and the
+        // nodes are shared, so raw values would compare two clocks and the
+        // looser one would win every time. The Platform Verifier subtracts its
+        // own allowance before returning, because only it knows the evidence it
+        // read. Subtracting again here would push one platform below every
+        // other.
 
         // Normalize here rather than trusting the verifier or the caller. The
         // key has to come from the same transform every reader uses.
