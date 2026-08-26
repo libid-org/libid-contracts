@@ -187,7 +187,7 @@ contract LayoutForgeryTest is Test {
     ///
     ///      COVERAGE is what closes it, and that is worth being exact about.
     ///      The fragments have to be disjoint for the splice to say anything
-    ///      new, and disjoint means a gap -- which `requireFullyRevealed`
+    ///      new, and disjoint means a gap -- which `requireExactCoverage`
     ///      refuses before any reader runs. The per-range read is the second
     ///      line, for a TILED response whose members sit in different ranges;
     ///      `XPlatformVerifier.t.sol` proves that one, because it cannot be

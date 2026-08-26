@@ -569,22 +569,33 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// @dev And the same again, with the genuine member behind a COMMITMENT.
+    /// @dev The one duplicate this verifier does NOT catch, asserted so the
+    ///      assumption it rests on is visible and will fail loudly if the
+    ///      reasoning ever changes.
     ///
-    ///      The scan reads revealed bytes, so a commitment is invisible to it.
-    ///      A response that genuinely names the field twice -- one of them
-    ///      echoed out of a user-controlled profile string -- lets the prover
-    ///      commit the real member and reveal the one it chose. Both the
-    ///      per-range read and the cross-range delimiter count then see exactly
-    ///      one, and the handle written is the prover's.
+    ///      The genuine member sits behind a COMMITMENT. Every reader scans
+    ///      revealed bytes, so it is invisible to the per-range read and to the
+    ///      cross-range delimiter count alike: both see exactly one member, and
+    ///      the handle recorded is the one the prover chose. The response is
+    ///      tiled, not revealed whole, so nothing rejects it.
     ///
-    ///      The identity response carries no credential, so nothing in it may
-    ///      be hidden at all.
-    function test_rejectsAnIdentityResponseHidingBytes() public {
+    ///      Reaching this requires the PLATFORM to emit a response naming an
+    ///      authoritative field twice. ASM-PROV-06 assumes it does not, and
+    ///      JSON escaping keeps a `","username":"` delimiter out of any value
+    ///      the account controls -- a quote inside a string is written `\"`,
+    ///      which does not match. This fixture writes the bytes directly,
+    ///      which no serializer would produce.
+    ///
+    ///      The layout was revealed whole precisely to close this, at the cost
+    ///      of publishing every byte of the response on chain. That trade was
+    ///      taken the other way deliberately.
+    function test_acceptsAnIdentityResponseHidingADuplicateMember() public {
         ICeremony.Submission memory s = _submission();
         s.attestations[1] = _identityAttestationHidingAMember();
-        vm.expectPartialRevert(CeremonyAttestation.UnexpectedCommitment.selector);
-        this.run{value: quote}(s);
+        ICeremony.PlatformFields memory f = this.run{value: quote}(s);
+        // `alice` is the member the prover revealed; the signed transcript also
+        // carried `victim`, behind the commitment, and nothing here saw it.
+        assertEq(f.handle, "alice");
     }
 
     /// The bytes `","username":"victim` sit inside the response, committed, and

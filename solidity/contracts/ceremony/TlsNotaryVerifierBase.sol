@@ -315,11 +315,25 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             CeremonyAttestation.requireBearerHeaderRequest(data.sent, data.sentTranscriptLength);
         identityCommitment = bearer.commitment;
 
-        // The response is revealed WHOLE, not merely tiled. Tiling alone leaves
-        // a prover free to commit the authoritative member of a duplicated
-        // field and reveal the one it chose -- and every reader below scans
-        // revealed bytes, so the committed one is invisible to all of them.
-        CeremonyAttestation.requireFullyRevealed(data.received, data.recvTranscriptLength);
+        // Tiled, not revealed whole. The response may hide bytes, which is
+        // what keeps a platform's account metadata off chain when the profile's
+        // client returns more than the two members this reads.
+        //
+        // The cost is stated rather than hidden. Every reader below scans
+        // revealed bytes, so a commitment is invisible to all of them: a
+        // response that genuinely names an authoritative field TWICE lets a
+        // prover commit the real member and reveal the one it chose, and both
+        // the per-range read and the cross-range count then see exactly one.
+        // Uniqueness is a property of the document, and this establishes it
+        // over a part.
+        //
+        // What stands in for it is ASM-PROV-06 -- the platform emits each
+        // authoritative field exactly once -- plus the platform's own JSON
+        // escaping, which keeps a delimiter out of any value the account
+        // controls. Neither is checked here, and neither can be. A duplicate
+        // that reaches the REVEALED bytes is still caught, in either range
+        // layout; only one hidden behind a commitment is not.
+        CeremonyAttestation.requireExactCoverage(data.received, data.recvTranscriptLength);
         // Joined once, for both readers. The join is what a cross-range COUNT
         // reads; the per-range values are what a READ reads.
         bytes memory joined = CeremonyAttestation.concatRevealed(data.received);
