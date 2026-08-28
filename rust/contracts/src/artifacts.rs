@@ -63,6 +63,7 @@ pub const COVERED: &[(&str, &str)] = &[
     ("WTIA9", "WTIA9"),
     // identity
     ("IdentityNames", "IdentityNames"),
+    ("HandleResolver", "HandleResolver"),
     ("IdentityJwksRoots", "IdentityJwksRoots"),
     // factory
     ("LibidFactory", "LibidFactory"),

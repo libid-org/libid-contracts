@@ -56,6 +56,9 @@ ARTIFACTS=(
     "IdentityJwksRoots:IdentityJwksRoots"
     # factory
     "LibidFactory:LibidFactory"
+    # ens (deployed once per network, not CREATE3-canonical; embedded so a
+    # consumer can deploy it without a checkout of this repository)
+    "HandleResolver:HandleResolver"
 )
 
 if [[ $# -gt 0 ]]; then

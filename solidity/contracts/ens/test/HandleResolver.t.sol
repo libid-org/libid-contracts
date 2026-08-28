@@ -146,6 +146,44 @@ contract HandleResolverTest is Test {
         resolver.resolveWithProof(response, request);
     }
 
+    /// The boundary itself, because only `expires + 1` was exercised: flip
+    /// `<` to `<=` and every answer becomes unusable in the block its own
+    /// deadline names — a failure that would surface in production, on a
+    /// fraction of calls, looking like gateway flakiness.
+    function test_anAnswerIsStillGoodInTheBlockItExpires() public view {
+        bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
+        bytes memory result = abi.encode(address(0xBEEF));
+        bytes memory response = _sign(signerKey, request, result, uint64(block.timestamp));
+
+        assertEq(resolver.resolveWithProof(response, request), result);
+    }
+
+    /// `expires` is the gateway's to choose, so the contract bounds it. Without
+    /// this a captured blob stays valid past any rename, and replaying it
+    /// returns the wallet the name USED to hold.
+    function test_anAnswerCannotClaimAnUnboundedLifetime() public {
+        bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
+        bytes memory result = abi.encode(address(0xBEEF));
+        uint64 forever = type(uint64).max;
+        bytes memory response = _sign(signerKey, request, result, forever);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                HandleResolver.DeadlineTooFar.selector, forever, block.timestamp + resolver.MAX_LIFETIME()
+            )
+        );
+        resolver.resolveWithProof(response, request);
+    }
+
+    /// And the ceiling itself is usable, not merely present.
+    function test_anAnswerAtTheCeilingIsAccepted() public view {
+        bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
+        bytes memory result = abi.encode(address(0xBEEF));
+        bytes memory response = _sign(signerKey, request, result, uint64(block.timestamp + resolver.MAX_LIFETIME()));
+
+        assertEq(resolver.resolveWithProof(response, request), result);
+    }
+
     // ─── Configuration ──────────────────────────────────────────────
 
     function test_onlyTheOwnerConfigures() public {
@@ -243,10 +281,26 @@ contract HandleResolverTest is Test {
         }
     }
 
-    /// A signature of the right length over nothing in particular. `recover`
-    /// yields SOME address for almost any 65 bytes, so the check that matters
-    /// is set membership, not recovery succeeding.
-    function test_aWellFormedResponseWithAGarbageSignatureIsRefused() public {
+    /// The check that matters is set membership, so the signature has to be
+    /// one `recover` accepts.
+    ///
+    /// This asserted nothing before: 65 zero bytes give `v == 0`, which OZ's
+    /// `ECDSA.recover` rejects with `ECDSAInvalidSignature` before the signer
+    /// lookup runs at all — so a bare `expectRevert` passed even with the
+    /// membership check deleted. A real signature from a key nobody trusts,
+    /// asserted against this contract's OWN error, is the property.
+    function test_aValidSignatureFromAnUntrustedKeyIsRefused() public {
+        bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
+        bytes memory result = abi.encode(address(0xBEEF));
+        bytes memory response = _sign(impostorKey, request, result, uint64(block.timestamp + 300));
+
+        vm.expectRevert(abi.encodeWithSelector(HandleResolver.UntrustedSigner.selector, vm.addr(impostorKey)));
+        resolver.resolveWithProof(response, request);
+    }
+
+    /// And the malformed case, kept but named for what it is: bytes that never
+    /// reach the signer set because recovery itself refuses them.
+    function test_aSignatureRecoveryCannotAcceptIsRefusedEarlier() public {
         bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
         bytes memory response = abi.encode(abi.encode(address(0xBEEF)), uint64(block.timestamp + 300), new bytes(65));
 

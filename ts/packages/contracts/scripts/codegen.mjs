@@ -42,6 +42,7 @@ const contracts = [
   { file: 'TransferFacet.sol', name: 'TransferFacet', exportName: 'transferFacetAbi' },
   { file: 'DiamondLoupeFacet.sol', name: 'DiamondLoupeFacet', exportName: 'diamondLoupeFacetAbi' },
   { file: 'IdentityNames.sol', name: 'IdentityNames', exportName: 'identityNamesAbi' },
+  { file: 'HandleResolver.sol', name: 'HandleResolver', exportName: 'handleResolverAbi' },
   { file: 'IdentityJwksRoots.sol', name: 'IdentityJwksRoots', exportName: 'identityJwksRootsAbi' },
   { file: 'XZkVerifier.sol', name: 'XZkVerifier', exportName: 'xZkVerifierAbi' },
   {
