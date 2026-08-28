@@ -197,6 +197,28 @@ contract HandleResolverTest is Test {
         resolver.resolve(name, data);
     }
 
+    /// The signing scheme, recomputed the way `ensdomains/offchain-resolver`
+    /// does it, so the claim that an off-the-shelf gateway works here is a
+    /// test rather than a sentence in a commit message.
+    ///
+    /// The reference carries `abi.encode(callData, address(this))` in
+    /// `extraData` and recovers the target by decoding it; this contract
+    /// passes `callData` alone and names `address(this)` directly. Different
+    /// bytes travel, but the gateway never sees `extraData` -- it is handed
+    /// `sender` and `data` by ERC-3668 -- and the four values that reach the
+    /// hash are the same four. Change either side and this fails.
+    function test_theSigningSchemeMatchesTheEnsReference() public view {
+        bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
+        bytes memory result = abi.encode(address(0xBEEF));
+        uint64 expires = uint64(block.timestamp + 300);
+
+        // SignatureVerifier.makeSignatureHash, inlined.
+        bytes32 expectedHash =
+            keccak256(abi.encodePacked(hex"1900", address(resolver), expires, keccak256(request), keccak256(result)));
+
+        assertEq(resolver.makeSignatureHash(address(resolver), expires, request, result), expectedHash);
+    }
+
     // ─── What the gateway may send ──────────────────────────────────
 
     /// The response is bytes from an untrusted HTTP endpoint, decoded before
