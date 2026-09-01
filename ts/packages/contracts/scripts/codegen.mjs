@@ -5,13 +5,12 @@
 // emitted `as const satisfies Abi`, so viem infers argument and return types
 // from it and a wrong call fails to compile rather than revert.
 //
-// The output is committed. `node scripts/codegen.mjs --check` regenerates to a
-// temporary directory and diffs, so CI catches an artifact the committed copy
-// has drifted from.
+// The output is NOT committed: src/abis/ is gitignored and regenerated on
+// demand. Run this before `pnpm build` — tsc compiles src/abis into dist and
+// the package ships both. CI runs it in every job that builds the package,
+// publishing included.
 
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -96,26 +95,11 @@ export const ${exportName} = ${body} as const satisfies Abi
   writeFileSync(join(targetDir, 'index.ts'), index)
 }
 
-const check = process.argv.includes('--check')
-
-if (!check) {
-  rmSync(abisDir, { recursive: true, force: true })
-  generate(abisDir)
-  console.log(`wrote ${contracts.length + 1} files to src/abis/`)
-} else {
-  const tempDir = mkdtempSync(join(tmpdir(), 'libid-abis-'))
-  try {
-    generate(tempDir)
-    try {
-      execFileSync('diff', ['-ru', abisDir, tempDir], { stdio: 'inherit' })
-    } catch {
-      console.error(
-        'ERROR: src/abis/ is out of date with solidity/out. Run `pnpm codegen` and commit.',
-      )
-      process.exit(1)
-    }
-    console.log('src/abis/ matches the forge artifacts')
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true })
-  }
+if (process.argv.length > 2) {
+  console.error(`unknown argument: ${process.argv[2]}`)
+  process.exit(2)
 }
+
+rmSync(abisDir, { recursive: true, force: true })
+generate(abisDir)
+console.log(`wrote ${contracts.length + 1} files to src/abis/`)

@@ -8,14 +8,16 @@
 # Libraries referenced through linkReferences (e.g. ZKTranscriptLib for the
 # Honk verifiers) are followed transitively and vendored too.
 #
-# The result is committed. solc is pinned (0.8.33) and via_ir builds are
-# deterministic, so regeneration is reproducible.
+# The result is NOT committed: rust/contracts/artifacts is gitignored and
+# regenerated on demand. Run this before any cargo command in rust/ — the
+# crate embeds the directory with include_dir!, so a missing one is a compile
+# error. CI runs it in every job that touches the crate, publishing included.
+#
+# solc is pinned (0.8.33) and via_ir builds are deterministic, so two runs of
+# this script over the same contracts produce byte-identical output.
 #
 # Usage:
 #   scripts/vendor-artifacts.sh           # regenerate rust/contracts/artifacts
-#   scripts/vendor-artifacts.sh --check   # regenerate to a temp dir, diff
-#                                         # against the committed copy, exit
-#                                         # nonzero on drift
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,10 +61,7 @@ ARTIFACTS=(
     "LibidFactory:LibidFactory"
 )
 
-MODE="vendor"
-if [[ "${1:-}" == "--check" ]]; then
-    MODE="check"
-elif [[ $# -gt 0 ]]; then
+if [[ $# -gt 0 ]]; then
     echo "unknown argument: $1" >&2
     exit 2
 fi
@@ -120,18 +119,7 @@ while [[ ${#queue[@]} -gt 0 ]]; do
                     | "\($p):\(.)"' "$src")
 done
 
-if [[ "$MODE" == "check" ]]; then
-    if diff -r "$STAGE" "$DEST" >/dev/null 2>&1; then
-        echo "==> artifacts are up to date"
-    else
-        echo "==> vendored artifacts drift from solidity/out:" >&2
-        diff -r "$STAGE" "$DEST" >&2 || true
-        echo "run scripts/vendor-artifacts.sh and commit the result" >&2
-        exit 1
-    fi
-else
-    rm -rf "$DEST"
-    mkdir -p "$(dirname "$DEST")"
-    cp -R "$STAGE" "$DEST"
-    echo "==> vendored $(find "$DEST" -name '*.json' | wc -l | tr -d ' ') artifacts into rust/contracts/artifacts"
-fi
+rm -rf "$DEST"
+mkdir -p "$(dirname "$DEST")"
+cp -R "$STAGE" "$DEST"
+echo "==> vendored $(find "$DEST" -name '*.json' | wc -l | tr -d ' ') artifacts into rust/contracts/artifacts"

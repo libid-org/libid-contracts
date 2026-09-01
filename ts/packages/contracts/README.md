@@ -89,7 +89,7 @@ normalize(' @Alice_1 ', RULES_X) // 'alice_1'
 ```sh
 cd solidity && forge build   # codegen reads the artifacts
 pnpm -C ts install
-pnpm -C ts codegen           # regenerate src/abis/ (codegen:check diffs)
+pnpm -C ts codegen           # generate src/abis/ (gitignored; required first)
 pnpm -C ts build             # tsc → dist/ (ESM + .d.ts)
 pnpm -C ts test              # vitest
 pnpm -C ts lint && pnpm -C ts fmt:check

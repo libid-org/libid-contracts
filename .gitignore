@@ -6,3 +6,12 @@ ts/packages/*/node_modules/
 ts/packages/*/dist/
 solidity/.circuits-check/
 circuits-release/
+
+# Generated from `forge build`, never committed. Both are packaged into their
+# published artefact (the crate embeds artifacts/ via include_dir!, the npm
+# package ships src/abis), so CI regenerates them before every build, test,
+# dry-run and publish. Locally:
+#   scripts/vendor-artifacts.sh     # -> rust/contracts/artifacts
+#   pnpm -C ts codegen              # -> ts/packages/contracts/src/abis
+rust/contracts/artifacts/
+ts/packages/contracts/src/abis/

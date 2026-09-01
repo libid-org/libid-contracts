@@ -67,15 +67,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/regen-verifiers.sh --write
 
-      # The vendored Rust artifacts embed the verifier bytecode, so they must
-      # roll together with the .sol files in the same commit — otherwise the
-      # rust job's vendor check fails on the very branch this action fixed.
-      - name: Rebuild contracts and re-vendor Rust artifacts
-        run: |
-          set -euo pipefail
-          (cd solidity && forge build)
-          ./scripts/vendor-artifacts.sh
-
       - name: Commit and push if anything changed
         run: |
           set -euo pipefail
