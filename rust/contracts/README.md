@@ -5,10 +5,13 @@ artifacts, and deploy/upgrade helpers for the libid contract stack: the login
 contracts (`Registry`, `WebWallet`, `WalletFactory`, verifiers), the Bank
 EIP-2535 diamond, and the identity-names contracts.
 
-The compiled artifacts are vendored into the crate
-(`scripts/vendor-artifacts.sh` regenerates them from `solidity/`), so a
-consumer can deploy or upgrade the whole stack against a live network with
-**zero filesystem dependencies at runtime**. Signing stays on the consumer's
+The compiled artifacts are vendored into the crate, so a consumer can deploy
+or upgrade the whole stack against a live network with **zero filesystem
+dependencies at runtime**. They are generated, not committed:
+`scripts/vendor-artifacts.sh` produces `artifacts/` from `solidity/` and CI
+runs it before every build, test and publish. Working in this repo, run it
+once after cloning — the crate embeds the directory with `include_dir!`, so
+until it exists `cargo build` fails at macro expansion. Signing stays on the consumer's
 side: every helper is generic over an alloy `Provider` you have already wired
 with a wallet.
 
