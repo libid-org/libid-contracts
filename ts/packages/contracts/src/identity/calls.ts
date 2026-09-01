@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 /// Calldata for the naming contract's own writes.
 ///
-/// Binding goes through `claim`, which takes a ceremony submission — that
-/// encoder lives in `../ceremony/`. What is left here is the one write that
+/// Binding goes through `claim`, which takes a ceremony submission. Encoding
+/// that submission is browser runtime work and lives in libid, not here; this
+/// package carries the contract wrappers. What is left is the one write that
 /// needs no proof at all.
 import { encodeFunctionData } from 'viem'
 import type { Address, Hex } from 'viem'
