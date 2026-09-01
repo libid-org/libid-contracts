@@ -5,7 +5,6 @@
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "codegen": "pnpm -r codegen",
-    "codegen:check": "pnpm -r codegen:check",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",

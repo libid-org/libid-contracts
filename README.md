@@ -29,6 +29,22 @@ forge build
 forge test
 ```
 
+`forge build` is the input to the two generated trees, neither of which is
+committed. Generate them once after cloning, and again after any change to a
+contract they cover:
+
+```sh
+scripts/vendor-artifacts.sh   # -> rust/contracts/artifacts (the crate embeds
+                              #    this with include_dir!, so cargo commands
+                              #    fail at macro expansion without it)
+pnpm -C ts codegen            # -> ts/packages/contracts/src/abis (tsc reads
+                              #    these, so `pnpm -C ts build` needs them)
+```
+
+CI runs both in every job that compiles the crate or the package, and again in
+the publish jobs — the published crate and npm package carry the generated
+output even though git does not.
+
 Some login OIDC flow tests read locally generated proof artifacts from
 `circuits/jwt_email/target/`; when those files are absent the tests skip
 themselves — that is expected.

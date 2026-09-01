@@ -1,0 +1,146 @@
+name: Deploy contracts
+
+# Deploy/upgrade the contracts on a network, signing with an AWS KMS key.
+#
+# THE DEPLOYMENT ITSELF IS NOT IMPLEMENTED YET — see the clearly marked step at
+# the bottom. Everything above it is the part that has to be right for the
+# signing identity to work at all, and it is verified end to end today: the run
+# assumes the AWS role via OIDC and prints the deployer address it would sign
+# with. That makes this workflow useful before the deploy exists — it proves the
+# trust chain, and it fails loudly if the chain breaks.
+#
+# WHY KMS AND NOT A GITHUB SECRET: the deployer owns every UUPS proxy, so the
+# ability to sign as it is the ability to replace the implementation behind the
+# contracts and drain them. A KMS key cannot be exported — CI calls kms:Sign and
+# gets a signature back — so a compromised runner can sign while the run lasts
+# but cannot walk away with the key.
+#
+# HOW THE AUTHORIZATION WORKS, and what will break it:
+#   The AWS role trusts the OIDC `sub` claim `repo:<org>/<repo>:environment:<env>`
+#   with StringEquals — an EXACT match, no wildcards. A job only receives that
+#   claim shape when it declares `environment:`. Remove the `environment:` block
+#   below and GitHub mints `repo:...:ref:refs/heads/main` instead, which the role
+#   does not trust, and the AssumeRole fails with an error that does not explain
+#   why. Rename a network without adding its sub to the trust policy and the same
+#   thing happens.
+#
+#   The trusted values live in grndd-systems/deployment,
+#   terraform/envs/testnet/main.tf → extra_deployer_subs. Currently trusted:
+#     repo:libid-org/libid-contracts:environment:testnet
+#     repo:libid-org/libid-contracts:environment:mainnet
+#
+# ONE DEPLOYER KEY SERVES BOTH NETWORKS, BY DESIGN. That means the key does not
+# separate testnet from mainnet — the GitHub Environment does. The `mainnet`
+# environment's protection rule (required reviewers) is therefore the ONLY gate
+# on a production deploy: without an approval the job never starts, so the OIDC
+# token is never minted and the role cannot be assumed. Keep it configured.
+#
+# Every third-party action is pinned by commit SHA, with the tag in a comment,
+# so a moved tag cannot change what executes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Network to deploy to
+        required: true
+        type: choice
+        options:
+          - testnet
+          - mainnet
+      dry_run:
+        description: Resolve the signer and stop, without broadcasting
+        required: false
+        type: boolean
+        default: true
+
+# Never let two deploys to the same network overlap, and never cancel one
+# mid-flight — a half-applied upgrade is worse than a queued one.
+concurrency:
+  group: deploy-${{ inputs.network }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # required to mint the OIDC token AWS exchanges for the role
+
+env:
+  FOUNDRY_VERSION: v1.7.1
+  AWS_REGION: eu-central-1
+  # The same key signs for both networks (see the note above). Its name says
+  # "testnet" for historical reasons — it is the deployer key, not a
+  # network-scoped one. Change here if a network ever gets its own.
+  KMS_KEY_ID: alias/dyaka-testnet-deployer
+
+jobs:
+  deploy:
+    name: ${{ inputs.network }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Load-bearing: this is what puts `:environment:<network>` in the OIDC token,
+    # and what lets a protection rule gate the run. See the header.
+    environment:
+      name: ${{ inputs.network }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Assume the deployer role
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Proves the whole chain works — OIDC token, trust policy, KMS grant — and
+      # reports the address that would spend. Do this BEFORE anything
+      # irreversible, so a misconfigured signer fails here rather than halfway
+      # through a deploy.
+      - name: Verify KMS signing identity
+        id: signer
+        run: |
+          set -euo pipefail
+          addr=$(cast wallet address --aws)
+          echo "deployer=$addr" >> "$GITHUB_OUTPUT"
+          echo "Network:  ${{ inputs.network }}"
+          echo "KMS key:  ${KMS_KEY_ID}"
+          echo "Deployer: $addr"
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Network | \`${{ inputs.network }}\` |"
+            echo "| Deployer | \`$addr\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
+
+      - name: Stop here on a dry run
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "dry_run — signer resolved, nothing broadcast."
+          echo "_Dry run: signer resolved, nothing broadcast._" >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------------
+      # TODO: the actual deployment. NOT IMPLEMENTED.
+      #
+      # Everything needed to sign is already in place when this runs:
+      #   - AWS credentials for the deployer role are in the environment
+      #   - AWS_KMS_KEY_ID selects the key
+      #   - forge/cast can sign with `--aws` (no private key anywhere)
+      #
+      # A broadcasting step will need an RPC endpoint per network, which is not
+      # configured yet — add it as an environment secret/variable rather than
+      # hardcoding, so testnet and mainnet cannot be confused.
+      #
+      # Guard it with `if: ${{ !inputs.dry_run }}` so the dry-run default stays
+      # safe, and keep the verify step above it.
+      # ---------------------------------------------------------------------
+      - name: Deploy
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "::error::Deployment is not implemented yet."
+          echo "See the TODO in .github/workflows/deploy.yml."
+          exit 1

@@ -38,7 +38,7 @@
   },
   "scripts": {
     "codegen": "node scripts/codegen.mjs",
-    "codegen:check": "node scripts/codegen.mjs --check",
+    "prepack": "node scripts/codegen.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
