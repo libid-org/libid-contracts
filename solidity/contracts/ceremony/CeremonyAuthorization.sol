@@ -6,12 +6,17 @@ import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 /// @title CeremonyAuthorization
 /// @notice The Authorization Digest of ceremony-common section 5, and the PKCE
 ///         construction of section 7 that carries it.
-/// @dev The Proof Verifier recomputes the digest from the submission and its
-///      own observed chain id, then hands it down; the Platform Verifier binds
-///      it to the evidence by one of two methods its profile fixes. Google
-///      compares it against a public proof input; X and GitHub recompute the
-///      revealed `code_verifier` from it. This library is the one place either
+/// @dev The Platform Verifier rebuilds the digest from the payload it decoded,
+///      its own ceremony version, and the chain it runs on, then binds it to
+///      the evidence by one of two methods its profile fixes. Google compares
+///      it against a public proof input; X and GitHub recompute the revealed
+///      `code_verifier` from it. This library is the one place either
 ///      derivation lives, so the runtime and the chain cannot disagree.
+///
+///      The chain id is read here, by `digestFor`, and nowhere else. A
+///      verifier cannot pass one in, so it cannot omit the term -- which would
+///      make every proof replayable across chains -- or derive it differently
+///      from the builders, which would reject every genuine proof.
 library CeremonyAuthorization {
     /// @dev Fixed part of the preimage: 32 + 2 + 32 + 32 + 4.
     uint256 internal constant PREIMAGE_FIXED_LEN = 102;
@@ -21,9 +26,9 @@ library CeremonyAuthorization {
     uint256 internal constant PKCE_LEN = 43;
 
     /// @dev keccak256("libid.identity.pkce"). Carries no version of its own:
-    ///      the digest already binds `platformVerifierVersion`, and a change to
-    ///      this construction changes the proof statement, which bumps that
-    ///      version (REQ-COMMON-12).
+    ///      the digest already binds the ceremony version, and a change to this
+    ///      construction changes the proof statement, which bumps that version
+    ///      (REQ-COMMON-12).
     bytes32 internal constant PKCE_DOMAIN = keccak256(bytes("libid.identity.pkce"));
 
     /// @dev Raised when the Authorized Transaction Data cannot be described by
@@ -36,8 +41,8 @@ library CeremonyAuthorization {
     ///      the four-byte length is what keeps the last boundary derivable.
     function preimage(
         bytes32 operationDomain,
-        uint16 platformVerifierVersion,
-        bytes32 chainId,
+        uint16 ceremonyVersion,
+        bytes32 chain,
         bytes32 authorizationNonce,
         bytes memory transactionData
     ) internal pure returns (bytes memory) {
@@ -48,26 +53,41 @@ library CeremonyAuthorization {
             revert TransactionDataTooLong(transactionData.length);
         }
         return abi.encodePacked(
-            operationDomain,
-            platformVerifierVersion,
-            chainId,
-            authorizationNonce,
-            uint32(transactionData.length),
-            transactionData
+            operationDomain, ceremonyVersion, chain, authorizationNonce, uint32(transactionData.length), transactionData
         );
     }
 
-    /// @notice The Authorization Digest.
+    /// @notice The Authorization Digest, over an explicit chain id.
+    /// @dev For the builders' vectors and for tests. A verifier uses
+    ///      `digestFor`, which supplies the chain id itself.
     function digest(
         bytes32 operationDomain,
-        uint16 platformVerifierVersion,
-        bytes32 chainId,
+        uint16 ceremonyVersion,
+        bytes32 chain,
         bytes32 authorizationNonce,
         bytes memory transactionData
     ) internal pure returns (bytes32) {
-        return keccak256(
-            preimage(operationDomain, platformVerifierVersion, chainId, authorizationNonce, transactionData)
-        );
+        return keccak256(preimage(operationDomain, ceremonyVersion, chain, authorizationNonce, transactionData));
+    }
+
+    /// @notice This chain's identifier, as the digest construction takes it.
+    /// @dev Read from the chain and never from a payload: there is nothing in
+    ///      a payload for a caller to choose here (REQ-COMMON-06C).
+    function chainId() internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid));
+    }
+
+    /// @notice The Authorization Digest for THIS chain.
+    /// @dev The only digest a Platform Verifier builds. It takes no chain id,
+    ///      so a verifier cannot leave the chain out of the preimage or derive
+    ///      it a second way.
+    function digestFor(
+        bytes32 operationDomain,
+        uint16 ceremonyVersion,
+        bytes32 authorizationNonce,
+        bytes memory transactionData
+    ) internal view returns (bytes32) {
+        return digest(operationDomain, ceremonyVersion, chainId(), authorizationNonce, transactionData);
     }
 
     /// @notice `SHA256(PKCE_DOMAIN || authorizationDigest || pkceNonce)`.

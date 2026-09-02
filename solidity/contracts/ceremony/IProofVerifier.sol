@@ -7,11 +7,13 @@ import {ICeremony} from "./ICeremony.sol";
 /// @notice The one component every Consumer calls to verify a libID proof.
 ///
 /// @dev Third of the four roles of ceremony-common section 5.1, counting down
-///      from the Consumer. It selects the Platform Verifier registered for the
-///      pair a submission names, recomputes the Authorization Digest, and hands
-///      both down. It reads no platform constant and applies no transaction:
-///      only the Consumer knows what one means, and only the Notary Service
-///      knows whether the notary signed. Everything between them is dispatch.
+///      from the Consumer. It is dispatch and nothing else: it selects the
+///      Platform Verifier registered for the pair a Consumer names, forwards
+///      the payload and the value to it, and forwards what comes back. It does
+///      not decode the payload, holds no platform constant, and applies no
+///      transaction. Only the Platform Verifier knows what the bytes are, only
+///      the Consumer knows what a claim means, and only the Notary Service
+///      knows whether the notary signed.
 interface IProofVerifier {
     /// @notice What one verification of this pair costs, over the whole path.
     ///
@@ -19,7 +21,7 @@ interface IProofVerifier {
     ///      the path's topology, so this covers all of it: one Notary Fee per
     ///      attestation the profile requires, and zero where it requires none
     ///      (REQ-COMMON-06E).
-    function quote(bytes32 platformId, uint16 version) external view returns (uint256);
+    function quote(bytes32 platformId, uint16 verifierVersion) external view returns (uint256);
 
     /// @notice Whether any version of this platform can be verified here.
     ///
@@ -27,11 +29,15 @@ interface IProofVerifier {
     ///      holding a copy of the Supported Version Set.
     function verifiesPlatform(bytes32 platformId) external view returns (bool);
 
-    /// @notice Verify one submission and return what it authenticated.
+    /// @notice Route one payload to the Platform Verifier for this pair and
+    ///         return what it authenticated.
     ///
-    /// @dev Returns the fields of REQ-COMMON-05E and nothing but a revert on
-    ///      rejection. The transaction data comes back opaque: interpreting it
-    ///      belongs to the Consumer that fixed the operation domain
-    ///      (REQ-COMMON-06B).
-    function verify(ICeremony.Submission calldata submission) external payable returns (ICeremony.VerifiedClaim memory);
+    /// @dev `verifierVersion` selects which registered verifier answers; it is
+    ///      this chain's slot number, chosen by governance here, and unrelated
+    ///      to the ceremony version the verifier itself supports. `payload` is
+    ///      opaque at this hop.
+    function verify(bytes32 platformId, uint16 verifierVersion, bytes calldata payload)
+        external
+        payable
+        returns (ICeremony.VerifiedClaim memory);
 }

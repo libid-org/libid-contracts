@@ -60,6 +60,12 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
         return CeremonyProfile.PLATFORM_X;
     }
 
+    /// @dev The ceremony version this contract implements. The digest binds it;
+    ///      a payload claiming another is refused before any fee moves.
+    function _ceremonyVersion() internal pure override returns (uint16) {
+        return CeremonyProfile.LAUNCH_VERSION;
+    }
+
     /// @dev Both X sessions are served by the same host.
     function _tokenAuthority() internal pure override returns (bytes32) {
         return CeremonyProfile.AUTHORITY_X_API;

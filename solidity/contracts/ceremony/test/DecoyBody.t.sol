@@ -32,12 +32,17 @@ contract DecoyBodyTest is Test {
     uint256 constant KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     uint256 constant FEE = 0.001 ether;
     uint64 constant T0 = 1_770_000_000;
-    bytes32 constant DIGEST = 0xb318fb559e16a179b853ed2853576cda16032d93b0839bb81a55135d334c0af5;
+    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
+    bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
+    /// The digest the fixtures are made for, derived in `setUp` from the
+    /// payload below and this chain.
+    bytes32 DIGEST;
     bytes32 constant NONCE = bytes32(uint256(0x4444444444444444444444444444444444444444444444444444444444444444));
     bytes32 constant TOKEN_C = bytes32(uint256(0x1111));
     bytes32 constant ID_C = bytes32(uint256(0x2222));
 
     function setUp() public {
+        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0 + 10);
         NotaryService ni = new NotaryService();
         notary = NotaryService(
@@ -75,7 +80,7 @@ contract DecoyBodyTest is Test {
     }
 
     /// head revealed | REAL refresh-grant body COMMITTED | decoy body revealed
-    function _decoyToken() private pure returns (ICeremony.Attestation memory) {
+    function _decoyToken() private view returns (ICeremony.Attestation memory) {
         bytes memory head = "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-length: 90\r\n\r\n";
         bytes memory decoy = abi.encodePacked(
             "grant_type=authorization_code&client_id=trustedApp&code_verifier=",
@@ -139,25 +144,34 @@ contract DecoyBodyTest is Test {
         return ICeremony.Attestation({attestedData: att, signature: _sign(att)});
     }
 
-    function _submission() private pure returns (ICeremony.Submission memory s) {
-        s.platformId = CeremonyProfile.PLATFORM_X;
-        s.version = 1;
-        s.pkceNonce = NONCE;
-        s.proof = hex"00";
-        s.attestations = new ICeremony.Attestation[](2);
-        s.attestations[0] = _decoyToken();
-        s.attestations[1] = _identity();
+    function _txData() private pure returns (bytes memory) {
+        return abi.encode(address(0xBEEF));
     }
 
-    function run(ICeremony.Submission memory s) external payable returns (ICeremony.PlatformFields memory) {
-        return verifier.verify{value: msg.value}(DIGEST, s);
+    function _submission() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+        s.ceremonyVersion = 1;
+        s.operationDomain = DOMAIN;
+        s.authorizationNonce = AUTH_NONCE;
+        s.transactionData = _txData();
+        s.pkceNonce = NONCE;
+        s.proof = hex"00";
+        s.tokenSession = _decoyToken();
+        s.identitySession = _identity();
+    }
+
+    function run(TlsNotaryVerifierBase.TlsNotaryProof memory s)
+        external
+        payable
+        returns (ICeremony.VerifiedClaim memory)
+    {
+        return verifier.verify{value: msg.value}(abi.encode(s));
     }
 
     /// @dev The real body is committed and a decoy is revealed after it.
     ///      Coverage tiles, so the direction looks honest -- but `grant_type`
     ///      and `code_verifier` are read from bytes the platform never parsed.
     function test_aCommittedBodyWithARevealedDecoyIsRejected() public {
-        ICeremony.Submission memory s = _submission();
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _submission();
         // Was: returned the victim's userId and handle with the attacker's
         // clientIdentifier, while x.com had executed a refresh grant that no
         // verifier ever read.

@@ -35,31 +35,13 @@ mod names_inner {
             function setProofVerifier(address verifier) external;
             function proofVerifier() external view returns (address);
 
-            /// The ceremony records the Consumer takes, in `ICeremony`'s
-            /// declaration order -- the encoding depends on it.
-            struct Attestation {
-                bytes attestedData;
-                bytes signature;
-            }
-
-            struct Submission {
-                bytes32 platformId;
-                uint16 version;
-                bytes32 operationDomain;
-                bytes32 authorizationNonce;
-                bytes transactionData;
-                bytes32 pkceNonce;
-                bytes proof;
-                bytes32[] publicInputs;
-                Attestation[] attestations;
-                bytes clientIdentifier;
-            }
-
-            /// The one write. `submission` is the ceremony record of
-            /// ceremony-common section 5.1; the value attached must equal
-            /// `quoteClaim` for the same pair exactly.
-            function claim(Submission calldata submission, bool publishName) external payable;
-            function quoteClaim(bytes32 platformId, uint16 version) external view returns (uint256);
+            /// The one write. The contract does not know what `payload` is:
+            /// it names a platform and this chain's verifier version for it,
+            /// and the Proof Verifier routes the bytes to the one contract
+            /// that decodes them. The value attached must equal `quoteClaim`
+            /// for the same pair exactly.
+            function claim(bytes32 platformId, uint16 verifierVersion, bytes calldata payload, bool publishName) external payable;
+            function quoteClaim(bytes32 platformId, uint16 verifierVersion) external view returns (uint256);
             function digestSpent(bytes32 digest) external view returns (bool);
             function unpublish(bytes32 platformId) external;
             function resolveId(bytes32 platformId, string calldata userId) external view returns (address);
@@ -68,10 +50,11 @@ mod names_inner {
             function reverseOf(address wallet, bytes32 platformId) external view returns (string memory);
             function primaryOf(address wallet, bytes32 platformId) external view returns (string memory);
 
-            /// Carries the proof version that established the binding, which
-            /// is how an operator learns whether a format is still in use
-            /// before retiring it. What the ceremony authenticated beyond the
-            /// binding rides on `CeremonyBound` instead.
+            /// Carries the ceremony version that proved the binding -- logged,
+            /// never stored, because nothing on chain acts on it and an
+            /// operator asking which bindings a version touched reads the log.
+            /// What the ceremony authenticated beyond the binding rides on
+            /// `CeremonyBound` instead.
             event IdentityBound(
                 address indexed owner,
                 bytes32 indexed idNode,
@@ -81,7 +64,7 @@ mod names_inner {
                 string handle,
                 uint64 observedAt,
                 bool published,
-                uint32 version
+                uint16 ceremonyVersion
             );
             event HandleRetired(bytes32 indexed platformId, bytes32 indexed handleNode, address indexed owner);
             event PlatformConfigured(bytes32 indexed platformId);

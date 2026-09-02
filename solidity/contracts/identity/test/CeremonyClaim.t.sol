@@ -6,7 +6,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {CeremonyAuthorization} from "../../ceremony/CeremonyAuthorization.sol";
 import {CeremonyProfile} from "../../ceremony/CeremonyProfile.sol";
-import {ICeremony} from "../../ceremony/ICeremony.sol";
 import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
 import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
 import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
@@ -15,7 +14,8 @@ import {IdentityNames} from "../IdentityNames.sol";
 import {IdentityNodes} from "../IdentityNodes.sol";
 import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
 
-/// @notice IdentityNames wearing the Proof Verifier and Consumer roles.
+/// @notice IdentityNames wearing the Consumer role, over a real Proof Verifier
+///         and a stubbed Platform Verifier.
 contract CeremonyClaimTest is Test {
     IdentityNames names;
     CeremonyProofVerifier proofVerifier;
@@ -24,6 +24,7 @@ contract CeremonyClaimTest is Test {
     address constant OWNER = address(0xA11CE);
     address constant WALLET = address(0xBEEF);
     bytes32 constant PLATFORM = CeremonyProfile.PLATFORM_X;
+    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
     uint256 constant FEE = 0.002 ether;
     uint64 constant T0 = 1_770_000_000;
 
@@ -51,38 +52,46 @@ contract CeremonyClaimTest is Test {
         vm.deal(WALLET, 100 ether);
     }
 
-    function _submission(address target, bytes32 nonce) private pure returns (ICeremony.Submission memory s) {
-        s.platformId = PLATFORM;
-        s.version = 1;
-        s.operationDomain = keccak256(bytes("libid.claim-identity"));
-        s.authorizationNonce = nonce;
-        s.transactionData = abi.encode(target);
-        s.publicInputs = new bytes32[](0);
-        s.attestations = new ICeremony.Attestation[](0);
+    /// The stub's payload for one authorization. The Consumer never sees
+    /// inside it; only the stub does.
+    function _payload(bytes32 domain, address target, bytes32 nonce) private pure returns (bytes memory) {
+        return abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: domain,
+                authorizationNonce: nonce,
+                transactionData: abi.encode(target)
+            })
+        );
     }
 
-    function _claim(ICeremony.Submission memory s, uint256 value) private {
+    function _payload(address target, bytes32 nonce) private pure returns (bytes memory) {
+        return _payload(DOMAIN, target, nonce);
+    }
+
+    function _claim(bytes memory payload, uint256 value) private {
         vm.prank(WALLET);
-        names.claim{value: value}(s, false);
+        names.claim{value: value}(PLATFORM, 1, payload, false);
+    }
+
+    function _digest(address target, bytes32 nonce) private view returns (bytes32) {
+        return CeremonyAuthorization.digestFor(DOMAIN, 1, nonce, abi.encode(target));
     }
 
     // ─── The happy path ─────────────────────────────────────────────
 
     function test_bindsAnIdentityFromACeremony() public {
-        _claim(_submission(WALLET, bytes32(uint256(1))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(1))), FEE);
         assertEq(names.resolveHandle(PLATFORM, "alice"), WALLET);
         assertEq(names.resolveId(PLATFORM, "2244994945"), WALLET);
     }
 
-    /// @dev The digest the Consumer recomputed is what the Platform Verifier
-    ///      was handed — not one the caller supplied (REQ-COMMON-46).
-    function test_forwardsTheRecomputedDigest() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(7)));
-        _claim(s, FEE);
-        bytes32 expected = CeremonyAuthorization.digest(
-            s.operationDomain, s.version, proofVerifier.chainId(), s.authorizationNonce, s.transactionData
-        );
-        assertEq(verifier.lastDigest(), expected);
+    /// @dev The Consumer hands the payload through as opaque bytes. What the
+    ///      Platform Verifier decoded and digested is what it acted on.
+    function test_recordsTheDigestTheVerifierBuilt() public {
+        _claim(_payload(WALLET, bytes32(uint256(7))), FEE);
+        assertEq(verifier.lastDigest(), _digest(WALLET, bytes32(uint256(7))));
+        assertTrue(names.digestSpent(verifier.lastDigest()));
     }
 
     /// @dev Which OAuth client produced a binding is answerable only from the
@@ -92,7 +101,7 @@ contract CeremonyClaimTest is Test {
     ///      ceremony.
     function test_logsTheAuthenticatedClientIdentifier() public {
         vm.recordLogs();
-        _claim(_submission(WALLET, bytes32(uint256(11))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(11))), FEE);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 topic = keccak256("CeremonyBound(bytes32,address,bytes32,bytes)");
@@ -104,17 +113,35 @@ contract CeremonyClaimTest is Test {
         revert("no CeremonyBound in the logs");
     }
 
+    /// @dev Logged, not stored. Nothing on chain reads which ceremony version
+    ///      proved a binding; an operator asking which bindings a version
+    ///      touched reads `IdentityBound`.
+    function test_logsTheCeremonyVersionAndStoresNothingOfIt() public {
+        vm.recordLogs();
+        _claim(_payload(WALLET, bytes32(uint256(88))), FEE);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint16)");
+        for (uint256 i = logs.length; i > 0; i--) {
+            if (logs[i - 1].topics[0] != topic) continue;
+            (,,,,, uint16 version) = abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint16));
+            assertEq(version, 1);
+            return;
+        }
+        revert("no IdentityBound in the logs");
+    }
+
     function test_quotesAndForwardsTheWholePath() public {
         assertEq(names.quoteClaim(PLATFORM, 1), FEE);
-        _claim(_submission(WALLET, bytes32(uint256(2))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(2))), FEE);
         assertEq(verifier.lastValue(), FEE);
     }
 
     function test_rejectsAnyValueOtherThanTheQuote() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(3)));
+        bytes memory p = _payload(WALLET, bytes32(uint256(3)));
         vm.prank(WALLET);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.WrongClaimValue.selector, FEE, FEE - 1));
-        names.claim{value: FEE - 1}(s, false);
+        names.claim{value: FEE - 1}(PLATFORM, 1, p, false);
     }
 
     // ─── The digest is its own replay nullifier ─────────────────────
@@ -122,24 +149,22 @@ contract CeremonyClaimTest is Test {
     /// @dev REQ-COMMON-03A. The circuit dropped its nullifier because this
     ///      exists; without it the drop would have opened a replay.
     function test_aDigestIsSpendableOnce() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(9)));
-        _claim(s, FEE);
-        bytes32 digest = CeremonyAuthorization.digest(
-            s.operationDomain, s.version, proofVerifier.chainId(), s.authorizationNonce, s.transactionData
-        );
+        bytes memory p = _payload(WALLET, bytes32(uint256(9)));
+        _claim(p, FEE);
+        bytes32 digest = _digest(WALLET, bytes32(uint256(9)));
         assertTrue(names.digestSpent(digest));
 
         vm.prank(WALLET);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.DigestAlreadySpent.selector, digest));
-        names.claim{value: FEE}(s, false);
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
     }
 
     /// @dev A fresh nonce is a fresh digest, so re-proving is always available.
     function test_aFreshNonceIsAFreshDigest() public {
         verifier.setObservedAt(T0);
-        _claim(_submission(WALLET, bytes32(uint256(1))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(1))), FEE);
         verifier.setObservedAt(T0 + 1);
-        _claim(_submission(WALLET, bytes32(uint256(2))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(2))), FEE);
         assertEq(names.resolveHandle(PLATFORM, "alice"), WALLET);
     }
 
@@ -150,68 +175,63 @@ contract CeremonyClaimTest is Test {
     ///      consent-phishing into identity theft: anyone could spend a genuine
     ///      proof at an address of their choosing.
     function test_rejectsAProofSpentAtAnotherAddress() public {
-        ICeremony.Submission memory s = _submission(address(0xDEAD), bytes32(uint256(4)));
+        bytes memory p = _payload(address(0xDEAD), bytes32(uint256(4)));
         vm.prank(WALLET);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.NotProofTarget.selector, address(0xDEAD), WALLET));
-        names.claim{value: FEE}(s, false);
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
     }
 
     /// @dev REQ-COMMON-01F: one exact encoding, and trailing bytes refused.
     function test_rejectsMalformedTransactionData() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(5)));
-        s.transactionData = abi.encodePacked(abi.encode(WALLET), hex"00");
+        bytes memory p = abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: DOMAIN,
+                authorizationNonce: bytes32(uint256(5)),
+                transactionData: abi.encodePacked(abi.encode(WALLET), hex"00")
+            })
+        );
         vm.prank(WALLET);
         vm.expectRevert(abi.encodeWithSelector(IdentityNames.BadTransactionData.selector, 33));
-        names.claim{value: FEE}(s, false);
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
     }
 
     // ─── The operation domain ───────────────────────────────────────
 
-    /// @dev REQ-COMMON-06A. Checked before any fee moves, so a submission for
-    ///      someone else's operation costs nothing.
+    /// @dev REQ-COMMON-06A. The domain is inside the payload, so the Consumer
+    ///      learns it from the verifier's report and refuses one it does not
+    ///      own before applying anything.
     function test_rejectsAForeignOperationDomain() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(6)));
-        s.operationDomain = keccak256(bytes("someone.else.operation"));
+        bytes32 foreign = keccak256(bytes("someone.else.operation"));
+        bytes memory p = _payload(foreign, WALLET, bytes32(uint256(6)));
         vm.prank(WALLET);
-        vm.expectRevert(abi.encodeWithSelector(IdentityNames.ForeignOperationDomain.selector, s.operationDomain));
-        names.claim{value: FEE}(s, false);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.ForeignOperationDomain.selector, foreign));
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
     }
 
     // ─── The Supported Version Set ──────────────────────────────────
 
-    function test_rejectsAnUnregisteredVersion() public {
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(8)));
-        s.version = 2;
+    function test_rejectsAnUnregisteredVerifierVersion() public {
+        bytes memory p = _payload(WALLET, bytes32(uint256(8)));
         vm.prank(WALLET);
         vm.expectRevert(abi.encodeWithSelector(CeremonyProofVerifier.UnknownVersion.selector, PLATFORM, uint16(2)));
-        names.claim{value: FEE}(s, false);
+        names.claim{value: FEE}(PLATFORM, 2, p, false);
     }
 
-    /// @dev REQ-COMMON-05B: more than one version of one platform at a time, so
-    ///      a deployment runs a new one beside the one it replaces.
-    function test_supportsTwoVersionsAtOnce() public {
+    /// @dev REQ-COMMON-05B: more than one verifier version of one platform at
+    ///      a time, so a deployment runs a new one beside the one it replaces.
+    function test_supportsTwoVerifierVersionsAtOnce() public {
         StubPlatformVerifier second = new StubPlatformVerifier(PLATFORM, FEE);
         second.set("999", "bob");
         vm.prank(OWNER);
         proofVerifier.setVerifier(PLATFORM, 2, IPlatformVerifier(address(second)));
 
-        _claim(_submission(WALLET, bytes32(uint256(10))), FEE);
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(11)));
-        s.version = 2;
-        _claim(s, FEE);
+        _claim(_payload(WALLET, bytes32(uint256(10))), FEE);
+        vm.prank(WALLET);
+        names.claim{value: FEE}(PLATFORM, 2, _payload(WALLET, bytes32(uint256(11))), false);
 
         assertEq(names.resolveHandle(PLATFORM, "alice"), WALLET);
         assertEq(names.resolveHandle(PLATFORM, "bob"), WALLET);
-    }
-
-    /// @dev One Supported Version Set, so the stored version is the submitted
-    ///      one and nothing marks it. Whether anybody still depends on a
-    ///      version has to be answerable before retiring it, and this is the
-    ///      record that answers.
-    function test_theBindingRecordsTheVersionItWasClaimedAt() public {
-        _claim(_submission(WALLET, bytes32(uint256(88))), FEE);
-        (,, uint32 version) = names.byId(IdentityNodes.idNode(PLATFORM, "2244994945"));
-        assertEq(version, 1);
     }
 
     /// @dev CeremonyProofVerifier's own doc says removing a version "strands no
@@ -221,7 +241,7 @@ contract CeremonyClaimTest is Test {
     ///      that were bound and still owned. A name does not belong to the
     ///      proof that established it.
     function test_aBoundNameOutlivesTheVersionThatEstablishedIt() public {
-        _claim(_submission(WALLET, bytes32(uint256(77))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(77))), FEE);
         assertEq(names.resolveId(PLATFORM, "2244994945"), WALLET);
 
         vm.prank(OWNER);
@@ -238,7 +258,7 @@ contract CeremonyClaimTest is Test {
     }
 
     /// @dev A verifier for another platform in this platform's slot would
-    ///      dispatch a submission to code that reads a different format.
+    ///      dispatch a payload to code that reads a different format.
     function test_refusesAVerifierForAnotherPlatform() public {
         StubPlatformVerifier other = new StubPlatformVerifier(CeremonyProfile.PLATFORM_GITHUB, FEE);
         vm.prank(OWNER);
@@ -257,17 +277,17 @@ contract CeremonyClaimTest is Test {
     ///      mixed-case handle lands on the same node as the normalized one.
     function test_normalizesTheHandleItself() public {
         verifier.set("2244994945", " @Alice_1 ");
-        _claim(_submission(WALLET, bytes32(uint256(12))), FEE);
+        _claim(_payload(WALLET, bytes32(uint256(12))), FEE);
         assertEq(names.resolveHandle(PLATFORM, "alice_1"), WALLET);
-        (address owner,,) = names.byHandle(IdentityNodes.handleNode(PLATFORM, "alice_1"));
+        (address owner,) = names.byHandle(IdentityNodes.handleNode(PLATFORM, "alice_1"));
         assertEq(owner, WALLET);
     }
 
     function test_rejectsAnEmptyUserId() public {
         verifier.set("", "alice");
-        ICeremony.Submission memory s = _submission(WALLET, bytes32(uint256(13)));
+        bytes memory p = _payload(WALLET, bytes32(uint256(13)));
         vm.prank(WALLET);
         vm.expectRevert(IdentityNames.NoUserId.selector);
-        names.claim{value: FEE}(s, false);
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
     }
 }

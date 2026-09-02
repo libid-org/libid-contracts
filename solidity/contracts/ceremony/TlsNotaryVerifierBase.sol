@@ -42,9 +42,45 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     bytes internal constant ACCESS_TOKEN_PREFIX = '"access_token":"';
     bytes internal constant ACCESS_TOKEN_SUFFIX = '"';
 
-    error UnexpectedClientIdentifier();
-    /// @dev The caller supplied public inputs. This verifier derives them.
-    error UnexpectedPublicInputs();
+    /// @notice What a TLSNotary profile decodes from its payload.
+    ///
+    /// @dev `abi.encode` of this struct is the payload for `x/v1` and
+    ///      `github/v1`. The two profiles share one shape because they state
+    ///      the same relation; platform separation is the route that reached
+    ///      this contract plus the authorities each subclass pins, not the
+    ///      struct's name, which the encoding does not carry.
+    ///
+    ///      It carries no platform id and no chain id: this verifier knows the
+    ///      first and reads the second. It carries no public inputs and no
+    ///      client identifier: both are DERIVED from the attestations, so a
+    ///      caller's copy would be a second representation of a fact this
+    ///      verifier already holds. The two sessions are named rather than
+    ///      listed, because they are not interchangeable.
+    ///
+    /// @param ceremonyVersion    What the payload was built for. Checked against
+    ///                           this verifier's own before anything is paid.
+    /// @param operationDomain    Into the digest, and returned for the Consumer
+    ///                           to judge (REQ-COMMON-06A).
+    /// @param authorizationNonce Into the digest, making it unique and therefore
+    ///                           its own replay nullifier.
+    /// @param transactionData    Into the digest, and returned opaque
+    ///                           (REQ-COMMON-06B).
+    /// @param pkceNonce          The PKCE salt the digest is carried under.
+    /// @param tokenSession       The token exchange, notarized.
+    /// @param identitySession    The identity read, notarized.
+    /// @param proof              Verified under the artifact governance
+    ///                           selected, never one the caller names.
+    struct TlsNotaryProof {
+        uint16 ceremonyVersion;
+        bytes32 operationDomain;
+        bytes32 authorizationNonce;
+        bytes transactionData;
+        bytes32 pkceNonce;
+        Attestation tokenSession;
+        Attestation identitySession;
+        bytes proof;
+    }
+
     error WrongRequestLine();
     error CodeVerifierMismatch();
     error ClientIdentifierNotSerializerSafe(bytes found);
@@ -195,46 +231,52 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     }
 
     /// @inheritdoc IPlatformVerifier
-    function verify(bytes32 authorizationDigest, Submission calldata submission)
-        external
-        payable
-        returns (PlatformFields memory fields)
-    {
+    function verify(bytes calldata payload) external payable returns (VerifiedClaim memory claimed) {
         uint256 fee = _base().notary.fee();
         // Exact value at every hop needs no refund path, so no partial-failure
         // or reentrancy rule is required and no value can be captured in
         // transit (REQ-COMMON-06D).
         if (msg.value != 2 * fee) revert WrongValue(2 * fee, msg.value);
-        if (submission.attestations.length != 2) {
-            revert WrongAttestationCount(2, submission.attestations.length);
-        }
-        // Both profiles read the client identifier from a revealed range, so a
-        // caller-supplied copy would duplicate a value the attested data
-        // already carries (REQ-COMMON-52).
-        if (submission.clientIdentifier.length != 0) revert UnexpectedClientIdentifier();
-        // Nor any public input. They are not the caller's to state: both are
-        // commitments this verifier has just read out of attestations it
-        // authenticated, so accepting a copy would be accepting a second
-        // representation of a fact it already holds -- and then having to
-        // check the two agree.
-        if (submission.publicInputs.length != 0) revert UnexpectedPublicInputs();
 
-        (uint64 observedAt, bytes32 tokenCommitment) = _tokenSession(authorizationDigest, submission, fee, fields);
-        bytes32 identityCommitment = _identitySession(submission, fee, fields);
+        // Decoded here and nowhere above. `abi.decode` refuses a payload that
+        // does not have exactly this shape, so there is no separate count or
+        // presence check for any field.
+        TlsNotaryProof memory p = abi.decode(payload, (TlsNotaryProof));
+        _requireCeremonyVersion(p.ceremonyVersion);
+
+        // The digest, rebuilt from what was decoded, this verifier's own
+        // version, and the chain it runs on. Never trusted for its content:
+        // it is a commitment the token session's revealed `code_verifier` has
+        // to match, so any input a caller changes yields a digest no proof
+        // opens against.
+        bytes32 digest = CeremonyAuthorization.digestFor(
+            p.operationDomain, _ceremonyVersion(), p.authorizationNonce, p.transactionData
+        );
+
+        (uint64 observedAt, bytes32 tokenCommitment) = _tokenSession(digest, p, fee, claimed);
+        bytes32 identityCommitment = _identitySession(p, fee, claimed);
 
         // Built, not compared. The proof verifies against the commitments the
         // notary signed and nothing else can be substituted for them.
-        _requireProof(submission.proof, _publicInputs(tokenCommitment, identityCommitment));
-        fields.metadataObservedAt = observedAt;
+        _requireProof(p.proof, _publicInputs(tokenCommitment, identityCommitment));
+
+        // The same locals that entered the digest, returned. The Consumer acts
+        // on these and records that digest; they are one submission's worth of
+        // facts, and this is the one function that holds all of them.
+        claimed.sessionId = digest;
+        claimed.operationDomain = p.operationDomain;
+        claimed.transactionData = p.transactionData;
+        claimed.ceremonyVersion = _ceremonyVersion();
+        claimed.metadataObservedAt = observedAt;
     }
 
     function _tokenSession(
         bytes32 authorizationDigest,
-        Submission calldata submission,
+        TlsNotaryProof memory p,
         uint256 fee,
-        PlatformFields memory fields
+        VerifiedClaim memory fields
     ) private returns (uint64 observedAt, bytes32 tokenCommitment) {
-        CeremonyAttestation.AttestedData memory data = _authenticate(submission.attestations[0], _tokenAuthority(), fee);
+        CeremonyAttestation.AttestedData memory data = _authenticate(p.tokenSession, _tokenAuthority(), fee);
 
         // REQ-COMMON-18A applies to THIS direction too. Without tiling, a
         // prover reveals two header values it composed itself and this verifier
@@ -261,7 +303,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // the transaction: retargeting an attestation to another digest would
         // take a second preimage of the revealed verifier.
         bytes memory revealedVerifier = CeremonyFields.formField(body, "code_verifier");
-        bytes memory expected = CeremonyAuthorization.codeVerifier(authorizationDigest, submission.pkceNonce);
+        bytes memory expected = CeremonyAuthorization.codeVerifier(authorizationDigest, p.pkceNonce);
         if (keccak256(revealedVerifier) != keccak256(expected)) revert CodeVerifierMismatch();
 
         bytes memory clientId = CeremonyFields.formField(body, "client_id");
@@ -288,12 +330,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         observedAt = _requireFresh(data.createdAt);
     }
 
-    function _identitySession(Submission calldata submission, uint256 fee, PlatformFields memory fields)
+    function _identitySession(TlsNotaryProof memory p, uint256 fee, VerifiedClaim memory fields)
         private
         returns (bytes32 identityCommitment)
     {
-        CeremonyAttestation.AttestedData memory data =
-            _authenticate(submission.attestations[1], _identityAuthority(), fee);
+        CeremonyAttestation.AttestedData memory data = _authenticate(p.identitySession, _identityAuthority(), fee);
 
         // REQ-COMMON-21A: the path separates operations on the same server.
         // Anchored at the origin for the same reason as the token request --

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
+import {CeremonyAuthorization} from "../CeremonyAuthorization.sol";
 import {CeremonyProfile} from "../CeremonyProfile.sol";
 import {GooglePlatformVerifier, IJwksRoots} from "../GooglePlatformVerifier.sol";
 import {ICeremony} from "../ICeremony.sol";
@@ -49,12 +50,17 @@ contract GooglePlatformVerifierTest is Test {
     uint64 constant GOOGLE_ALLOWANCE = 7200;
     uint64 constant EXP = T0 + 3600;
 
-    bytes32 constant DIGEST = 0xb318fb559e16a179b853ed2853576cda16032d93b0839bb81a55135d334c0af5;
+    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
+    bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
+    /// The digest the public inputs carry as the signed `nonce`, derived in
+    /// `setUp` from the payload below and this chain.
+    bytes32 DIGEST;
     bytes constant CLIENT_ID = "123456789-abcdef.apps.googleusercontent.com";
     string constant SUB = "123456789012345678901";
     string constant EMAIL = "a.b+tag@example.com";
 
     function setUp() public {
+        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0);
         roots = new Roots();
         honk = new Honk();
@@ -138,17 +144,29 @@ contract GooglePlatformVerifierTest is Test {
         }
     }
 
-    function _submission() private pure returns (ICeremony.Submission memory s) {
-        s.platformId = CeremonyProfile.PLATFORM_GOOGLE;
-        s.version = 1;
-        s.proof = hex"00";
-        s.publicInputs = _inputs(DIGEST, CLIENT_ID, EXP);
-        s.attestations = new ICeremony.Attestation[](0);
-        s.clientIdentifier = CLIENT_ID;
+    function _txData() private pure returns (bytes memory) {
+        return abi.encode(address(0xBEEF));
     }
 
-    function run(ICeremony.Submission memory s) external payable returns (ICeremony.PlatformFields memory) {
-        return verifier.verify{value: msg.value}(DIGEST, s);
+    /// The `google/v1` payload the public inputs are made for. Nothing
+    /// notarized in it: the evidence is the proof over a signed token, and the
+    /// contract sees only its public inputs.
+    function _payload() private view returns (GooglePlatformVerifier.GoogleProof memory s) {
+        s.ceremonyVersion = 1;
+        s.operationDomain = DOMAIN;
+        s.authorizationNonce = AUTH_NONCE;
+        s.transactionData = _txData();
+        s.clientIdentifier = CLIENT_ID;
+        s.publicInputs = _inputs(DIGEST, CLIENT_ID, EXP);
+        s.proof = hex"00";
+    }
+
+    function run(GooglePlatformVerifier.GoogleProof memory s)
+        external
+        payable
+        returns (ICeremony.VerifiedClaim memory)
+    {
+        return verifier.verify{value: msg.value}(abi.encode(s));
     }
 
     // ─── The happy path ─────────────────────────────────────────────
@@ -160,14 +178,14 @@ contract GooglePlatformVerifierTest is Test {
     ///      for a lost name, so an unbounded expiry buys a lock on one.
     function test_rejectsAnExpiryFurtherAheadThanTheAllowance() public {
         uint64 farOut = uint64(block.timestamp) + GOOGLE_ALLOWANCE + 1;
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs = _inputs(DIGEST, CLIENT_ID, farOut);
         vm.expectPartialRevert(PlatformVerifierBase.ObservedInTheFuture.selector);
         this.run(s);
     }
 
     function test_verifiesAWholeGoogleCeremony() public {
-        ICeremony.PlatformFields memory f = this.run(_submission());
+        ICeremony.VerifiedClaim memory f = this.run(_payload());
         assertEq(f.userId, SUB);
         assertEq(f.handle, EMAIL);
         assertEq(string(f.clientIdentifier), string(CLIENT_ID));
@@ -182,7 +200,7 @@ contract GooglePlatformVerifierTest is Test {
     ///      own write path, so the address keeps its dot and its plus tag
     ///      exactly as Google signed them.
     function test_returnsTheRawEmailUnnormalized() public {
-        assertEq(this.run(_submission()).handle, "a.b+tag@example.com");
+        assertEq(this.run(_payload()).handle, "a.b+tag@example.com");
     }
 
     // ─── Zero attestations, zero fee ────────────────────────────────
@@ -225,26 +243,37 @@ contract GooglePlatformVerifierTest is Test {
     /// @dev Not merely "no fee required" but "no value accepted": there is
     ///      nothing downstream to forward it to.
     function test_refusesAnyValue() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongValue.selector, 0, 1));
         this.run{value: 1}(s);
-    }
-
-    function test_refusesAnyAttestation() public {
-        ICeremony.Submission memory s = _submission();
-        s.attestations = new ICeremony.Attestation[](1);
-        vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongAttestationCount.selector, 0, 1));
-        this.run(s);
     }
 
     // ─── The digest, bound the other way round ──────────────────────
 
     /// @dev REQ-COMMON-02A. X and GitHub recompute a PKCE verifier; Google
-    ///      compares a public proof input carried by the signed `nonce`.
+    ///      compares a public proof input carried by the signed `nonce`
+    ///      against the digest it rebuilds from the payload. A token proved
+    ///      for another digest does not match.
     function test_rejectsAProofForAnotherDigest() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs = _inputs(bytes32(uint256(DIGEST) ^ 1), CLIENT_ID, EXP);
         vm.expectPartialRevert(GooglePlatformVerifier.DigestMismatch.selector);
+        this.run(s);
+    }
+
+    /// @dev And the other way round: the same token, retargeted by changing a
+    ///      digest input in the payload, opens against nothing.
+    function test_rejectsAPayloadRetargetedToAnotherDigest() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.authorizationNonce = bytes32(uint256(AUTH_NONCE) ^ 1);
+        vm.expectPartialRevert(GooglePlatformVerifier.DigestMismatch.selector);
+        this.run(s);
+    }
+
+    function test_rejectsAPayloadForAnotherCeremonyVersion() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.ceremonyVersion = 2;
+        vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongCeremonyVersion.selector, 1, 2));
         this.run(s);
     }
 
@@ -253,14 +282,14 @@ contract GooglePlatformVerifierTest is Test {
     /// @dev REQ-PLAT-19A. The digest authenticates the bytes without the
     ///      circuit packing a variable-length string into public inputs.
     function test_rejectsAForgedClientIdentifier() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.clientIdentifier = "attacker.apps.googleusercontent.com";
         vm.expectRevert(GooglePlatformVerifier.AudienceMismatch.selector);
         this.run(s);
     }
 
     function test_rejectsAMissingClientIdentifier() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.clientIdentifier = "";
         vm.expectRevert(GooglePlatformVerifier.MissingClientIdentifier.selector);
         this.run(s);
@@ -272,7 +301,7 @@ contract GooglePlatformVerifierTest is Test {
     ///      never held -- and the audience check passes for free. The contract
     ///      cannot see the circuit's range constraints, so it states its own.
     function test_rejectsAnOverwideLowAudienceHalf() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         bytes32 aud = sha256(CLIENT_ID);
         s.publicInputs[32] = bytes32(0);
         s.publicInputs[33] = aud;
@@ -283,7 +312,7 @@ contract GooglePlatformVerifierTest is Test {
     /// @dev The high half is shifted, so bits above its 128th fall off the top
     ///      and many values agree. Same rule, same reason.
     function test_rejectsAnOverwideHighAudienceHalf() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs[32] = bytes32(uint256(s.publicInputs[32]) | (uint256(1) << 128));
         vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
         this.run(s);
@@ -296,7 +325,7 @@ contract GooglePlatformVerifierTest is Test {
     ///      the one the circuit proved -- so a binding would be anchored on an
     ///      id nothing attested.
     function test_rejectsAnOverwideUserIdField() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs[34] = bytes32(uint256(s.publicInputs[34]) | (uint256(1) << 248));
         vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
         this.run(s);
@@ -304,7 +333,7 @@ contract GooglePlatformVerifierTest is Test {
 
     /// @dev The email is two such elements, and the same silence covers both.
     function test_rejectsAnOverwideEmailField() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs[36] = bytes32(uint256(s.publicInputs[36]) | (uint256(1) << 248));
         vm.expectPartialRevert(GooglePlatformVerifier.PublicInputOverwide.selector);
         this.run(s);
@@ -318,7 +347,7 @@ contract GooglePlatformVerifierTest is Test {
         Roots empty = new Roots();
         vm.prank(OWNER);
         verifier.setJwksRoots(IJwksRoots(address(empty)));
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectPartialRevert(GooglePlatformVerifier.UntrustedModulus.selector);
         this.run(s);
     }
@@ -330,7 +359,7 @@ contract GooglePlatformVerifierTest is Test {
         lapsed.trust(_modulusHash(), T0);
         vm.prank(OWNER);
         verifier.setJwksRoots(IJwksRoots(address(lapsed)));
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectPartialRevert(GooglePlatformVerifier.UntrustedModulus.selector);
         this.run(s);
     }
@@ -339,27 +368,27 @@ contract GooglePlatformVerifierTest is Test {
 
     function test_rejectsAnExpiredToken() public {
         vm.warp(EXP);
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectPartialRevert(GooglePlatformVerifier.TokenExpired.selector);
         this.run(s);
     }
 
     function test_acceptsRightUpToExpiry() public {
         vm.warp(EXP - 1);
-        this.run(_submission());
+        this.run(_payload());
     }
 
     // ─── The proof ──────────────────────────────────────────────────
 
     function test_rejectsAProofThatDoesNotVerify() public {
         honk.setAnswer(false);
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectRevert(PlatformVerifierBase.BadProof.selector);
         this.run(s);
     }
 
     function test_rejectsTheWrongPublicInputCount() public {
-        ICeremony.Submission memory s = _submission();
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
         s.publicInputs = new bytes32[](55);
         vm.expectRevert(abi.encodeWithSelector(GooglePlatformVerifier.WrongPublicInputCount.selector, 56, 55));
         this.run(s);

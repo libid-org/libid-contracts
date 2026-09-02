@@ -8,7 +8,6 @@ import {HandleNormalizer} from "../HandleNormalizer.sol";
 import {HandleVectors} from "../HandleVectors.sol";
 import {IdentityNames} from "../IdentityNames.sol";
 import {IdentityNodes} from "../IdentityNodes.sol";
-import {ICeremony} from "../../ceremony/ICeremony.sol";
 import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
 import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
 import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
@@ -86,18 +85,26 @@ contract IdentityNamesTest is Test {
         githubVerifier.setObservedAt(at);
     }
 
+    /// The stub's payload for the staged target, under the ceremony version
+    /// the stub will echo back.
+    function _payload(uint16 ceremonyVersion) internal returns (bytes memory) {
+        return abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: ceremonyVersion,
+                // A literal, not `names.CLAIM_IDENTITY_DOMAIN()`: reading it
+                // is an external call, and it would spend the caller's prank.
+                operationDomain: keccak256(bytes("libid.claim-identity")),
+                authorizationNonce: bytes32(++nonce),
+                transactionData: abi.encode(stagedTarget)
+            })
+        );
+    }
+
     /// Submit the staged claim. The caller supplies the prank, the way a
     /// wallet supplies `msg.sender`.
     function _claim(bytes32 platformId, bool publishName) internal {
-        ICeremony.Submission memory s;
-        s.platformId = platformId;
-        s.version = V1;
-        // A literal, not `names.CLAIM_IDENTITY_DOMAIN()`: reading it is an
-        // external call, and it would spend the caller's prank.
-        s.operationDomain = keccak256(bytes("libid.claim-identity"));
-        s.authorizationNonce = bytes32(++nonce);
-        s.transactionData = abi.encode(stagedTarget);
-        names.claim(s, publishName);
+        bytes memory payload = _payload(V1);
+        names.claim(platformId, V1, payload, publishName);
     }
 
     /// Stage a claim and bind it as `who`.
@@ -405,15 +412,16 @@ contract IdentityNamesTest is Test {
         assertTrue(_lastBindPublished(), "the flag was false, the name is still on display");
     }
 
-    /// The `published` flag and the proof version out of the last
+    /// The `published` flag and the ceremony version out of the last
     /// `IdentityBound` in the recorded logs.
-    function _lastBind() internal returns (bool published, uint32 version) {
+    function _lastBind() internal returns (bool published, uint16 ceremonyVersion) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint32)");
+        bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint16)");
         for (uint256 i = logs.length; i > 0; i--) {
             if (logs[i - 1].topics[0] != topic) continue;
-            (,,,, published, version) = abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint32));
-            return (published, version);
+            (,,,, published, ceremonyVersion) =
+                abi.decode(logs[i - 1].data, (bytes32, string, string, uint64, bool, uint16));
+            return (published, ceremonyVersion);
         }
         revert("no IdentityBound in the logs");
     }
@@ -561,10 +569,11 @@ contract IdentityNamesTest is Test {
         assertEq(names.resolveId(X, "123"), alice);
     }
 
-    /// Whether a version is still in use has to be answerable BEFORE retiring
-    /// it, or the owner is guessing. The binding carries the version, and it
-    /// costs no extra storage: 20 + 8 + 4 bytes is one word.
-    function test_theBindingRecordsWhichVersionProvedIt() public {
+    /// Which ceremony version proved a binding is logged and never stored.
+    /// By the time anybody asks, the proof has happened and the effect has
+    /// been applied; the question is an operator's, and the log answers it.
+    /// The binding itself is an owner and a watermark, nothing more.
+    function test_theLogRecordsWhichCeremonyVersionProvedIt() public {
         StubPlatformVerifier v2 = new StubPlatformVerifier(X, 0);
         vm.prank(owner);
         proofVerifier.setVerifier(X, 2, IPlatformVerifier(address(v2)));
@@ -574,22 +583,19 @@ contract IdentityNamesTest is Test {
         v2.setObservedAt(100);
         vm.recordLogs();
 
-        ICeremony.Submission memory sub;
-        sub.platformId = X;
-        sub.version = 2;
-        sub.operationDomain = names.CLAIM_IDENTITY_DOMAIN();
-        sub.authorizationNonce = bytes32(uint256(0xf00d));
-        sub.transactionData = abi.encode(bob);
+        bytes memory payload = _payload(2);
         vm.prank(bob);
-        names.claim(sub, false);
+        names.claim(X, 2, payload, false);
 
-        (,, uint32 idVersion) = names.byId(IdentityNodes.idNode(X, "456"));
-        (,, uint32 handleVersion) = names.byHandle(IdentityNodes.handleNode(X, "bob"));
-        assertEq(idVersion, 2, "the id node");
-        assertEq(handleVersion, 2, "the handle node");
+        (address idOwner, uint64 idAt) = names.byId(IdentityNodes.idNode(X, "456"));
+        (address handleOwner, uint64 handleAt) = names.byHandle(IdentityNodes.handleNode(X, "bob"));
+        assertEq(idOwner, bob, "the id node");
+        assertEq(handleOwner, bob, "the handle node");
+        assertEq(idAt, 100);
+        assertEq(handleAt, 100);
 
-        (, uint32 logged) = _lastBind();
-        assertEq(logged, 2, "and the log an indexer reads");
+        (, uint16 logged) = _lastBind();
+        assertEq(logged, 2, "the log an indexer reads");
     }
 
     // ─── A platform is not usable until it can verify ───────────────
@@ -642,16 +648,15 @@ contract IdentityNamesTest is Test {
         assertEq(names.resolveHandle(X, "alice"), alice);
     }
 
-    /// A node nobody holds is not a dependency on its proof format. Leaving
-    /// the version set would report one that cannot exist and postpone the
-    /// retirement the field exists to enable.
-    function test_aRetiredHandleReportsNoVersion() public {
+    /// A retired handle has no owner and keeps its watermark, so a proof
+    /// older than the one that retired it cannot take the node back.
+    function test_aRetiredHandleHasNoOwnerAndKeepsItsWatermark() public {
         _bind(alice, "123", "alice", 100);
         _bind(alice, "123", "alice2", 200);
 
-        (address ownerOf,, uint32 version) = names.byHandle(IdentityNodes.handleNode(X, "alice"));
+        (address ownerOf, uint64 at) = names.byHandle(IdentityNodes.handleNode(X, "alice"));
         assertEq(ownerOf, address(0), "the handle was retired");
-        assertEq(version, 0, "but it still claims a version");
+        assertEq(at, 100, "the watermark stays");
     }
 
     // ─── Ownership ──────────────────────────────────────────────────
