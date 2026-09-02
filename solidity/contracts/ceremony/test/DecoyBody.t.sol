@@ -117,7 +117,7 @@ contract DecoyBodyTest is Test {
         });
 
         bytes memory att = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, recv);
-        return ICeremony.Attestation({attestedData: att, signature: _sign(att)});
+        return ICeremony.Attestation({attestedData: att, proof: _sign(att)});
     }
 
     function _identity() private pure returns (ICeremony.Attestation memory) {
@@ -141,7 +141,7 @@ contract DecoyBodyTest is Test {
             length: uint32(body.length)
         });
         bytes memory att = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, recv);
-        return ICeremony.Attestation({attestedData: att, signature: _sign(att)});
+        return ICeremony.Attestation({attestedData: att, proof: _sign(att)});
     }
 
     function _txData() private pure returns (bytes memory) {

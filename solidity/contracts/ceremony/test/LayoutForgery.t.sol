@@ -125,7 +125,7 @@ contract LayoutForgeryTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     /// The identity session. The SENT side is wholly honest and exactly
@@ -166,7 +166,7 @@ contract LayoutForgeryTest is Test {
             length: sentLen
         });
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _txData() private pure returns (bytes memory) {
@@ -252,7 +252,7 @@ contract LayoutForgeryTest is Test {
             length: total
         });
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _honestIdentityRecv() private pure returns (AttestationBuilder.Direction memory received) {

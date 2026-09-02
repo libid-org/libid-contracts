@@ -129,7 +129,7 @@ contract PlantedRangeForgeryTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse());
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _honestIdentity() private view returns (ICeremony.Attestation memory) {
@@ -156,7 +156,7 @@ contract PlantedRangeForgeryTest is Test {
             length: uint32(body.length)
         });
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _txData() private pure returns (bytes memory) {
@@ -217,7 +217,7 @@ contract PlantedRangeForgeryTest is Test {
         AttestationBuilder.Direction memory sent =
             AttestationBuilder.Direction({revealed: rs, commitments: AttestationBuilder.none(), length: e3});
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse());
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function test_skeptic2_perFieldLayoutIsRejected() public {

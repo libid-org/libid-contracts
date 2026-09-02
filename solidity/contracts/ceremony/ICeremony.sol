@@ -14,20 +14,23 @@ pragma solidity ^0.8.24;
 ///      sessions and a PKCE nonce for X and GitHub, a signed token's public
 ///      inputs for Google -- and nothing above the verifier needs to read them.
 interface ICeremony {
-    /// @notice One attestation and the notary signature over it.
-    /// @dev The Notary Service derives the verification key from this pair
-    ///      alone and accepts no caller-supplied digest, preimage hash, or
-    ///      verifying key: a caller-computed digest authenticates whatever the
-    ///      caller hashed, not the bytes the Platform Verifier goes on to read
+    /// @notice One attestation and the notary's proof that it stood behind it.
+    /// @dev The Notary Service authenticates this pair by itself and accepts
+    ///      no caller-supplied digest, preimage hash, or verifying key: a
+    ///      caller-computed digest authenticates whatever the caller hashed,
+    ///      not the bytes the Platform Verifier goes on to read
     ///      (REQ-COMMON-49).
     ///
-    ///      The attested bytes are the notary's format, not this chain's. One
-    ///      notary serves every chain, so what it signs is chain-agnostic and
-    ///      is decoded by the Notary Service alone; the envelope around it is
-    ///      what each chain encodes its own way.
+    ///      Both halves are opaque above the Notary Service. The attested
+    ///      bytes are the notary's format, not this chain's -- one notary
+    ///      serves every chain, so what it attests is chain-agnostic and is
+    ///      decoded by the Notary Service alone. The proof is whatever that
+    ///      service accepts: a signature today, and nothing here would change
+    ///      if it became a threshold of them or a zero-knowledge argument. The
+    ///      envelope around the pair is what each chain encodes its own way.
     struct Attestation {
         bytes attestedData;
-        bytes signature;
+        bytes proof;
     }
 
     /// @notice What a Platform Verifier returns on acceptance, and nothing but a

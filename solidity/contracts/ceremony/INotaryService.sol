@@ -9,14 +9,20 @@ import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 ///      nothing else. Which ranges a profile expects and what their bytes must
 ///      contain belong to the Platform Verifier (REQ-COMMON-51); deciding
 ///      anything profile-specific here is forbidden outright (REQ-COMMON-33).
+///
+///      And nothing above it knows how the answer is reached. A Platform
+///      Verifier holds attested bytes and an opaque proof that the notary stood
+///      behind them; whether that proof is one signature, a threshold of them,
+///      or a zero-knowledge argument, and whether the trusted set is one key or
+///      many, is this service's implementation and is not on this interface.
 interface INotaryService {
     /// @notice Authenticate one attestation, and charge one fee for doing it.
     ///
-    /// @dev Takes the attested data and its signature and derives the
-    ///      verification key from that pair alone. It accepts no digest,
-    ///      preimage hash, or verifying key from its caller: a caller-computed
-    ///      digest authenticates whatever the caller hashed, which need not be
-    ///      the bytes the Platform Verifier goes on to read (REQ-COMMON-49).
+    /// @dev Takes the attested data and the proof over it and authenticates
+    ///      the pair by itself. It accepts no digest, preimage hash, or
+    ///      verifying key from its caller: a caller-computed digest
+    ///      authenticates whatever the caller hashed, which need not be the
+    ///      bytes the Platform Verifier goes on to read (REQ-COMMON-49).
     ///
     ///      Rejection is a revert, never a returned failure. REQ-COMMON-42
     ///      requires the fees of one submission to take effect together or not
@@ -33,15 +39,18 @@ interface INotaryService {
     ///      that pair independently, free to drift from the first.
     ///
     ///      It also removes a shape rather than a bug. With `void` here, the
-    ///      decoder is reachable without the signature check -- nothing but two
-    ///      statements staying adjacent keeps "authenticate, then read" true.
+    ///      decoder is reachable without the authenticity check -- nothing but
+    ///      two statements staying adjacent keeps "authenticate, then read"
+    ///      true.
     ///      Handed back, the fields cannot be reached without paying for the
     ///      check that vouches for them.
     ///
     /// @param attestedData The exact bytes of ceremony-common section 9.1.
-    /// @param signature    The notary signature over `keccak256(attestedData)`.
-    /// @return attested    Those bytes decoded, once the key has vouched.
-    function verify(bytes calldata attestedData, bytes calldata signature)
+    /// @param proof        Whatever this service accepts as the notary's
+    ///                     authentication of `attestedData`. Opaque to the
+    ///                     caller.
+    /// @return attested    Those bytes decoded, once the service has vouched.
+    function verify(bytes calldata attestedData, bytes calldata proof)
         external
         payable
         returns (CeremonyAttestation.AttestedData memory attested);
@@ -55,7 +64,4 @@ interface INotaryService {
     ///      varies by principal or content is selective censorship of a
     ///      permissionless service (REQ-COMMON-34C).
     function fee() external view returns (uint256);
-
-    /// @notice Whether a key is currently one the service trusts.
-    function isTrustedNotary(address key) external view returns (bool);
 }
