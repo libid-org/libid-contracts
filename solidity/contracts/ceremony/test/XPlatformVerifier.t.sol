@@ -151,7 +151,7 @@ contract XPlatformVerifierTest is Test {
         received = _tokenResponse(bearerFraming);
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     /// A token response shaped like the real one:
@@ -241,7 +241,7 @@ contract XPlatformVerifierTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _txData() private pure returns (bytes memory) {
@@ -375,7 +375,7 @@ contract XPlatformVerifierTest is Test {
     function test_rejectsAnUntrustedNotary() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         bytes memory attested = s.identitySession.attestedData;
-        s.identitySession.signature = _signWith(0xB0B, attested);
+        s.identitySession.proof = _signWith(0xB0B, attested);
         vm.expectPartialRevert(NotaryService.UntrustedNotary.selector);
         this.run{value: quote}(s);
     }
@@ -654,7 +654,7 @@ contract XPlatformVerifierTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     /// @dev The same, with the two members in SEPARATE revealed ranges.
@@ -756,7 +756,7 @@ contract XPlatformVerifierTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     // ─── The token response covers every byte ───────────────────────
@@ -812,7 +812,7 @@ contract XPlatformVerifierTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     // ─── The token response anchors (REQ-PLAT-57, TEST-PLAT-22) ─────
@@ -868,7 +868,7 @@ contract XPlatformVerifierTest is Test {
             length: uint32(body.length)
         });
         bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     /// @dev The authority is what the notary authenticated, not a revealed
@@ -883,7 +883,7 @@ contract XPlatformVerifierTest is Test {
         for (uint256 i = 0; i < 32; ++i) {
             attested[i] = evil[i];
         }
-        s.identitySession = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        s.identitySession = ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
         vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
     }

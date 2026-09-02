@@ -135,7 +135,7 @@ contract GitHubPlatformVerifierTest is Test {
         });
 
         bytes memory attested = AttestationBuilder.encode(authority, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _identity(string memory body, bytes32 authority) private pure returns (ICeremony.Attestation memory) {
@@ -165,7 +165,7 @@ contract GitHubPlatformVerifierTest is Test {
             length: uint32(b.length)
         });
         bytes memory attested = AttestationBuilder.encode(authority, T0, sent, received);
-        return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
     function _txData() private pure returns (bytes memory) {
@@ -297,7 +297,7 @@ contract GitHubPlatformVerifierTest is Test {
         // — a cheap check that the shared guard runs for GitHub too. It is the
         // first 32 bytes now that the stamped tags are gone.
         attested[0] = bytes1(uint8(attested[0]) ^ 0x01);
-        s.identitySession = ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
+        s.identitySession = ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
         vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
     }

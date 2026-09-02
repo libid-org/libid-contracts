@@ -99,7 +99,7 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
     // ─── Verification ───────────────────────────────────────────────
 
     /// @inheritdoc INotaryService
-    function verify(bytes calldata attestedData, bytes calldata signature)
+    function verify(bytes calldata attestedData, bytes calldata proof)
         external
         payable
         returns (CeremonyAttestation.AttestedData memory)
@@ -114,7 +114,11 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
         bytes32 digest = CeremonyAttestation.digest(attestedData);
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
 
-        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, signature);
+        // Here, and only here, the proof is an ECDSA signature over the
+        // EIP-191 hash of the attested bytes. The interface above calls it a
+        // proof so that this is a fact about this contract, not about the
+        // path.
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, proof);
         if (err != ECDSA.RecoverError.NoError) revert MalformedSignature();
         if (!_s().trusted[recovered]) revert UntrustedNotary(recovered);
 
@@ -130,7 +134,9 @@ contract NotaryService is INotaryService, Initializable, UUPSUpgradeable, Ownabl
         return _s().fee;
     }
 
-    /// @inheritdoc INotaryService
+    /// @notice Whether a key is currently one this service trusts.
+    /// @dev An operator read, not part of `INotaryService`: nothing on the
+    ///      verification path needs to know that trust is a set of keys.
     function isTrustedNotary(address key) external view returns (bool) {
         return _s().trusted[key];
     }
