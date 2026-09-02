@@ -1,7 +1,7 @@
 {
   "name": "@libid/contracts",
   "version": "0.6.0",
-  "description": "Typed viem-ready ABIs for the libid contracts, plus the identity helper layer (handle normalization, bind, resolve).",
+  "description": "Typed viem-ready ABIs for the libid contracts, plus the identity helper layer (handle normalization, resolve, calldata).",
   "license": "(MIT OR Apache-2.0)",
   "repository": {
     "type": "git",
@@ -41,8 +41,7 @@
     "prepack": "node scripts/codegen.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "regen:fixtures": "tsx src/identity/fixtures/regen.ts"
+    "test": "vitest run"
   },
   "peerDependencies": {
     "viem": "^2.48.11"

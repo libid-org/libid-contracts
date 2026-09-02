@@ -63,9 +63,6 @@ pub const COVERED: &[(&str, &str)] = &[
     ("WTIA9", "WTIA9"),
     // identity
     ("IdentityNames", "IdentityNames"),
-    ("GitHubIdentityVerifier", "GitHubIdentityVerifier"),
-    ("GoogleIdentityVerifier", "GoogleIdentityVerifier"),
-    ("XIdentityVerifier", "XIdentityVerifier"),
     ("IdentityJwksRoots", "IdentityJwksRoots"),
     // factory
     ("LibidFactory", "LibidFactory"),

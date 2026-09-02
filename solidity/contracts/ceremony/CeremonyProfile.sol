@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/// @title CeremonyProfile
+/// @notice The tags a Platform Verifier pins, and the governance-owned
+///         protocol parameters it reads.
+///
+/// @dev THE NAMESPACED STRINGS ARE OURS, NOT THE SPECIFICATION'S.
+///      ceremony-common fixes exactly one literal: `libid.identity.pkce`, in
+///      section 7. The platform name (REQ-COMMON-55) and each Consumer's
+///      operation domain (REQ-COMMON-01A) are required to exist and required
+///      to be pinned, but their bytes are left to the profile author.
+///
+///      So these are a cross-implementation agreement, not a reading of the
+///      specification. A Consumer dispatching on one string and a verifier
+///      registered under another simply never meet, with no error that says
+///      why.
+///
+///      The attestation no longer carries a namespaced string at all. The
+///      format tag, the platform id and the session tag were things the notary
+///      was handed and wrote down as though observed; what it signs now names
+///      only the host it authenticated.
+library CeremonyProfile {
+    // --- Platform identifiers -----------------------------------------------
+
+    bytes32 internal constant PLATFORM_GOOGLE = keccak256(bytes("google"));
+    bytes32 internal constant PLATFORM_X = keccak256(bytes("x"));
+    bytes32 internal constant PLATFORM_GITHUB = keccak256(bytes("github"));
+
+    // --- Authorities --------------------------------------------------------
+
+    /// @dev The lowercase ASCII TLS server name, with no trailing dot, that the
+    ///      notary authenticated. It reaches the verifier as `authorityId` and
+    ///      never as a transcript range: the transcript holds the authority
+    ///      only in a prover-composed `Host` header, which says nothing about
+    ///      which server answered (REQ-COMMON-21, REQ-COMMON-56).
+    ///
+    ///      GitHub's two sessions have two different authorities.
+    bytes32 internal constant AUTHORITY_X_API = keccak256(bytes("api.x.com"));
+    bytes32 internal constant AUTHORITY_GITHUB = keccak256(bytes("github.com"));
+    bytes32 internal constant AUTHORITY_GITHUB_API = keccak256(bytes("api.github.com"));
+
+    // --- Launch profile shape ------------------------------------------------
+
+    /// @dev Launch profiles are `google/v1`, `x/v1` and `github/v1`
+    ///      (REQ-PLAT-01).
+    uint16 internal constant LAUNCH_VERSION = 1;
+
+    /// @dev Derived from the session list the profile fixes, never stated
+    ///      beside it (REQ-COMMON-41). Google verifies none and pays nothing;
+    ///      X and GitHub verify two each, so one submission pays two fees.
+    function attestationCount(bytes32 platformId) internal pure returns (uint8) {
+        if (platformId == PLATFORM_GOOGLE) return 0;
+        if (platformId == PLATFORM_X || platformId == PLATFORM_GITHUB) return 2;
+        revert UnknownPlatform(platformId);
+    }
+
+    error UnknownPlatform(bytes32 platformId);
+
+    // --- Protocol parameters -------------------------------------------------
+
+    /// @dev Governance-owned seconds, read where they are enforced. The
+    ///      Platform Verifier reads the current value when it verifies and MUST
+    ///      NOT accept a caller-supplied substitute (REQ-PARAM-02). These are
+    ///      the launch values; a deployment stores and updates them.
+    uint64 internal constant LAUNCH_PROOF_LIFETIME_X = 3600;
+    uint64 internal constant LAUNCH_PROOF_LIFETIME_GITHUB = 3600;
+    uint64 internal constant LAUNCH_MAX_FUTURE_ATTESTATION_SKEW = 300;
+}

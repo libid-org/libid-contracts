@@ -10,12 +10,19 @@
     "",
     "Normalization is a closed byte transform. It is not Unicode case folding",
     "and not UTS-46. Handles on the supported platforms are ASCII, so a closed",
-    "transform gives three languages the same answer with no shared library."
+    "transform gives three languages the same answer with no shared library.",
+    "",
+    "A platform id is keccak256 of the platform NAME, with no namespace of",
+    "its own: REQ-COMMON-55 fixes it as the keccak256 of the UTF-8 bytes of",
+    "the identity-platform name, and the notary derives the same value when",
+    "it signs an attestation. libID's own constructs -- the node tags, the",
+    "attestation format tag, the session tags -- are libid-namespaced; a",
+    "platform's name is not libID's to namespace."
   ],
   "platforms": [
     {
       "key": "x",
-      "domain": "dyaka.identity.platform.x",
+      "domain": "x",
       "stripLeadingAt": true,
       "maxLength": 15,
       "shape": "handle",
@@ -27,7 +34,7 @@
     },
     {
       "key": "github",
-      "domain": "dyaka.identity.platform.github",
+      "domain": "github",
       "stripLeadingAt": true,
       "maxLength": 39,
       "shape": "handle",
@@ -42,20 +49,26 @@
     },
     {
       "key": "google",
-      "domain": "dyaka.identity.platform.google",
+      "domain": "google",
       "stripLeadingAt": false,
       "maxLength": 62,
       "shape": "email",
+      "allowUnderscore": false,
+      "allowHyphen": false,
       "note": [
         "The address is used as proved. This transform does not remove dots,",
         "does not strip a +tag, and does not rewrite a domain, because two",
         "different addresses must never become one identity.",
         "",
         "62 bytes is a hard limit and not only a lookup limit. A longer address",
-        "is rejected instead of truncated, for the same reason."
+        "is rejected instead of truncated, for the same reason.",
+        "",
+        "allowUnderscore and allowHyphen are stated for completeness and",
+        "are never read: the email shape supersedes both, and the address",
+        "set already carries the underscore and the hyphen."
       ],
       "futureAllowanceSeconds": 7200,
-      "allowanceNote": "The OIDC circuit exposes no `iat`, so the observation is the token's `exp` — Google issues about an hour of life, and the claim therefore reads roughly an hour ahead of the moment it describes."
+      "allowanceNote": "The OIDC circuit exposes no `iat`, so the observation is the token's `exp` \u2014 Google issues about an hour of life, and the claim therefore reads roughly an hour ahead of the moment it describes."
     }
   ],
   "errors": [
@@ -155,7 +168,7 @@
     },
     {
       "platform": "x",
-      "input": "alicé",
+      "input": "alic\u00e9",
       "error": "BadCharacter",
       "note": "A byte above 0x7f is refused."
     },

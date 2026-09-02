@@ -14,10 +14,7 @@ use alloy::{
 };
 use libid_contracts::{
     bindings::{
-        identity::{
-            GitHubIdentityVerifier,
-            IdentityNames,
-        },
+        identity::IdentityNames,
         login::{
             IRegistryAdmin,
             Registry,
@@ -190,8 +187,8 @@ async fn deploys_the_bank_diamond() {
     );
 }
 
-/// (c) IdentityNames behind proxy + GitHubIdentityVerifier behind proxy,
-/// wired via setPlatform + setVerifier, then views.
+/// (c) IdentityNames behind proxy, given a keyspace with setPlatform, then
+/// views. Wiring a verifier belongs to CeremonyProofVerifier now.
 #[tokio::test]
 async fn deploys_the_identity_stack() {
     let provider = test_provider();
@@ -208,45 +205,9 @@ async fn deploys_the_identity_stack() {
     .await
     .unwrap();
 
-    let notary_proxy = deploy_behind_proxy(
-        &provider,
-        &artifacts,
-        "Notary",
-        &Notary::initializeCall {
-            owner_: deployer,
-            notary_: Address::repeat_byte(0x11),
-        },
-        None,
-    )
-    .await
-    .unwrap();
-
-    let github_proxy = deploy_behind_proxy(
-        &provider,
-        &artifacts,
-        "GitHubIdentityVerifier",
-        &GitHubIdentityVerifier::initializeCall {
-            owner_: deployer,
-            notaryContract_: notary_proxy,
-            shape_: GitHubIdentityVerifier::ResponseShape {
-                endpoint: "/user".into(),
-                handlePrefix: "\"login\":\"".into(),
-                idPrefix: "\"id\":".into(),
-                idSuffix: ",".into(),
-            },
-        },
-        None,
-    )
-    .await
-    .unwrap();
-
-    let github = GitHubIdentityVerifier::new(github_proxy, &provider);
-    assert_eq!(
-        github.platformName().call().await.unwrap(),
-        "api.github.com"
-    );
-
-    let platform_id = keccak256(b"libid.identity.platform.github");
+    // The platform id is the platform's own bare name: libID namespaces
+    // only its own strings.
+    let platform_id = keccak256(b"github");
     let names = IdentityNames::new(names_proxy, &provider);
     // The keyspace and the proof format are configured separately: rules do
     // not vary by version, verifiers do.
@@ -268,33 +229,14 @@ async fn deploys_the_identity_stack() {
         .await
         .unwrap();
 
-    let version = names.INITIAL_VERSION().call().await.unwrap();
-    names
-        .setVerifier(platform_id, version, github_proxy, 3600)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-
-    assert_eq!(
-        names.verifierOf(platform_id, version).call().await.unwrap(),
-        github_proxy
-    );
-    // The first version installed becomes the platform's default.
-    assert_eq!(
-        names.latestVersionOf(platform_id).call().await.unwrap(),
-        version
-    );
-    // An unbound id resolves to nobody rather than reverting.
-    assert_eq!(
-        names
-            .resolveId(platform_id, "12345".into())
-            .call()
-            .await
-            .unwrap(),
-        Address::ZERO
+    // Wiring a verifier is the Proof Verifier's call now, not this contract's,
+    // and this deploy stops at the keyspace. A platform that owns a keyspace
+    // and can verify nothing says so: answering `address(0)` would tell the
+    // caller "nobody holds this name" about a platform that is not wired yet.
+    let unwired = names.resolveId(platform_id, "12345".into()).call().await;
+    assert!(
+        unwired.is_err(),
+        "an unwired platform answered instead of reverting UnknownPlatform"
     );
 }
 

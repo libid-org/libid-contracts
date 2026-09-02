@@ -7,23 +7,34 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {HandleNormalizer} from "../HandleNormalizer.sol";
 import {HandleVectors} from "../HandleVectors.sol";
 import {IdentityNames} from "../IdentityNames.sol";
-import {IIdentityVerifier} from "../IIdentityVerifier.sol";
+import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
+import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
+import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
+import {GooglePlatformVerifier} from "../../ceremony/GooglePlatformVerifier.sol";
+import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
 
 /// The deploy wires three platforms into one naming contract. A wrong rule set
 /// there writes wrong keys for every name on that platform, and nothing later
 /// would notice: the handle would simply resolve to nothing.
 ///
 /// So the wiring is asserted rather than assumed — that the rules the deploy
-/// installs are the ones `handles.json` states, and that the future allowance
-/// each platform gets matches what its proofs actually report.
+/// installs are the ones `handles.json` states, and that every platform it
+/// wires comes out resolvable.
 contract IdentityDeployWiringTest is Test {
     IdentityNames internal names;
+    CeremonyProofVerifier internal proofVerifier;
     address internal owner = makeAddr("owner");
 
     function setUp() public {
         IdentityNames impl = new IdentityNames();
         names =
             IdentityNames(address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityNames.initialize, (owner)))));
+        CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
+        proofVerifier = CeremonyProofVerifier(
+            address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (owner))))
+        );
+        vm.prank(owner);
+        names.setProofVerifier(IProofVerifier(address(proofVerifier)));
     }
 
     /// The rules come from the generated table, so a change to `handles.json`
@@ -51,7 +62,7 @@ contract IdentityDeployWiringTest is Test {
     /// A default would silently normalize with the wrong rules.
     function test_anUnknownPlatformHasNoRules() public {
         vm.expectRevert(bytes("unknown platform"));
-        this.rulesForExternally(keccak256("libid.identity.platform.nowhere"));
+        this.rulesForExternally(keccak256("nowhere"));
     }
 
     /// `rulesFor` is an internal library call, which `expectRevert` cannot see.
@@ -60,24 +71,43 @@ contract IdentityDeployWiringTest is Test {
         return HandleVectors.rulesFor(platformId);
     }
 
-    /// Wiring all three the way the deploy does leaves each one resolvable, and
-    /// the OIDC allowance wider than the notary one — which is the whole reason
-    /// the allowance is per platform.
+    /// Wiring all three the way the deploy does leaves each one resolvable.
     function test_theDeployWiringLeavesEveryPlatformUsable() public {
-        address xVerifier = makeAddr("x verifier");
-        address ghVerifier = makeAddr("github verifier");
-        address gVerifier = makeAddr("google verifier");
-
         vm.startPrank(owner);
-        _wireIdentityPlatform(HandleVectors.PLATFORM_X, xVerifier);
-        _wireIdentityPlatform(HandleVectors.PLATFORM_GITHUB, ghVerifier);
-        _wireIdentityPlatform(HandleVectors.PLATFORM_GOOGLE, gVerifier);
+        address x = _wireIdentityPlatform(HandleVectors.PLATFORM_X);
+        address gh = _wireIdentityPlatform(HandleVectors.PLATFORM_GITHUB);
+        address g = _wireIdentityPlatform(HandleVectors.PLATFORM_GOOGLE);
         vm.stopPrank();
 
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_X, names.INITIAL_VERSION())), xVerifier);
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GITHUB, names.INITIAL_VERSION())), ghVerifier);
-        assertEq(address(names.verifierOf(HandleVectors.PLATFORM_GOOGLE, names.INITIAL_VERSION())), gVerifier);
+        // The version a deployment registers its first verifier under.
+        uint16 v = 1;
+        assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_X, v)), x);
+        assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_GITHUB, v)), gh);
+        assertEq(address(proofVerifier.verifierOf(HandleVectors.PLATFORM_GOOGLE, v)), g);
 
+        // Resolvable means the platform answers "nobody" rather than reverting
+        // `UnknownPlatform`, which is what an unwired one does.
+        assertEq(names.resolveHandle(HandleVectors.PLATFORM_X, "nobody"), address(0));
+        assertEq(names.resolveHandle(HandleVectors.PLATFORM_GITHUB, "nobody"), address(0));
+        assertEq(names.resolveHandle(HandleVectors.PLATFORM_GOOGLE, "nobody@example.com"), address(0));
+    }
+
+    /// The generated allowance is what a Platform Verifier must be initialized
+    /// with, and nothing else derives it. Without a reader the table drifts
+    /// silently: a verifier accepts any value up to its cap, so a
+    /// mis-typed allowance is taken without complaint and mis-orders every
+    /// cross-platform watermark from then on.
+    function test_everyGeneratedAllowanceIsOneAVerifierWillAccept() public {
+        // Read off a real verifier, not restated: a second copy of the cap
+        // is the drift this test exists to catch.
+        uint64 cap = new GooglePlatformVerifier().MAX_FUTURE_OBSERVATION_ALLOWANCE();
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X), cap, "X");
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB), cap, "GitHub");
+        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE), cap, "Google");
+
+        // And the ordering the numbers exist for: an OIDC claim carries the
+        // token's `exp` and reads about an hour ahead, a notarized observation
+        // is wall-clock and never is.
         assertGt(
             HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE),
             HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X),
@@ -85,39 +115,11 @@ contract IdentityDeployWiringTest is Test {
         );
     }
 
-    /// `setPlatform` refuses an allowance past its cap, so a platform raised
-    /// beyond it would fail the deploy rather than the review. This is what
-    /// says so before the deploy runs.
-    function test_everyPlatformAllowanceFitsUnderTheCap() public view {
-        uint64 cap = names.MAX_FUTURE_OBSERVATION();
-        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_X), cap, "X");
-        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GITHUB), cap, "GitHub");
-        assertLe(HandleVectors.futureAllowanceFor(HandleVectors.PLATFORM_GOOGLE), cap, "Google");
-    }
-
-    /// `futureAllowanceFor` refuses an unknown platform rather than handing the
-    /// deploy a zero, which would read as "this platform is never ahead" and
-    /// silently reject every Google binding.
-    function test_anUnknownPlatformHasNoAllowance() public {
-        vm.expectRevert(bytes("unknown platform"));
-        this.allowanceForExternally(keccak256("libid.identity.platform.nowhere"));
-    }
-
-    /// An external hop, because `vm.expectRevert` cannot see into an internal
-    /// library call.
-    function allowanceForExternally(bytes32 platformId) external pure returns (uint64) {
-        return HandleVectors.futureAllowanceFor(platformId);
-    }
-
     /// The deploy script's wiring, mirrored. Both sides call one helper so this
     /// test cannot drift from the script it exists to prove.
-    function _wireIdentityPlatform(bytes32 platformId, address verifier) internal {
+    function _wireIdentityPlatform(bytes32 platformId) internal returns (address verifier) {
         names.setPlatform(platformId, HandleVectors.rulesFor(platformId));
-        names.setVerifier(
-            platformId,
-            names.INITIAL_VERSION(),
-            IIdentityVerifier(verifier),
-            HandleVectors.futureAllowanceFor(platformId)
-        );
+        verifier = address(new StubPlatformVerifier(platformId, 0));
+        proofVerifier.setVerifier(platformId, 1, IPlatformVerifier(verifier));
     }
 }

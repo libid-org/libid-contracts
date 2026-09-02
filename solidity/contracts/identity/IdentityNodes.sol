@@ -22,8 +22,8 @@ library IdentityNodes {
     /// that number produce the same key. Numeric handles are legal on X, and an
     /// old account's id is short, so the collision is reachable rather than
     /// theoretical.
-    bytes32 internal constant ID_NODE_V1 = keccak256(bytes("dyaka.identity.id-node.v1"));
-    bytes32 internal constant HANDLE_NODE_V1 = keccak256(bytes("dyaka.identity.handle-node.v1"));
+    bytes32 internal constant ID_NODE_V1 = keccak256(bytes("libid.identity.id-node.v1"));
+    bytes32 internal constant HANDLE_NODE_V1 = keccak256(bytes("libid.identity.handle-node.v1"));
 
     /// @notice The key an account id is stored under.
     /// @param platformId Which platform, as `keccak256` of its domain string.

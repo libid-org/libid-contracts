@@ -42,17 +42,6 @@ const contracts = [
   { file: 'TransferFacet.sol', name: 'TransferFacet', exportName: 'transferFacetAbi' },
   { file: 'DiamondLoupeFacet.sol', name: 'DiamondLoupeFacet', exportName: 'diamondLoupeFacetAbi' },
   { file: 'IdentityNames.sol', name: 'IdentityNames', exportName: 'identityNamesAbi' },
-  {
-    file: 'GitHubIdentityVerifier.sol',
-    name: 'GitHubIdentityVerifier',
-    exportName: 'gitHubIdentityVerifierAbi',
-  },
-  {
-    file: 'GoogleIdentityVerifier.sol',
-    name: 'GoogleIdentityVerifier',
-    exportName: 'googleIdentityVerifierAbi',
-  },
-  { file: 'XIdentityVerifier.sol', name: 'XIdentityVerifier', exportName: 'xIdentityVerifierAbi' },
   { file: 'IdentityJwksRoots.sol', name: 'IdentityJwksRoots', exportName: 'identityJwksRootsAbi' },
   { file: 'XZkVerifier.sol', name: 'XZkVerifier', exportName: 'xZkVerifierAbi' },
   {

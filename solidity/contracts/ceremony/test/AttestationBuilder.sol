@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/// @notice Builds section 9.1 attested data, for tests only.
+///
+/// @dev The inverse of `CeremonyAttestation.decode`. Rust-versus-Solidity
+///      agreement on these bytes is proven separately, by the pinned fixture in
+///      `CeremonyAttestation.t.sol`; this exists so a test can vary one field of
+///      a session and watch a verifier refuse it.
+library AttestationBuilder {
+    /// @dev No `end`: a revealed range's length is its bytes, and the encoder
+    ///      writes that length. A separate `end` would be a field a test could
+    ///      set and watch do nothing.
+    struct Range {
+        uint32 start;
+        bytes value;
+    }
+
+    struct Commitment {
+        uint32 start;
+        uint32 end;
+        bytes32 value;
+    }
+
+    struct Direction {
+        Range[] revealed;
+        Commitment[] commitments;
+        uint32 length;
+    }
+
+    function encode(bytes32 authorityId, uint64 createdAt, Direction memory sent, Direction memory received)
+        internal
+        pure
+        returns (bytes memory out)
+    {
+        out = abi.encodePacked(authorityId, createdAt, sent.length, received.length);
+        out = abi.encodePacked(out, _direction(sent), _direction(received));
+    }
+
+    function _direction(Direction memory d) private pure returns (bytes memory out) {
+        out = abi.encodePacked(uint64(d.revealed.length));
+        for (uint256 i = 0; i < d.revealed.length; ++i) {
+            out = abi.encodePacked(out, d.revealed[i].start, uint64(d.revealed[i].value.length), d.revealed[i].value);
+        }
+        out = abi.encodePacked(out, uint64(d.commitments.length));
+        for (uint256 i = 0; i < d.commitments.length; ++i) {
+            out = abi.encodePacked(out, d.commitments[i].start, d.commitments[i].end, d.commitments[i].value);
+        }
+    }
+
+    function one(Range memory r) internal pure returns (Range[] memory out) {
+        out = new Range[](1);
+        out[0] = r;
+    }
+
+    function two(Range memory a, Range memory b) internal pure returns (Range[] memory out) {
+        out = new Range[](2);
+        out[0] = a;
+        out[1] = b;
+    }
+
+    function one(Commitment memory c) internal pure returns (Commitment[] memory out) {
+        out = new Commitment[](1);
+        out[0] = c;
+    }
+
+    function three(Range memory a, Range memory b, Range memory c) internal pure returns (Range[] memory out) {
+        out = new Range[](3);
+        out[0] = a;
+        out[1] = b;
+        out[2] = c;
+    }
+
+    function three(Commitment memory a, Commitment memory b, Commitment memory c)
+        internal
+        pure
+        returns (Commitment[] memory out)
+    {
+        out = new Commitment[](3);
+        out[0] = a;
+        out[1] = b;
+        out[2] = c;
+    }
+
+    function none() internal pure returns (Commitment[] memory out) {
+        out = new Commitment[](0);
+    }
+
+    function two(Commitment memory a, Commitment memory b) internal pure returns (Commitment[] memory out) {
+        out = new Commitment[](2);
+        out[0] = a;
+        out[1] = b;
+    }
+}
