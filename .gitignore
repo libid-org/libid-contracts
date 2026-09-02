@@ -15,3 +15,4 @@ circuits-release/
 #   pnpm -C ts codegen              # -> ts/packages/contracts/src/abis
 rust/contracts/artifacts/
 ts/packages/contracts/src/abis/
+ts/packages/contracts/src/calls/

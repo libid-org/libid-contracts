@@ -1,4 +1,10 @@
-// Regenerates src/abis/ from the forge artifacts in solidity/out.
+// Regenerates src/abis/ and src/calls/ from the forge artifacts in
+// solidity/out.
+//
+// src/abis/ carries the ABI of each contract. src/calls/ carries one call
+// builder per state-changing function, so a caller names the function instead
+// of assembling `encodeFunctionData` by hand, and adding a write to a contract
+// produces its wrapper rather than requiring someone to remember to write one.
 //
 // Run `forge build` in solidity/ first; this script only reads what forge
 // wrote. The full ABI of each contract — functions, events and errors — is
@@ -10,7 +16,8 @@
 // the package ships both. CI runs it in every job that builds the package,
 // publishing included.
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,6 +25,7 @@ const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = resolve(packageDir, '..', '..', '..')
 const outDir = join(repoRoot, 'solidity', 'out')
 const abisDir = join(packageDir, 'src', 'abis')
+const callsDir = join(packageDir, 'src', 'calls')
 
 // Every contract the package ships an ABI for. `file` is the source unit under
 // solidity/out, `name` the contract inside it, `exportName` what a consumer
@@ -63,9 +71,11 @@ const banner = (source) =>
 // The forge artifact carries `internalType` alongside `type`. It is kept:
 // viem ignores it, and it is what tells a human (and abitype's docs pathways)
 // which struct a tuple was.
-function generate(targetDir) {
-  mkdirSync(targetDir, { recursive: true })
+function generate(abisTarget, callsTarget) {
+  mkdirSync(abisTarget, { recursive: true })
+  mkdirSync(callsTarget, { recursive: true })
   const moduleNames = []
+  const callModules = []
 
   for (const { file, name, exportName } of contracts) {
     const artifactPath = join(outDir, file, `${name}.json`)
@@ -86,13 +96,94 @@ import type { Abi } from 'viem'
 
 export const ${exportName} = ${body} as const satisfies Abi
 `
-    writeFileSync(join(targetDir, `${moduleName}.ts`), content)
+    writeFileSync(join(abisTarget, `${moduleName}.ts`), content)
+
+    const calls = callModule({ file, name, exportName, moduleName, abi: artifact.abi })
+    if (calls) {
+      writeFileSync(join(callsTarget, `${moduleName}.ts`), calls)
+      callModules.push(moduleName)
+    }
   }
 
   const index = `${banner('*')}${moduleNames
     .map(({ moduleName, exportName }) => `export { ${exportName} } from './${moduleName}.js'`)
     .join('\n')}\n`
-  writeFileSync(join(targetDir, 'index.ts'), index)
+  writeFileSync(join(abisTarget, 'index.ts'), index)
+
+  // Namespaced, because names collide across contracts — `initialize` and
+  // `upgradeToAndCall` are on almost every one of them. `calls.identityNames`
+  // reads as the contract it targets.
+  const callsIndex = `${banner('*')}${callModules
+    .map((m) => `export * as ${m} from './${m}.js'`)
+    .join('\n')}\n`
+  writeFileSync(join(callsTarget, 'index.ts'), callsIndex)
+
+  return { abis: moduleNames.length, calls: callModules.length }
+}
+
+/// One builder per state-changing function.
+///
+/// Arguments are not spelled out here: `ContractFunctionArgs` reads them off
+/// the ABI, so there is no Solidity-to-TypeScript type table in this script to
+/// drift from the real one. It resolves overloads to a union of tuples too,
+/// which is what lets `webTransferV2` keep one name.
+///
+/// Payable functions take `value` before their arguments. That is the whole
+/// reason to distinguish them: a caller who forgets the value on a payable
+/// write gets a revert that says nothing, and a `value` on a nonpayable one is
+/// a mistake the type system should reject rather than the chain.
+function callModule({ file, name, exportName, moduleName, abi }) {
+  const writes = abi.filter(
+    (entry) =>
+      entry.type === 'function' &&
+      entry.stateMutability !== 'view' &&
+      entry.stateMutability !== 'pure',
+  )
+  if (writes.length === 0) return null
+
+  // One builder per NAME, not per entry: viem picks the overload from the
+  // arguments, so emitting both would be a duplicate declaration.
+  const seen = new Map()
+  for (const entry of writes) {
+    if (!seen.has(entry.name)) seen.set(entry.name, entry.stateMutability === 'payable')
+    // An overload set counts as payable only if every member is: otherwise
+    // `value` would be required on a call that cannot accept it.
+    else seen.set(entry.name, seen.get(entry.name) && entry.stateMutability === 'payable')
+  }
+
+  const Pascal = moduleName[0].toUpperCase() + moduleName.slice(1)
+  const fnType = `${Pascal}Fn`
+  const argsType = `${Pascal}Args`
+  const builders = [...seen.entries()].map(([fn, payable]) => {
+    const params = payable
+      ? `to: Address, value: bigint, ...args: ${argsType}<'${fn}'>`
+      : `to: Address, ...args: ${argsType}<'${fn}'>`
+    const fields = payable ? 'to,\n    value,' : 'to,'
+    return `export function ${fn}(${params}): Call {
+  return {
+    ${fields}
+    data: encodeFunctionData({ abi: ${exportName}, functionName: '${fn}', args }),
+  }
+}`
+  })
+
+  return `${banner(`${file}/${name}.json`)}
+import {
+  type Address,
+  type ContractFunctionArgs,
+  type ContractFunctionName,
+  encodeFunctionData,
+} from 'viem'
+
+import type { Call } from '../call.js'
+import { ${exportName} } from '../abis/${moduleName}.js'
+
+type Mutability = 'nonpayable' | 'payable'
+type ${fnType} = ContractFunctionName<typeof ${exportName}, Mutability>
+type ${argsType}<F extends ${fnType}> = ContractFunctionArgs<typeof ${exportName}, Mutability, F>
+
+${builders.join('\n\n')}
+`
 }
 
 if (process.argv.length > 2) {
@@ -101,5 +192,23 @@ if (process.argv.length > 2) {
 }
 
 rmSync(abisDir, { recursive: true, force: true })
-generate(abisDir)
-console.log(`wrote ${contracts.length + 1} files to src/abis/`)
+rmSync(callsDir, { recursive: true, force: true })
+const counts = generate(abisDir, callsDir)
+
+// Formatted rather than emitted pre-wrapped: biome owns where the lines break,
+// and reproducing its rules here would be a second formatter to keep in sync.
+// `regen-identity-handles.py` pipes its Solidity through `forge fmt` for the
+// same reason.
+const biome = join(repoRoot, 'ts', 'node_modules', '.bin', 'biome')
+if (!existsSync(biome)) {
+  console.error(`ERROR: ${biome} not found — run \`pnpm -C ts install\` first`)
+  process.exit(1)
+}
+// cwd is ts/, not the repo root: biome walks upward for its configuration and
+// finds two roots from anywhere above it.
+execFileSync(biome, ['format', '--write', abisDir, callsDir], {
+  cwd: join(repoRoot, 'ts'),
+  stdio: 'inherit',
+})
+
+console.log(`wrote ${counts.abis + 1} files to src/abis/, ${counts.calls + 1} to src/calls/`)

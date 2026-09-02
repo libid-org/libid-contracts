@@ -30,6 +30,10 @@
     "./identity": {
       "types": "./dist/identity/index.d.ts",
       "default": "./dist/identity/index.js"
+    },
+    "./calls": {
+      "types": "./dist/calls/index.d.ts",
+      "default": "./dist/calls/index.js"
     }
   },
   "scripts": {

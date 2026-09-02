@@ -1,13 +1,17 @@
 # @libid/contracts
 
-Typed, viem-ready ABIs for every libid contract, plus the identity helper
-layer: handle normalization, proof encoding for `bind`, and name resolution.
+Typed, viem-ready ABIs for every libid contract, a call builder for every
+state-changing function, and the identity helper layer: handle normalization,
+proof encoding for `bind`, and name resolution.
 
-The ABIs in `src/abis/` are generated from the forge artifacts
-(`solidity/out`) by `scripts/codegen.mjs` and committed; each is exported
-`as const satisfies Abi`, so viem infers argument and return types from them.
-The handle vector table in `src/identity/handleVectors.ts` is generated from
-`solidity/contracts/identity/handles.json` by
+Both `src/abis/` and `src/calls/` are generated from the forge artifacts
+(`solidity/out`) by `scripts/codegen.mjs`, and neither is committed — CI
+regenerates them before every build, test and publish. Each ABI is exported
+`as const satisfies Abi`, so viem infers argument and return types from it, and
+each call builder reads its arguments off that ABI, so adding a write function
+to a contract produces its wrapper instead of requiring someone to remember to
+write one. The handle vector table in `src/identity/handleVectors.ts` is
+generated from `solidity/contracts/identity/handles.json` by
 `scripts/regen-identity-handles.py`.
 
 ```sh
@@ -35,6 +39,31 @@ const tokens = await client.readContract({
   abi: bankAbi,
   functionName: 'getRegisteredTokens',
 })
+```
+
+## Building a call
+
+One builder per state-changing function, namespaced by contract because names
+like `initialize` are on almost all of them. A builder returns the call as
+data — no provider, no signer — so you decide how it is submitted: directly,
+batched, or through a smart account's `execute`.
+
+```ts
+import { calls } from '@libid/contracts/calls'
+
+const call = calls.identityNames.unpublish(names, platformId)
+// { to: `0x…`, data: `0x…` }
+
+await wallet.sendTransaction(call)
+```
+
+Arguments are typed from the ABI, so a wrong type or a missing argument fails
+to compile rather than reverting on chain. Payable functions take `value`
+before their arguments and set it on the returned call:
+
+```ts
+const deposit = calls.bank.deposit(bank, 1_000n, 'x', 'alice', 'TIA', token, amount)
+// { to: `0x…`, value: 1000n, data: `0x…` }
 ```
 
 ## Resolving a name
@@ -89,7 +118,7 @@ normalize(' @Alice_1 ', RULES_X) // 'alice_1'
 ```sh
 cd solidity && forge build   # codegen reads the artifacts
 pnpm -C ts install
-pnpm -C ts codegen           # generate src/abis/ (gitignored; required first)
+pnpm -C ts codegen           # generate src/abis/ + src/calls/ (gitignored; required first)
 pnpm -C ts build             # tsc → dist/ (ESM + .d.ts)
 pnpm -C ts test              # vitest
 pnpm -C ts lint && pnpm -C ts fmt:check
