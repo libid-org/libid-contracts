@@ -6,9 +6,10 @@
 /// whose arguments have to land in the right order — then reads the balances
 /// back. Without it, "generated" and "usable" are two different claims.
 ///
-/// Skips when anvil is absent, like the OIDC proof-artifact tests do: foundry
-/// is required to build the contracts this reads, so in CI it is always here.
-import { spawn } from 'node:child_process'
+/// Skips when anvil or the compiled artifact is missing, like the OIDC
+/// proof-artifact tests do. CI always has both: the same job installs foundry
+/// and builds the contracts this reads.
+import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +37,13 @@ try {
   artifact = null
 }
 
-const describeOrSkip = artifact ? describe : describe.skip
+/// Both halves are needed, and each fails differently without the check: no
+/// artifact and there is nothing to deploy, no anvil and `spawn` fails
+/// asynchronously, so the suite would spend its readiness poll timing out and
+/// then report a connection error rather than a missing binary.
+const hasAnvil = spawnSync('anvil', ['--version'], { stdio: 'ignore' }).status === 0
+
+const describeOrSkip = artifact && hasAnvil ? describe : describe.skip
 
 describeOrSkip('generated builders against a deployed contract', () => {
   let anvil: ReturnType<typeof spawn>
