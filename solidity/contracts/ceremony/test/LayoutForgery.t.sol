@@ -30,12 +30,17 @@ contract LayoutForgeryTest is Test {
     uint256 constant NOTARY_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     uint256 constant FEE = 0.001 ether;
     uint64 constant T0 = 1_770_000_000;
-    bytes32 constant DIGEST = 0xb318fb559e16a179b853ed2853576cda16032d93b0839bb81a55135d334c0af5;
+    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
+    bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
+    /// The digest the fixtures are made for, derived in `setUp` from the
+    /// payload below and this chain.
+    bytes32 DIGEST;
     bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444));
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
     function setUp() public {
+        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0 + 10);
         NotaryService nImpl = new NotaryService();
         notary = NotaryService(
@@ -164,16 +169,25 @@ contract LayoutForgeryTest is Test {
         return ICeremony.Attestation({attestedData: attested, signature: _sign(attested)});
     }
 
-    function _submission() private view returns (ICeremony.Submission memory s) {
-        s.platformId = CeremonyProfile.PLATFORM_X;
-        s.version = 1;
-        s.pkceNonce = PKCE_NONCE;
-        s.proof = hex"00";
-        s.attestations = new ICeremony.Attestation[](2);
+    function _txData() private pure returns (bytes memory) {
+        return abi.encode(address(0xBEEF));
     }
 
-    function run(ICeremony.Submission memory s) external payable returns (ICeremony.PlatformFields memory) {
-        return verifier.verify{value: msg.value}(DIGEST, s);
+    function _submission() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+        s.ceremonyVersion = 1;
+        s.operationDomain = DOMAIN;
+        s.authorizationNonce = AUTH_NONCE;
+        s.transactionData = _txData();
+        s.pkceNonce = PKCE_NONCE;
+        s.proof = hex"00";
+    }
+
+    function run(TlsNotaryVerifierBase.TlsNotaryProof memory s)
+        external
+        payable
+        returns (ICeremony.VerifiedClaim memory)
+    {
+        return verifier.verify{value: msg.value}(abi.encode(s));
     }
 
     /// A response whose revealed ranges are spliced must not read as a document.
@@ -193,9 +207,9 @@ contract LayoutForgeryTest is Test {
     ///      `XPlatformVerifier.t.sol` proves that one, because it cannot be
     ///      reached from here.
     function test_aSplicedResponseCannotForgeAnIdentity() public {
-        ICeremony.Submission memory s = _submission();
-        s.attestations[0] = _honestToken();
-        s.attestations[1] = _identity(_seamIdentity());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _submission();
+        s.tokenSession = _honestToken();
+        s.identitySession = _identity(_seamIdentity());
         vm.expectPartialRevert(CeremonyAttestation.CoverageGap.selector);
         this.run{value: quote}(s);
     }
@@ -252,9 +266,9 @@ contract LayoutForgeryTest is Test {
 
     /// The request line must BEGIN the transcript, not merely be listed first.
     function test_aPlantedRequestLineIsRejected() public {
-        ICeremony.Submission memory s = _submission();
-        s.attestations[0] = _unanchoredToken();
-        s.attestations[1] = _identity(_honestIdentityRecv());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _submission();
+        s.tokenSession = _unanchoredToken();
+        s.identitySession = _identity(_honestIdentityRecv());
         // Was: returned clientIdentifier "victimapp", read out of a header value
         // the prover composed at offset 400. Range INDEX 0 is not range OFFSET
         // 0, and nothing tiled this direction, so both the request line and the

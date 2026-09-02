@@ -5,6 +5,14 @@ pragma solidity ^0.8.24;
 /// @notice The shapes that travel the verification path of ceremony-common
 ///         section 5.1: Consumer to Proof Verifier to Platform Verifier to
 ///         Notary Service.
+///
+/// @dev What a Consumer submits is NOT declared here. It is opaque bytes: the
+///      Consumer names a platform and a verifier version, the Proof Verifier
+///      routes on that pair, and only the Platform Verifier at the end of the
+///      route knows the shape of what it decodes. Each verifier declares its
+///      own payload struct, because the shapes genuinely differ -- two notarized
+///      sessions and a PKCE nonce for X and GitHub, a signed token's public
+///      inputs for Google -- and nothing above the verifier needs to read them.
 interface ICeremony {
     /// @notice One attestation and the notary signature over it.
     /// @dev The Notary Service derives the verification key from this pair
@@ -12,102 +20,60 @@ interface ICeremony {
     ///      verifying key: a caller-computed digest authenticates whatever the
     ///      caller hashed, not the bytes the Platform Verifier goes on to read
     ///      (REQ-COMMON-49).
+    ///
+    ///      The attested bytes are the notary's format, not this chain's. One
+    ///      notary serves every chain, so what it signs is chain-agnostic and
+    ///      is decoded by the Notary Service alone; the envelope around it is
+    ///      what each chain encodes its own way.
     struct Attestation {
         bytes attestedData;
         bytes signature;
     }
 
-    /// @notice What a Consumer submits.
+    /// @notice What a Platform Verifier returns on acceptance, and nothing but a
+    ///         rejection otherwise (REQ-COMMON-06). The Proof Verifier forwards
+    ///         it unchanged.
     ///
-    /// @dev It carries no Chain ID. The Proof Verifier takes that from the
-    ///      chain it observes and never from the submission, so there is
-    ///      nothing here for a caller to choose (REQ-COMMON-06C).
+    /// @dev A Consumer trusts these fields the way it trusts the verifier that
+    ///      produced them: the verifier extracted every one from evidence it
+    ///      authenticated, and the Consumer holds that verifier by an
+    ///      owner-set address.
     ///
-    /// @param platformId          Selects the Platform Verifier, with `version`.
-    /// @param version             The Platform Verifier Version. Dispatch reads
-    ///                            it here, so it cannot disagree with the
-    ///                            version the digest commits.
-    /// @param operationDomain     Authenticated by digest recomputation rather
-    ///                            than trusted; the Proof Verifier returns it
-    ///                            and the Consumer decides whether it owns it.
-    /// @param authorizationNonce  Makes the digest unique, and therefore its
-    ///                            own replay nullifier.
-    /// @param transactionData     Opaque here. Only the Consumer may decode it
-    ///                            (REQ-COMMON-06B).
-    /// @param pkceNonce           Carried for a profile that binds the digest
-    ///                            through PKCE; empty for one that does not.
-    /// @param proof               Verified under the artifact governance
-    ///                            selected, never one the caller names.
-    /// @param publicInputs        The proof's public inputs.
-    /// @param attestations        Exactly the list the profile requires: two
-    ///                            for X and GitHub, none for Google.
-    /// @param clientIdentifier    Google only: the `aud` bytes, which the
-    ///                            verifier authenticates by hashing them
-    ///                            against a public proof input. X and GitHub
-    ///                            read theirs from a revealed range instead, so
-    ///                            supplying it here would be a duplicate the
-    ///                            caller controls (REQ-COMMON-52).
-    struct Submission {
-        bytes32 platformId;
-        uint16 version;
-        bytes32 operationDomain;
-        bytes32 authorizationNonce;
-        bytes transactionData;
-        bytes32 pkceNonce;
-        bytes proof;
-        bytes32[] publicInputs;
-        Attestation[] attestations;
-        bytes clientIdentifier;
-    }
-
-    /// @notice What a Platform Verifier returns on acceptance.
-    ///
-    /// @dev An authenticated `userId`, handle and observation time are what the
-    ///      ceremony exists to produce, and the Consumer has no other
-    ///      authenticated source for them (REQ-COMMON-05E). The Proof Verifier
-    ///      adds the operation domain and transaction data to make the
-    ///      `VerifiedClaim` below.
-    ///
-    /// @param clientIdentifier   The exact authenticated bytes, never a digest.
-    /// @param userId             The canonical, immutable platform identifier.
-    /// @param handle             RAW authenticated bytes; the Consumer
-    ///                           normalizes on its own write path.
-    /// @param metadataObservedAt The monotone metadata watermark.
-    struct PlatformFields {
-        bytes clientIdentifier;
-        string userId;
-        string handle;
-        uint64 metadataObservedAt;
-    }
-
-    /// @notice What the Proof Verifier returns on acceptance, and nothing but a
-    ///         rejection otherwise (REQ-COMMON-06).
-    ///
-    /// @param operationDomain    Authenticated. The Consumer MUST reject one it
-    ///                           does not own, and MUST select its handler by
-    ///                           this before decoding `transactionData`
-    ///                           (REQ-COMMON-06A).
-    /// @param transactionData    Still opaque; the Consumer decodes it.
-    /// @param clientIdentifier   The exact authenticated bytes, never a digest:
-    ///                           one representation across platforms lets a
-    ///                           Consumer compare and display it without
-    ///                           knowing which platform produced it
-    ///                           (REQ-COMMON-16).
-    /// @param userId             The canonical, immutable platform identifier.
-    /// @param handle             RAW authenticated bytes. Normalization is the
-    ///                           Consumer's derivation on its own write path,
-    ///                           and a caller-supplied normalized handle or
-    ///                           pre-hashed key must be refused
-    ///                           (REQ-PLAT-08A, REQ-PLAT-08B).
-    /// @param metadataObservedAt The monotone metadata watermark.
+    /// @param sessionId           One ceremony, as a 32-byte handle: the
+    ///                            Authorization Digest the verifier rebuilt and
+    ///                            the proof opened against. Returned so the
+    ///                            Consumer records the one that was actually
+    ///                            used (REQ-COMMON-03) -- it is the ceremony's
+    ///                            replay nullifier, and the key an indexer joins
+    ///                            one ceremony's logs on.
+    /// @param operationDomain     Authenticated. The Consumer MUST reject one it
+    ///                            does not own, and MUST select its handler by
+    ///                            this before decoding `transactionData`
+    ///                            (REQ-COMMON-06A).
+    /// @param transactionData     Opaque bytes; the Consumer decodes them.
+    /// @param ceremonyVersion     The ceremony version the verifier supports and
+    ///                            the digest binds. Not the verifier version the
+    ///                            Consumer routed on: that one is this chain's
+    ///                            slot number and means nothing off it.
+    /// @param clientIdentifier    The exact authenticated bytes, never a digest:
+    ///                            one representation across platforms lets a
+    ///                            Consumer compare and display it without
+    ///                            knowing which platform produced it
+    ///                            (REQ-COMMON-16).
+    /// @param userId              The canonical, immutable platform identifier.
+    /// @param handle              RAW authenticated bytes. Normalization is the
+    ///                            Consumer's derivation on its own write path,
+    ///                            and a caller-supplied normalized handle or
+    ///                            pre-hashed key must be refused
+    ///                            (REQ-PLAT-08A, REQ-PLAT-08B).
+    /// @param metadataObservedAt  The monotone metadata watermark: when the
+    ///                            platform stated the identity, on the scale
+    ///                            every profile shares.
     struct VerifiedClaim {
-        /// @dev The digest the Proof Verifier recomputed, returned so the
-        ///      Consumer records the one that was actually used
-        ///      (REQ-COMMON-03). REQ-COMMON-06 does not list it; recomputing it
-        ///      a second time to get it would be a second chance to disagree.
-        bytes32 authorizationDigest;
+        bytes32 sessionId;
         bytes32 operationDomain;
         bytes transactionData;
+        uint16 ceremonyVersion;
         bytes clientIdentifier;
         string userId;
         string handle;

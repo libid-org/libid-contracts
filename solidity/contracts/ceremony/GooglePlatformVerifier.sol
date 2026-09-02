@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyAuthorization} from "./CeremonyAuthorization.sol";
 import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {INotaryService} from "./INotaryService.sol";
 import {IPlatformVerifier} from "./IPlatformVerifier.sol";
@@ -24,11 +25,11 @@ interface IJwksRoots {
 ///      accepts no value at all. A path with nothing to verify carries none.
 ///
 ///      The Authorization Digest is bound the other way round from X and
-///      GitHub. They carry it through the PKCE verifier and the Platform
-///      Verifier recomputes it; Google carries it as the signed OIDC `nonce`
+///      GitHub. They carry it through the PKCE verifier and this contract's
+///      counterpart recomputes it; Google carries it as the signed OIDC `nonce`
 ///      and exposes it as a public proof input, which this contract compares
-///      against the digest recomputed one hop above (REQ-COMMON-02A). Exactly
-///      one of the two methods, never both and never neither.
+///      against the digest it rebuilds from its own payload (REQ-COMMON-02A).
+///      Exactly one of the two methods, never both and never neither.
 ///
 ///      Evidence time comes from the signed `exp` alone. It supplies BOTH
 ///      `metadataObservedAt` and `proofValidUntil` (section 2.2), so the
@@ -46,6 +47,40 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     uint256 private constant OFF_MODULUS = 38; // 18 limbs
     uint256 private constant MODULUS_LIMBS = 18;
     uint256 private constant PUBLIC_INPUTS = 56;
+
+    /// @notice What this profile decodes from its payload.
+    ///
+    /// @dev `abi.encode` of this struct is the payload for `google/v1`. No
+    ///      attestations: the evidence is a signed ID Token verified inside the
+    ///      circuit, and the contract sees only its public inputs -- which are
+    ///      therefore carried, unlike the TLSNotary profiles' where they are
+    ///      derived, and become authentic only once the proof verifies.
+    ///
+    /// @param ceremonyVersion    What the payload was built for. Checked against
+    ///                           this verifier's own first.
+    /// @param operationDomain    Into the digest, and returned for the Consumer
+    ///                           to judge.
+    /// @param authorizationNonce Into the digest.
+    /// @param transactionData    Into the digest, and returned opaque.
+    /// @param clientIdentifier   The `aud` bytes. Authenticated by hashing them
+    ///                           against a public input (REQ-PLAT-19A), because
+    ///                           the circuit publishes the audience as a hash
+    ///                           rather than packing a variable-length string;
+    ///                           the bytes cannot be recovered from the proof,
+    ///                           so they are carried and checked instead.
+    /// @param publicInputs       The circuit's 56 public inputs, in the order
+    ///                           REQ-PLAT-16B fixes.
+    /// @param proof              Verified under the artifact governance
+    ///                           selected, never one the caller names.
+    struct GoogleProof {
+        uint16 ceremonyVersion;
+        bytes32 operationDomain;
+        bytes32 authorizationNonce;
+        bytes transactionData;
+        bytes clientIdentifier;
+        bytes32[] publicInputs;
+        bytes proof;
+    }
 
     /// @custom:storage-location erc7201:libid.storage.GooglePlatformVerifier
     struct GoogleStorage {
@@ -128,6 +163,10 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         return CeremonyProfile.PLATFORM_GOOGLE;
     }
 
+    function _ceremonyVersion() internal pure override returns (uint16) {
+        return CeremonyProfile.LAUNCH_VERSION;
+    }
+
     /// @inheritdoc IPlatformVerifier
     function platformId() external pure returns (bytes32) {
         return CeremonyProfile.PLATFORM_GOOGLE;
@@ -141,42 +180,41 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     }
 
     /// @inheritdoc IPlatformVerifier
-    function verify(bytes32 authorizationDigest, Submission calldata submission)
-        external
-        payable
-        returns (PlatformFields memory fields)
-    {
+    function verify(bytes calldata payload) external payable returns (VerifiedClaim memory claimed) {
         // Not merely "no fee required" but "no value accepted": there is
         // nothing downstream to forward it to, and value left here would be
         // captured in transit.
         if (msg.value != 0) revert WrongValue(0, msg.value);
-        if (submission.attestations.length != 0) {
-            revert WrongAttestationCount(0, submission.attestations.length);
-        }
-        if (submission.publicInputs.length != PUBLIC_INPUTS) {
-            revert WrongPublicInputCount(PUBLIC_INPUTS, submission.publicInputs.length);
+
+        GoogleProof memory p = abi.decode(payload, (GoogleProof));
+        _requireCeremonyVersion(p.ceremonyVersion);
+        if (p.publicInputs.length != PUBLIC_INPUTS) {
+            revert WrongPublicInputCount(PUBLIC_INPUTS, p.publicInputs.length);
         }
 
         // REQ-COMMON-02A. Google's binding: the digest the ceremony committed
-        // as the signed `nonce` must equal the one recomputed a hop above.
-        bytes32 proved = _digestFromInputs(submission.publicInputs);
-        if (proved != authorizationDigest) revert DigestMismatch(proved, authorizationDigest);
+        // as the signed `nonce` must equal the one rebuilt here from the
+        // decoded payload, this verifier's version and this chain.
+        bytes32 digest = CeremonyAuthorization.digestFor(
+            p.operationDomain, _ceremonyVersion(), p.authorizationNonce, p.transactionData
+        );
+        bytes32 proved = _digestFromInputs(p.publicInputs);
+        if (proved != digest) revert DigestMismatch(proved, digest);
 
         // REQ-PLAT-19A. The digest authenticates the bytes without the circuit
         // packing a variable-length string into public inputs, and the Consumer
         // still receives the readable value.
-        if (submission.clientIdentifier.length == 0) revert MissingClientIdentifier();
-        bytes32 audience = sha256(submission.clientIdentifier);
-        if (audience != _audienceFromInputs(submission.publicInputs)) revert AudienceMismatch();
-        fields.clientIdentifier = submission.clientIdentifier;
+        if (p.clientIdentifier.length == 0) revert MissingClientIdentifier();
+        bytes32 audience = sha256(p.clientIdentifier);
+        if (audience != _audienceFromInputs(p.publicInputs)) revert AudienceMismatch();
 
         // REQ-PLAT-23. The circuit exposes the modulus that verified the JWS
         // but decides no trust; that decision is here alone.
-        _requireTrustedModulus(submission.publicInputs);
+        _requireTrustedModulus(p.publicInputs);
 
         // REQ-PLAT-22. The signed `exp` is the whole validity ceiling, so a
         // field element that does not fit `u64` must not become one that does.
-        uint256 rawExp = uint256(submission.publicInputs[OFF_EXP]);
+        uint256 rawExp = uint256(p.publicInputs[OFF_EXP]);
         if (rawExp > type(uint64).max) revert ExpiryNotAUint64(rawExp);
         uint64 exp = uint64(rawExp);
         if (block.timestamp >= exp) revert TokenExpired(exp, uint64(block.timestamp));
@@ -184,20 +222,28 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         // expiry buys a proportionally long lock on the name.
         _requireNotAhead(exp);
 
-        _requireProof(submission.proof, submission.publicInputs);
+        // Every public input read above becomes authentic here, and the whole
+        // transaction reverts if it does not; that is what makes reading them
+        // first safe.
+        _requireProof(p.proof, p.publicInputs);
 
-        fields.userId = string(_unpack(submission.publicInputs, OFF_SUB, 1));
-        if (bytes(fields.userId).length == 0) revert EmptyUserId();
+        claimed.userId = string(_unpack(p.publicInputs, OFF_SUB, 1));
+        if (bytes(claimed.userId).length == 0) revert EmptyUserId();
         // RAW bytes. Normalization is the Consumer's derivation on its own
         // write path (REQ-PLAT-16B).
-        fields.handle = string(_unpack(submission.publicInputs, OFF_EMAIL, 2));
-        fields.metadataObservedAt = _onSharedScale(exp, _base().futureObservationAllowance);
+        claimed.handle = string(_unpack(p.publicInputs, OFF_EMAIL, 2));
+        claimed.metadataObservedAt = _onSharedScale(exp, _base().futureObservationAllowance);
+        claimed.clientIdentifier = p.clientIdentifier;
+        claimed.sessionId = digest;
+        claimed.operationDomain = p.operationDomain;
+        claimed.transactionData = p.transactionData;
+        claimed.ceremonyVersion = _ceremonyVersion();
     }
 
     // ─── Reading the public inputs ──────────────────────────────────
 
     /// @dev 32 field elements, one byte each.
-    function _digestFromInputs(bytes32[] calldata publicInputs) private pure returns (bytes32 out) {
+    function _digestFromInputs(bytes32[] memory publicInputs) private pure returns (bytes32 out) {
         for (uint256 i = 0; i < 32; ++i) {
             uint256 element = uint256(publicInputs[OFF_DIGEST + i]);
             // Truncating here would rest the ONLY thing binding a Google
@@ -210,7 +256,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
 
     /// @dev The full SHA-256 of the signed `aud`, as two big-endian 16-byte
     ///      Fields.
-    function _audienceFromInputs(bytes32[] calldata publicInputs) private pure returns (bytes32) {
+    function _audienceFromInputs(bytes32[] memory publicInputs) private pure returns (bytes32) {
         uint256 high = uint256(publicInputs[OFF_AUDIENCE]);
         uint256 low = uint256(publicInputs[OFF_AUDIENCE + 1]);
         // Each half must fit the 128 bits it stands for, and the reason is the
@@ -232,7 +278,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
     ///      the real length. Unpacking and dropping the padding recovers the
     ///      bytes without the caller supplying a copy to be checked against —
     ///      one fewer value for a caller to choose.
-    function _unpack(bytes32[] calldata publicInputs, uint256 offset, uint256 count)
+    function _unpack(bytes32[] memory publicInputs, uint256 offset, uint256 count)
         private
         pure
         returns (bytes memory out)
@@ -259,7 +305,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         }
     }
 
-    function _requireTrustedModulus(bytes32[] calldata publicInputs) private view {
+    function _requireTrustedModulus(bytes32[] memory publicInputs) private view {
         bytes memory packed = new bytes(MODULUS_LIMBS * 32);
         for (uint256 i = 0; i < MODULUS_LIMBS; ++i) {
             bytes32 limb = publicInputs[OFF_MODULUS + i];

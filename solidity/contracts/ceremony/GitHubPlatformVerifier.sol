@@ -88,6 +88,12 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
         return CeremonyProfile.PLATFORM_GITHUB;
     }
 
+    /// @dev The ceremony version this contract implements. The digest binds it;
+    ///      a payload claiming another is refused before any fee moves.
+    function _ceremonyVersion() internal pure override returns (uint16) {
+        return CeremonyProfile.LAUNCH_VERSION;
+    }
+
     /// @dev The exchange host.
     function _tokenAuthority() internal pure override returns (bytes32) {
         return CeremonyProfile.AUTHORITY_GITHUB;

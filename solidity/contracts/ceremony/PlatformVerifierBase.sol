@@ -26,7 +26,9 @@ interface IHonkVerifier {
 ///      What does NOT live here is every field check. Those differ per platform
 ///      by where the bytes are, and REQ-COMMON-19E gives each field exactly one
 ///      authoritative reader; a shared implementation would blur which role
-///      owns what.
+///      owns what. Nor does the payload's shape: each verifier declares and
+///      decodes its own, because the shapes differ and nothing above a verifier
+///      reads them.
 abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     /// @custom:storage-location erc7201:libid.storage.PlatformVerifier
     struct PlatformVerifierStorage {
@@ -92,7 +94,12 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     error WrongNotaryForProfile(bytes32 platformId, address notary);
     error ParameterTooLarge(uint64 provided, uint64 limit);
     error WrongValue(uint256 required, uint256 provided);
-    error WrongAttestationCount(uint256 required, uint256 provided);
+    /// @dev The payload claims a ceremony version this verifier does not
+    ///      implement. Checked before any fee moves: rebuilding the digest
+    ///      under the wrong version would surface as a code-verifier or digest
+    ///      mismatch after both sessions had been paid for, and say nothing
+    ///      about which field was wrong.
+    error WrongCeremonyVersion(uint16 expected, uint16 found);
     error WrongAuthority(bytes32 expected, bytes32 found);
     error AttestationAhead(uint64 createdAt, uint64 blockTime, uint64 allowance);
     error ProofExpired(uint64 validUntil, uint64 blockTime);
@@ -172,6 +179,19 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     ///      initialization, so it must not read storage.
     function _platform() internal pure virtual returns (bytes32);
 
+    /// @dev The ceremony version this verifier implements: the protocol
+    ///      revision the Authorization Digest binds, hardcoded here because it
+    ///      is a property of the code, not of a deployment. Unrelated to the
+    ///      verifier version the Proof Verifier routes on, which is this
+    ///      chain's slot number.
+    function _ceremonyVersion() internal pure virtual returns (uint16);
+
+    /// @dev Refuse a payload made for another ceremony version, by name.
+    function _requireCeremonyVersion(uint16 claimed) internal pure {
+        uint16 expected = _ceremonyVersion();
+        if (claimed != expected) revert WrongCeremonyVersion(expected, claimed);
+    }
+
     function _setTrustRoots(INotaryService notary_, IHonkVerifier honkVerifier_, bytes32 honkVerifierCodehash_)
         private
     {
@@ -231,7 +251,7 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     ///      pins. The Notary Service's decision is final (REQ-COMMON-05D): this
     ///      never second-guesses it, and never compares the attested data
     ///      against a transcript it does not hold.
-    function _authenticate(Attestation calldata attestation, bytes32 expectedAuthority, uint256 fee)
+    function _authenticate(Attestation memory attestation, bytes32 expectedAuthority, uint256 fee)
         internal
         returns (CeremonyAttestation.AttestedData memory data)
     {
@@ -309,7 +329,7 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     /// @dev Verify the proof under the artifact governance selected. Without
     ///      this, every public input the surrounding checks compare is a number
     ///      the caller wrote down (REQ-COMMON-45).
-    function _requireProof(bytes calldata proof, bytes32[] memory publicInputs) internal view {
+    function _requireProof(bytes memory proof, bytes32[] memory publicInputs) internal view {
         if (!_base().honkVerifier.verify(proof, publicInputs)) revert BadProof();
     }
 

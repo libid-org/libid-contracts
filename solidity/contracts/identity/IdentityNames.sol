@@ -6,7 +6,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-import {CeremonyAuthorization} from "../ceremony/CeremonyAuthorization.sol";
 import {ICeremony} from "../ceremony/ICeremony.sol";
 import {IProofVerifier} from "../ceremony/IProofVerifier.sol";
 import {HandleNormalizer} from "./HandleNormalizer.sol";
@@ -38,20 +37,28 @@ import {IdentityNodes} from "./IdentityNodes.sol";
 ///      honest configuration"; the trust boundary is the owner key, and it is
 ///      the same one every upgradeable contract here has.
 ///
-///      **A platform has versions, and a keyspace it keeps across all of
-///      them.** A platform's proof can change shape without the account behind
-///      it changing — X gaining OIDC, say — so verifiers are keyed by version
-///      and several are live at once while users migrate. What does NOT vary
-///      by version is `rules`: it decides the key a handle hashes to, and two
-///      versions normalizing differently would put one handle on two nodes and
-///      make `resolveHandle` answer differently depending on which version
-///      last wrote.
+///      **A platform has verifier versions, and a keyspace it keeps across all
+///      of them.** A platform's proof can change shape without the account
+///      behind it changing — X gaining OIDC, say — so verifiers are keyed by
+///      version and several are live at once while users migrate. What does
+///      NOT vary by version is `rules`: it decides the key a handle hashes to,
+///      and two versions normalizing differently would put one handle on two
+///      nodes and make `resolveHandle` answer differently depending on which
+///      version last wrote.
 ///
 ///      Retiring a version stops new bindings in that format and touches no
 ///      name already bound — a name belongs to the account that proved it, not
-///      to the format the proof was written in. Every binding records the
-///      version that established it, so "is anybody still on the old format"
-///      is a question the chain answers rather than one an operator guesses.
+///      to the format the proof was written in. Which ceremony version proved a
+///      binding is logged, not stored: the proof has happened and the effect
+///      has been applied by the time anybody asks, so the answer is for an
+///      operator reading `IdentityBound`, and nothing on chain reads it.
+///
+///      **This contract does not know what a proof looks like.** `claim` takes
+///      a platform, a verifier version and opaque bytes, and hands all three to
+///      the Proof Verifier, which routes them to the one contract that does
+///      know. What comes back is trusted the way that contract is trusted: it
+///      extracted every field from evidence it authenticated, and the owner
+///      installed it.
 ///
 ///      **The two mappings are separate on purpose.** One proof writes both, so
 ///      a consumer that holds an id and a handle can compare them later and
@@ -67,8 +74,7 @@ import {IdentityNodes} from "./IdentityNodes.sol";
 ///      and nothing here needs one: no funds are held, and no address is
 ///      predicted ahead of its deployment.
 contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
-    /// @notice A binding, the moment the platform stated it, and the proof
-    ///         version that established it.
+    /// @notice A binding, and the moment the platform stated it.
     ///
     /// @dev `observedAt` is a provider timestamp, never a chain timestamp. Two
     ///      proofs of one handle are ordered by when the platform said it, not
@@ -78,16 +84,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      Verifier subtracts its own profile's future allowance before it
     ///      returns, because profiles disagree about what "now" is. Raw values
     ///      would compare two clocks and the looser one would always win.
-    ///
-    ///      `version` is what makes retiring an old proof format possible. The
-    ///      owner may only stop accepting a version once nobody depends on it,
-    ///      and this is the on-chain record of who still does. It rides in the
-    ///      same slot: 20 + 8 + 4 bytes is exactly one word, so keeping it
-    ///      costs no extra storage.
     struct Binding {
         address owner;
         uint64 observedAt;
-        uint32 version;
     }
 
     /// @notice A platform this contract accepts proofs for: its keyspace.
@@ -223,17 +222,16 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     // ─── Storage reads (the ABI the public variables gave) ─────────
 
-    /// @notice The wallet that proved this account id, when it proved it, and
-    ///         under which proof version.
-    function byId(bytes32 idNode) external view returns (address owner, uint64 observedAt, uint32 version) {
+    /// @notice The wallet that proved this account id, and when it proved it.
+    function byId(bytes32 idNode) external view returns (address owner, uint64 observedAt) {
         Binding storage b = _s().byId[idNode];
-        return (b.owner, b.observedAt, b.version);
+        return (b.owner, b.observedAt);
     }
 
     /// @notice The same for a handle node.
-    function byHandle(bytes32 handleNode) external view returns (address owner, uint64 observedAt, uint32 version) {
+    function byHandle(bytes32 handleNode) external view returns (address owner, uint64 observedAt) {
         Binding storage b = _s().byHandle[handleNode];
-        return (b.owner, b.observedAt, b.version);
+        return (b.owner, b.observedAt);
     }
 
     // ─── Events ─────────────────────────────────────────────────────
@@ -247,9 +245,12 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      after this bind. Without it the log cannot reconstruct `_published`
     ///      at all: only `unpublish` would be observable, so an indexer would
     ///      have to guess which bindings a wallet chose to show.
-    ///      `version` names the proof format that established the binding. It
-    ///      is what tells an operator whether a version is still in use, and
-    ///      therefore whether retiring it would strand anybody.
+    ///      `ceremonyVersion` names the protocol revision that proved the
+    ///      binding, as the verifier reported it. It lives in the log and not
+    ///      in storage: nothing on chain acts on it, and what an operator needs
+    ///      it for -- which bindings a ceremony version later found unsound
+    ///      touched, whether anybody still depends on one before retiring it --
+    ///      is answered by reading the log.
     event IdentityBound(
         address indexed owner,
         bytes32 indexed idNode,
@@ -259,7 +260,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         string handle,
         uint64 observedAt,
         bool published,
-        uint32 version
+        uint16 ceremonyVersion
     );
 
     /// @notice What a ceremony carried that a binding does not keep.
@@ -364,46 +365,47 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     // ─── Binding ────────────────────────────────────────────────────
 
-    /// @notice Bind an identity from a ceremony submission.
+    /// @notice Bind an identity from a ceremony.
     ///
     /// @dev The CONSUMER of ceremony-common section 5.1, and only that. It
     ///      owns the operation domain, records the digest, enforces the
-    ///      authorization predicate and applies the effect. Dispatch, the
-    ///      digest recomputation and the fee path belong to the Proof Verifier,
-    ///      which is a contract of its own so a second Consumer does not become
-    ///      a second version-governance surface.
+    ///      authorization predicate and applies the effect. Dispatch and the
+    ///      fee path belong to the Proof Verifier, which is a contract of its
+    ///      own so a second Consumer does not become a second
+    ///      version-governance surface; decoding and verifying the payload
+    ///      belong to the Platform Verifier the route ends at.
+    ///
+    ///      This function does not know what `payload` is. It names the
+    ///      platform and the verifier version -- this chain's slot for that
+    ///      platform, not the ceremony version inside the proof -- and passes
+    ///      the bytes through.
     ///
     ///      The value attached must equal `quoteClaim` for the same pair. Exact
     ///      value at every hop needs no refund path, so no partial-failure rule
     ///      is required and nothing can be captured in transit.
-    function claim(ICeremony.Submission calldata submission, bool publishName) external payable nonReentrant {
-        // ── Is this operation ours at all? ────────────────────────────
-        //
-        // Refused here, before any fee moves. What AUTHENTICATES the domain is
-        // neither this comparison nor the one below it: the Proof Verifier
-        // recomputes the Authorization Digest from this value, and the proof
-        // binds that digest -- through the revealed `code_verifier` for X and
-        // GitHub, through a public input for Google. Name another domain and
-        // the digest changes, so no proof opens against it.
-        //
-        // These two comparisons are cheap consistency guards, and the second
-        // guards a different thing than the first: today the Proof Verifier
-        // copies the submitted domain through, so it can only agree, but the
-        // Consumer holds that contract by an owner-set address and must not
-        // apply an effect for a domain a future one reports instead.
-        if (submission.operationDomain != CLAIM_IDENTITY_DOMAIN) {
-            revert ForeignOperationDomain(submission.operationDomain);
-        }
-
-        Platform memory platform = _requireConfigured(submission.platformId);
+    function claim(bytes32 platformId, uint16 verifierVersion, bytes calldata payload, bool publishName)
+        external
+        payable
+        nonReentrant
+    {
+        Platform memory platform = _requireConfigured(platformId);
 
         IProofVerifier pv = _s().proofVerifier;
-        uint256 required = pv.quote(submission.platformId, submission.version);
+        uint256 required = pv.quote(platformId, verifierVersion);
         if (msg.value != required) revert WrongClaimValue(required, msg.value);
 
-        ICeremony.VerifiedClaim memory claimed = pv.verify{value: required}(submission);
+        ICeremony.VerifiedClaim memory claimed = pv.verify{value: required}(platformId, verifierVersion, payload);
 
-        // ── And on the way back, whatever it reports (REQ-COMMON-06A) ─
+        // ── Is this operation ours at all? (REQ-COMMON-06A) ───────────
+        //
+        // What AUTHENTICATES the domain is the Platform Verifier: it rebuilt
+        // the Authorization Digest from this value and the proof opened
+        // against that digest -- through the revealed `code_verifier` for X
+        // and GitHub, through a public input for Google. Name another domain
+        // and the digest changes, so no proof opens against it. This
+        // comparison is the Consumer's own duty on top of that: a verifier
+        // reports what it read, and this contract applies an effect only for
+        // the operation it owns.
         if (claimed.operationDomain != CLAIM_IDENTITY_DOMAIN) {
             revert ForeignOperationDomain(claimed.operationDomain);
         }
@@ -421,10 +423,10 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         // rather than callee goodwill: without it a Platform Verifier could
         // reenter here, find the digest unspent, and be relying on the outer
         // frame reverting.
-        if (_s().spentDigests[claimed.authorizationDigest]) {
-            revert DigestAlreadySpent(claimed.authorizationDigest);
+        if (_s().spentDigests[claimed.sessionId]) {
+            revert DigestAlreadySpent(claimed.sessionId);
         }
-        _s().spentDigests[claimed.authorizationDigest] = true;
+        _s().spentDigests[claimed.sessionId] = true;
 
         // ── The authorization predicate ───────────────────────────────
         //
@@ -443,8 +445,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         if (claimed.metadataObservedAt == 0) revert NoObservationTime();
 
         _write(
-            submission.platformId,
-            uint32(submission.version),
+            platformId,
             claimed.userId,
             claimed.handle,
             // Already on the shared scale, and already below the profile's own
@@ -452,10 +453,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             // what "now" means for the evidence it read.
             claimed.metadataObservedAt,
             publishName,
-            platform
+            platform,
+            claimed.ceremonyVersion
         );
 
-        emit CeremonyBound(claimed.authorizationDigest, msg.sender, submission.platformId, claimed.clientIdentifier);
+        emit CeremonyBound(claimed.sessionId, msg.sender, platformId, claimed.clientIdentifier);
     }
 
     /// @notice What `claim` requires to be delivered for this pair.
@@ -464,8 +466,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      covers the whole path -- two Notary Fees on X and GitHub, zero on
     ///      Google -- and a Consumer that computed it would need to know the
     ///      path's topology (REQ-COMMON-06E).
-    function quoteClaim(bytes32 platformId, uint16 version) external view returns (uint256) {
-        return _s().proofVerifier.quote(platformId, version);
+    function quoteClaim(bytes32 platformId, uint16 verifierVersion) external view returns (uint256) {
+        return _s().proofVerifier.quote(platformId, verifierVersion);
     }
 
     /// @notice Whether this digest has already been spent here.
@@ -497,12 +499,12 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      whichever half ran.
     function _write(
         bytes32 platformId,
-        uint32 version,
         string memory userId,
         string memory rawHandle,
         uint64 observedAt,
         bool publishName,
-        Platform memory platform
+        Platform memory platform,
+        uint16 ceremonyVersion
     ) private {
         // This platform has now verified something, and no later retirement of
         // its versions makes that untrue. The resolvers read it so a name
@@ -534,8 +536,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         _requireNewer(observedAt, _s().byId[idKey].observedAt);
         _requireNewer(observedAt, _s().byHandle[handleKey].observedAt);
 
-        _s().byId[idKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
-        _s().byHandle[handleKey] = Binding({owner: msg.sender, observedAt: observedAt, version: version});
+        _s().byId[idKey] = Binding({owner: msg.sender, observedAt: observedAt});
+        _s().byHandle[handleKey] = Binding({owner: msg.sender, observedAt: observedAt});
 
         _retirePreviousHandle(platformId, idKey, handleKey);
         _s().handleOfId[idKey] = handleKey;
@@ -551,7 +553,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
             _s().published[msg.sender][platformId] = handle;
         }
 
-        emit IdentityBound(msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, version);
+        emit IdentityBound(
+            msg.sender, idKey, handleKey, platformId, userId, handle, observedAt, published, ceremonyVersion
+        );
     }
 
     /// @dev Stop resolving the handle this account used to hold.
@@ -577,13 +581,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         if (previous == bytes32(0) || previous == handleKey) return;
         if (_s().idOfHandle[previous] != idKey) return;
 
-        // The version goes with the owner. `retireVerifier` tells an operator
-        // to answer "is anybody still on this format" from these records, and a
-        // node nobody holds is not anybody — leaving the version set would
-        // report a dependency that cannot exist and postpone the retirement
-        // indefinitely.
         _s().byHandle[previous].owner = address(0);
-        _s().byHandle[previous].version = 0;
         emit HandleRetired(platformId, previous, msg.sender);
     }
 

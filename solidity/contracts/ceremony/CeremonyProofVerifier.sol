@@ -11,7 +11,7 @@ import {IPlatformVerifier} from "./IPlatformVerifier.sol";
 import {IProofVerifier} from "./IProofVerifier.sol";
 
 /// @title CeremonyProofVerifier
-/// @notice Dispatch, and one recomputation of the Authorization Digest.
+/// @notice Dispatch, and only dispatch.
 ///
 /// @dev This is deliberately a contract of its own rather than something each
 ///      Consumer carries. The Supported Version Set decides which proof
@@ -22,12 +22,24 @@ import {IProofVerifier} from "./IProofVerifier.sol";
 ///      The concentration that buys is real and the specification names it: a
 ///      compromise here authorises arbitrary transactions at every Consumer at
 ///      once. That is the price of one entry point, and it is why this contract
-///      holds no platform constant, decodes no transaction data, and applies no
-///      effect -- there is nothing here to compromise except dispatch itself.
+///      holds no platform constant, decodes nothing -- not the payload, not the
+///      transaction data inside it -- and applies no effect. There is nothing
+///      here to compromise except dispatch itself.
+///
+///      Two versions, and this contract knows only one of them. The VERIFIER
+///      version is the key a payload is routed on: this chain's slot number,
+///      assigned by governance here, on this chain's own upgrade cadence. The
+///      CEREMONY version is the protocol revision a verifier implements and
+///      the Authorization Digest binds; each verifier holds its own as a
+///      constant. A browser needs the second to start a ceremony and the first
+///      to submit one, and nothing here ties them together -- that is what
+///      lets one proof outlive a verifier upgrade, and what lets Solana run
+///      its slot numbers without matching this chain's.
 contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     /// @custom:storage-location erc7201:libid.storage.CeremonyProofVerifier
     struct ProofVerifierStorage {
-        /// platformId -> version -> the Platform Verifier for that pair.
+        /// platformId -> verifier version -> the Platform Verifier for that
+        /// pair.
         ///
         /// More than one version of one platform is supported at a time
         /// (REQ-COMMON-05B): that is what lets a deployment run a new version
@@ -50,9 +62,9 @@ contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable
         }
     }
 
-    event VerifierConfigured(bytes32 indexed platformId, uint16 indexed version, address verifier);
+    event VerifierConfigured(bytes32 indexed platformId, uint16 indexed verifierVersion, address verifier);
 
-    error UnknownVersion(bytes32 platformId, uint16 version);
+    error UnknownVersion(bytes32 platformId, uint16 verifierVersion);
     error WrongValue(uint256 required, uint256 provided);
     error VerifierPlatformMismatch(bytes32 expected, bytes32 found);
 
@@ -68,17 +80,17 @@ contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable
     }
 
     /// @notice This chain's identifier, as the digest construction takes it.
-    ///
-    /// @dev Read from the chain rather than from a submission. There is nothing
-    ///      in a submission for a caller to choose here (REQ-COMMON-06C), and
-    ///      that is what makes the recomputation below worth anything.
+    /// @dev A convenience for callers building a digest off chain against this
+    ///      deployment. The verifiers do not read it from here: they take it
+    ///      from `CeremonyAuthorization.digestFor`, which reads the chain
+    ///      itself.
     function chainId() public view returns (bytes32) {
-        return keccak256(abi.encode(block.chainid));
+        return CeremonyAuthorization.chainId();
     }
 
     /// @inheritdoc IProofVerifier
-    function quote(bytes32 platformId, uint16 version) external view returns (uint256) {
-        return _requireVerifier(platformId, version).quote();
+    function quote(bytes32 platformId, uint16 verifierVersion) external view returns (uint256) {
+        return _requireVerifier(platformId, verifierVersion).quote();
     }
 
     /// @inheritdoc IProofVerifier
@@ -87,48 +99,27 @@ contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable
     }
 
     /// @notice The Platform Verifier registered for a pair, or the zero address.
-    function verifierOf(bytes32 platformId, uint16 version) external view returns (IPlatformVerifier) {
-        return _s().verifiers[platformId][version];
+    function verifierOf(bytes32 platformId, uint16 verifierVersion) external view returns (IPlatformVerifier) {
+        return _s().verifiers[platformId][verifierVersion];
     }
 
     /// @inheritdoc IProofVerifier
-    function verify(ICeremony.Submission calldata submission)
+    function verify(bytes32 platformId, uint16 verifierVersion, bytes calldata payload)
         external
         payable
-        returns (ICeremony.VerifiedClaim memory claimed)
+        returns (ICeremony.VerifiedClaim memory)
     {
-        IPlatformVerifier verifier = _requireVerifier(submission.platformId, submission.version);
-
-        // The digest, recomputed once, here, and handed down. A Platform
-        // Verifier left to rebuild it would rebuild it from the submission --
-        // which the caller wrote -- and would then be comparing evidence
-        // against a digest the caller chose (REQ-COMMON-46).
-        bytes32 digest = CeremonyAuthorization.digest(
-            submission.operationDomain,
-            submission.version,
-            chainId(),
-            submission.authorizationNonce,
-            submission.transactionData
-        );
+        IPlatformVerifier verifier = _requireVerifier(platformId, verifierVersion);
 
         // Exact value at every hop: no refund path, so no partial-failure rule
         // is needed and nothing can be captured in transit (REQ-COMMON-06D).
         uint256 required = verifier.quote();
         if (msg.value != required) revert WrongValue(required, msg.value);
 
-        ICeremony.PlatformFields memory fields = verifier.verify{value: required}(digest, submission);
-
-        claimed = ICeremony.VerifiedClaim({
-            authorizationDigest: digest,
-            operationDomain: submission.operationDomain,
-            // Opaque on the way through. Deciding what these bytes mean belongs
-            // to the Consumer that fixed the domain (REQ-COMMON-06B).
-            transactionData: submission.transactionData,
-            clientIdentifier: fields.clientIdentifier,
-            userId: fields.userId,
-            handle: fields.handle,
-            metadataObservedAt: fields.metadataObservedAt
-        });
+        // Forwarded whole and returned whole. The payload is the verifier's to
+        // decode and the claim is the Consumer's to act on; this hop reads
+        // neither (REQ-COMMON-06B).
+        return verifier.verify{value: required}(payload);
     }
 
     /// @notice Add or remove a Platform Verifier from the Supported Version Set.
@@ -139,7 +130,7 @@ contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable
     ///      already bound under it -- a name does not belong to the proof that
     ///      established it -- and a stranded ceremony is re-runnable under a
     ///      supported version.
-    function setVerifier(bytes32 platformId, uint16 version, IPlatformVerifier verifier) external onlyOwner {
+    function setVerifier(bytes32 platformId, uint16 verifierVersion, IPlatformVerifier verifier) external onlyOwner {
         // A verifier registered under a platform it does not serve would take
         // submissions it cannot check and reject every one of them.
         if (address(verifier) != address(0)) {
@@ -147,20 +138,20 @@ contract CeremonyProofVerifier is IProofVerifier, Initializable, UUPSUpgradeable
             if (serves != platformId) revert VerifierPlatformMismatch(platformId, serves);
         }
 
-        bool had = address(_s().verifiers[platformId][version]) != address(0);
+        bool had = address(_s().verifiers[platformId][verifierVersion]) != address(0);
         bool has = address(verifier) != address(0);
         if (had && !has) --_s().versionCount[platformId];
         if (!had && has) ++_s().versionCount[platformId];
 
-        _s().verifiers[platformId][version] = verifier;
-        emit VerifierConfigured(platformId, version, address(verifier));
+        _s().verifiers[platformId][verifierVersion] = verifier;
+        emit VerifierConfigured(platformId, verifierVersion, address(verifier));
     }
 
-    function _requireVerifier(bytes32 platformId, uint16 version) private view returns (IPlatformVerifier) {
-        IPlatformVerifier verifier = _s().verifiers[platformId][version];
+    function _requireVerifier(bytes32 platformId, uint16 verifierVersion) private view returns (IPlatformVerifier) {
+        IPlatformVerifier verifier = _s().verifiers[platformId][verifierVersion];
         // Never a caller-supplied address: a caller-selected verifier verifies
         // nothing (REQ-COMMON-05A).
-        if (address(verifier) == address(0)) revert UnknownVersion(platformId, version);
+        if (address(verifier) == address(0)) revert UnknownVersion(platformId, verifierVersion);
         return verifier;
     }
 
