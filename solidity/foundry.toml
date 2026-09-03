@@ -20,7 +20,9 @@ cbor_metadata = false
 fs_permissions = [
     # Google's real JWKS body, as served today, so the root list's parser is
     # tested against the document it will actually read rather than a shape
-    # a test author remembered (see GoogleJwtRoots.t.sol).
+    # a test author remembered (see GoogleJwtRoots.t.sol) -- and a whole
+    # notarized session of it, signature included, so the real path is tested
+    # end to end (see GoogleJwtRootsRealSession.t.sol).
     { access = "read", path = "contracts/ceremony/test/fixtures" },
     { access = "read", path = "out" }, # the factory tests read creation code from the artifacts
 ]
