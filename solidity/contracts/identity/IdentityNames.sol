@@ -198,8 +198,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     bytes32 private constant IDENTITY_NAMES_STORAGE =
         0x064503501234cc9c6e116cf4a84c07475158dabb6a3dcee437a89227e23bf200;
 
-    /// @dev All state of this contract sits under one namespaced root, the way
-    ///      `Registry` does. Three things follow.
+    /// @dev All state of this contract sits under one namespaced root, like
+    ///      every upgradeable contract in this repo. Three things follow.
     ///
     ///      It cannot collide with the ERC-7201 namespaces of the OpenZeppelin
     ///      upgradeable bases, so this contract owns its slots outright and

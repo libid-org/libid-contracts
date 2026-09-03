@@ -1,6 +1,5 @@
 //! Bindings for the identity-names stack (`solidity/contracts/identity/`):
-//! `IdentityNames`, the per-platform verifiers, and the Google JWKS trust
-//! list.
+//! `IdentityNames` and its Google JWKS trust list.
 
 /// Bindings for `identity/IdentityNames.sol`.
 ///
@@ -88,6 +87,12 @@ pub use names_inner::IdentityNames;
 /// Bindings for `identity/IdentityJwksRoots.sol` — the naming system's own
 /// Google JWKS trust list. Starts EMPTY: Google names bind only once a
 /// notarized reading of Google's JWKS has landed here.
+///
+/// A rotation is an ordinary notarized session: the keeper reveals the whole
+/// `GET /oauth2/v3/certs` exchange, `rotate` hands the attested bytes and the
+/// notary's proof to the Notary Service with the Notary Fee attached (read
+/// it with `quoteRotation`, which is the service's `fee()`), and the contract
+/// reads the JWKS out of the transcript it vouched for.
 #[allow(clippy::too_many_arguments, unused_attributes)]
 mod jwks_roots_inner {
     use alloy::sol;
@@ -96,27 +101,6 @@ mod jwks_roots_inner {
         #[sol(rpc)]
         interface IdentityJwksRoots {
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct NotarizedJwksProof {
-                bytes notarySignature;
-                bytes32 domainHash;
-                bytes32 clientRandom;
-                bytes32 serverRandom;
-                bytes serverEphemeralKey;
-                bytes32 transcriptRoot;
-                uint256 timestamp;
-                bytes32[] domainPath;
-                bytes32[] endpointPath;
-            }
-
-            #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct JwkClaim {
-                bytes jwkBytes;
-                bytes32[] jwkPath;
-                bytes kid;
-                bytes nB64url;
-            }
-
-            #[derive(Debug, serde::Serialize, serde::Deserialize)]
             struct RootInfo {
                 bytes32 kidHash;
                 bytes32 modulusHash;
@@ -124,17 +108,36 @@ mod jwks_roots_inner {
                 uint256 expiresAt;
             }
 
-            function initialize(address owner_, address notaryContract_) external;
+            function initialize(address owner_, address notary_) external;
+            /// The Notary Service a rotation is verified through.
+            function notaryService() external view returns (address);
+            function setNotaryService(address notary_) external;
+            /// What one rotation costs beyond gas: the Notary Fee, forwarded
+            /// whole. `rotate` must be sent with exactly this value.
+            function quoteRotation() external view returns (uint256);
+            /// Permissionless. `attestedData` is the ceremony-common section
+            /// 9.1 record of the JWKS session, `proof` the notary's
+            /// authentication of it (a 65-byte EIP-191 signature today).
+            function rotate(bytes calldata attestedData, bytes calldata proof) external payable;
             function untrustModulus(bytes32 modulusHash) external;
-            function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
             function prune() external;
+
+            function modulusOfKid(bytes32 kidHash) external view returns (bytes32);
+            function expiresAtKid(bytes32 kidHash) external view returns (uint256);
+            /// What `GooglePlatformVerifier` reads: modulus hash -> expiry,
+            /// zero when untrusted.
             function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
-            function notaryContract() external view returns (address);
-            function notary() external view returns (address);
-            function currentRoots() external view returns (RootInfo[] memory);
+            function rotatedAtKid(bytes32 kidHash) external view returns (uint256);
             function freshestObservedAt() external view returns (uint256);
+            function currentRoots() external view returns (RootInfo[] memory);
             function needsRotation() external view returns (bool);
 
+            function owner() external view returns (address);
+            function pendingOwner() external view returns (address);
+            function transferOwnership(address newOwner) external;
+            function acceptOwnership() external;
+
+            event NotaryServiceChanged(address notary);
             event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
             event ModulusUntrusted(bytes32 indexed modulusHash);
             event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);

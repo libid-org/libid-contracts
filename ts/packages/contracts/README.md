@@ -22,22 +22,22 @@ pnpm add @libid/contracts viem
 
 ```ts
 import { createPublicClient, http } from 'viem'
-import { registryAbi, bankAbi } from '@libid/contracts/abis'
+import { identityJwksRootsAbi, identityNamesAbi } from '@libid/contracts/abis'
 
 const client = createPublicClient({ transport: http(RPC_URL) })
 
 // Fully typed: viem infers the argument and return types from the ABI.
-const wallet = await client.readContract({
-  address: REGISTRY,
-  abi: registryAbi,
-  functionName: 'walletOf',
-  args: ['github', '583231'],
+const owner = await client.readContract({
+  address: IDENTITY_NAMES,
+  abi: identityNamesAbi,
+  functionName: 'resolveHandle',
+  args: [platformId, 'alice'],
 })
 
-const tokens = await client.readContract({
-  address: BANK,
-  abi: bankAbi,
-  functionName: 'getRegisteredTokens',
+const roots = await client.readContract({
+  address: IDENTITY_JWKS_ROOTS,
+  abi: identityJwksRootsAbi,
+  functionName: 'currentRoots',
 })
 ```
 
@@ -62,8 +62,9 @@ to compile rather than reverting on chain. Payable functions take `value`
 before their arguments and set it on the returned call:
 
 ```ts
-const deposit = calls.bank.deposit(bank, 1_000n, 'x', 'alice', 'TIA', token, amount)
-// { to: `0x…`, value: 1000n, data: `0x…` }
+// A JWKS rotation pays the Notary Fee: read it with `quoteRotation` first.
+const rotate = calls.identityJwksRoots.rotate(roots, fee, attestedData, proof)
+// { to: `0x…`, value: fee, data: `0x…` }
 ```
 
 ## Resolving a name

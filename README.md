@@ -1,22 +1,29 @@
 # libID contracts
 
 Smart contracts for libID, laid out per chain. `solidity/` is a self-contained
-Foundry project holding the EVM contracts (login wallets, transfer bank
-diamond, identity naming); room is reserved for `solana/` and other networks,
-and `rust/` and `ts/` ABI wrapper packages are coming.
+Foundry project holding the EVM contracts: the ceremony verification path
+(Notary Service, Proof Verifier, Platform Verifiers), the identity naming
+system with its Google JWKS root list, and the deterministic deployment
+factory. `rust/` and `ts/` hold the ABI wrapper packages; room is reserved
+for `solana/` and other networks.
 
 ## Layout
 
 ```
 solidity/            # Foundry project root
   contracts/
-    login/           # registry, web wallets, OIDC + ZK session verifiers
-    transfer/        # bank diamond and facets
-    identity/        # platform handle naming and identity verifiers
+    ceremony/        # NotaryService, CeremonyProofVerifier, Platform Verifiers
+    identity/        # IdentityNames, IdentityJwksRoots, handle normalization
+    factory/         # LibidFactory: deterministic CREATE3 deployment
     WTIA9.sol        # wrapped TIA
+  archived/          # the frozen wallet and bank products: reference only,
+                     # never compiled (see archived/README.md)
   script/Deploy.s.sol
   lib/               # git submodules (openzeppelin, forge-std)
+rust/contracts/      # libid-contracts crate: alloy bindings + embedded artifacts
+ts/packages/contracts/  # @libid/contracts: viem ABIs, call builders, identity helpers
 scripts/
+  vendor-artifacts.sh
   regen-identity-handles.py
 ```
 
@@ -44,10 +51,6 @@ pnpm -C ts codegen            # -> ts/packages/contracts/src/abis (tsc reads
 CI runs both in every job that compiles the crate or the package, and again in
 the publish jobs — the published crate and npm package carry the generated
 output even though git does not.
-
-Some login OIDC flow tests read locally generated proof artifacts from
-`circuits/jwt_email/target/`; when those files are absent the tests skip
-themselves — that is expected.
 
 ## Handle vectors
 
@@ -90,10 +93,6 @@ Publishing the release triggers CI's release jobs:
    `@libid/contracts` via npm OIDC trusted publishing (no token secret), with
    provenance. A prerelease publishes under its first prerelease identifier
    as the dist-tag (`1.2.0-rc.1` → `rc`); a plain version under `latest`.
-
-To pick up a new circuits release: bump `solidity/circuits-version` on a
-branch, run the "Regenerate verifiers" action on that branch, then review the
-bot commit and merge — CI's verifiers job re-proves the regeneration.
 
 ## License
 

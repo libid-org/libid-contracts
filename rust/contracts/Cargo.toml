@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.94.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/libid-org/libid-contracts"
-description = "Typed alloy bindings, embedded forge artifacts, and deploy/upgrade helpers for the libid contract stack (login, transfer bank diamond, identity names)."
+description = "Typed alloy bindings, embedded forge artifacts, and deploy/upgrade helpers for the libid identity stack (Notary Service, ceremony proof verifier, identity names, Google JWKS roots, deterministic factory)."
 keywords = ["ethereum", "alloy", "contracts", "deployment"]
 categories = ["cryptography::cryptocurrencies"]
 # The vendored artifacts are part of the crate: consumers deploy from the

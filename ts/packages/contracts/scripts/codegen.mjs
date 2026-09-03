@@ -29,28 +29,17 @@ const callsDir = join(packageDir, 'src', 'calls')
 
 // Every contract the package ships an ABI for. `file` is the source unit under
 // solidity/out, `name` the contract inside it, `exportName` what a consumer
-// imports. IBank exports as `bankAbi`: it is the facade the whole diamond
-// answers to, and the facet ABIs exist for anyone wiring cuts by hand.
+// imports.
 const contracts = [
-  { file: 'Registry.sol', name: 'Registry', exportName: 'registryAbi' },
-  { file: 'Notary.sol', name: 'Notary', exportName: 'notaryAbi' },
-  { file: 'WalletFactory.sol', name: 'WalletFactory', exportName: 'walletFactoryAbi' },
-  { file: 'WebWallet.sol', name: 'WebWallet', exportName: 'webWalletAbi' },
-  { file: 'IBank.sol', name: 'IBank', exportName: 'bankAbi' },
-  { file: 'AdminFacet.sol', name: 'AdminFacet', exportName: 'adminFacetAbi' },
-  { file: 'VaultFacet.sol', name: 'VaultFacet', exportName: 'vaultFacetAbi' },
-  { file: 'TransferFacet.sol', name: 'TransferFacet', exportName: 'transferFacetAbi' },
-  { file: 'DiamondLoupeFacet.sol', name: 'DiamondLoupeFacet', exportName: 'diamondLoupeFacetAbi' },
   { file: 'IdentityNames.sol', name: 'IdentityNames', exportName: 'identityNamesAbi' },
   { file: 'IdentityJwksRoots.sol', name: 'IdentityJwksRoots', exportName: 'identityJwksRootsAbi' },
-  { file: 'XZkVerifier.sol', name: 'XZkVerifier', exportName: 'xZkVerifierAbi' },
+  { file: 'NotaryService.sol', name: 'NotaryService', exportName: 'notaryServiceAbi' },
   {
-    file: 'GoogleOidcVerifier.sol',
-    name: 'GoogleOidcVerifier',
-    exportName: 'googleOidcVerifierAbi',
+    file: 'CeremonyProofVerifier.sol',
+    name: 'CeremonyProofVerifier',
+    exportName: 'ceremonyProofVerifierAbi',
   },
   { file: 'LibidFactory.sol', name: 'LibidFactory', exportName: 'libidFactoryAbi' },
-  { file: 'MockERC20.sol', name: 'MockERC20', exportName: 'mockErc20Abi' },
   { file: 'WTIA9.sol', name: 'WTIA9', exportName: 'wtia9Abi' },
 ]
 

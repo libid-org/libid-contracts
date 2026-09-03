@@ -107,60 +107,6 @@ jobs:
         run: python3 scripts/regen-identity-handles.py --check
 
   # ---------------------------------------------------------------------------
-  # Verifiers: the committed bb-generated Solidity verifiers reproduce from
-  # the pinned libid-circuits release. This replaces the reproducibility gate
-  # that died with the monorepo split — there, the deploy workflow
-  # recompiled the circuit next to the contracts; here, the circuits live in
-  # libid-circuits and this job re-derives both verifiers from that repo's
-  # released verification keys (verifier ⟵ vk alone, no nargo needed) and
-  # byte-compares against the committed sources. A mismatch means the
-  # deployed verifier no longer corresponds to the circuit the release
-  # ships — the web prover and the on-chain verifier must roll together.
-  #
-  # solidity/circuits-version pins the release tag. Until that release is
-  # actually cut on libid-org/libid-circuits, the download step fails with an
-  # explicit message — that is intended, not flaky.
-  #
-  # The download/verify/regenerate/compare chain is scripts/regen-verifiers.sh
-  # (--check here); the "Regenerate verifiers" dispatch workflow runs the same
-  # script with --write to refresh the committed files after a pin bump.
-  #
-  # publish-crates hangs its `needs:` off this job so nothing publishes over a
-  # drifted verifier; publish-npm inherits the gate through publish-crates.
-  # ---------------------------------------------------------------------------
-  verifiers:
-    name: Verifiers match circuits release
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Keyed on the pin file, not the manifest's bb version — the manifest is
-      # only known after the download, which now happens inside the script. A
-      # pin bump starts a fresh cache; the script reuses a cached bb when its
-      # version matches the new manifest and installs via bbup otherwise.
-      - name: Cache barretenberg
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.bb
-          key: bb-${{ runner.os }}-circuits-${{ hashFiles('solidity/circuits-version') }}
-
-      # Same forge as everywhere else in this workflow, binary only — fmt
-      # reads foundry.toml but compiles nothing.
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: ${{ env.FOUNDRY_VERSION }}
-
-      # The whole chain — download the pinned release, verify sha256s, install
-      # bb at the manifest's version, regenerate with post-processing,
-      # byte-compare — lives in the script, shared with the "Regenerate
-      # verifiers" dispatch workflow so the check and the writer cannot drift.
-      - name: Regenerate verifiers and compare
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: ./scripts/regen-verifiers.sh --check
-
-  # ---------------------------------------------------------------------------
   # Rust: vendored artifacts, formatting, clippy, tests. Needs forge twice
   # over — the vendored artifacts are generated from a fresh `forge build`,
   # and the integration tests spawn `anvil` (installed with the toolchain).
@@ -454,7 +400,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'release' && github.event.action == 'published'
-    needs: [verify-tag, versions, solidity, rust, publish-check, verifiers]
+    needs: [verify-tag, versions, solidity, rust, publish-check]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
