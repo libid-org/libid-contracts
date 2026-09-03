@@ -34,10 +34,11 @@ const owner = await client.readContract({
   args: [platformId, 'alice'],
 })
 
-const roots = await client.readContract({
+// The two generations of Google's key set the list holds.
+const [current, previous] = await client.readContract({
   address: GOOGLE_JWT_ROOTS,
   abi: googleJwtRootsAbi,
-  functionName: 'currentRoots',
+  functionName: 'currentKeys',
 })
 ```
 

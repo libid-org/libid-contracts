@@ -16,7 +16,27 @@ import {INotaryService} from "./INotaryService.sol";
 ///         notarized reading of Google's published JWKS: a JWT verifies only
 ///         while the modulus that signed it is listed here and unexpired.
 ///
-/// @dev The reading is an ordinary notarized session -- the section 9.1
+/// @dev The list is two generations of Google's key set, and nothing else.
+///      Google's JWKS is an unordered set of a few keys with no "next"
+///      marker, so a reading is stored as the set it is: `current` is the
+///      latest reading applied, `previous` the reading before it. A newer
+///      reading of the same set only restarts `current`'s lifetime; a newer
+///      reading of a different set replaces -- `current` becomes `previous`,
+///      the reading becomes `current`, and what `previous` held is gone.
+///      There is no history and no maintenance: nothing to prune, nothing to
+///      untrust, no owner lever over which of Google's keys are trusted.
+///
+///      A generation is trusted until READING_LIFETIME after its reading's
+///      own `createdAt` -- the notary's clock, not the block the rotation
+///      landed in -- so trust lapses by time alone, with no transaction from
+///      anyone, and a later reading of the same set extends it. `previous`
+///      is kept because Google's rotation and the keeper's reading are not
+///      simultaneous: a token minted under the key Google just rotated out
+///      is still being presented for the rest of its hour, and a keeper's
+///      reading can land in between. One generation back covers that;
+///      further back is history.
+///
+///      The reading is an ordinary notarized session -- the section 9.1
 ///      record every Platform Verifier consumes, authenticated by the same
 ///      Notary Service and charged the same Notary Fee. What differs is the
 ///      layout the keeper's prover produces: everything in both directions is
@@ -29,9 +49,9 @@ import {INotaryService} from "./INotaryService.sol";
 ///      an open caller set a one-shot nullifier would BE the attack: a
 ///      front-runner could consume a reading's digest and brick the honest
 ///      keeper. Freshness comes from the notary's signed `createdAt` plus the
-///      window below, and re-applying the same reading is idempotent. A
-///      rotation pays the Notary Fee, which is the one thing a submitter
-///      needs beyond gas.
+///      window below, and a reading dated no later than the one in force is
+///      ignored rather than refused. A rotation pays the Notary Fee, which is
+///      the one thing a submitter needs beyond gas.
 ///
 ///      **The reading names no contract.** The attested record is the TLS
 ///      session alone -- authority, notary clock, transcript -- so the same
@@ -46,39 +66,31 @@ import {INotaryService} from "./INotaryService.sol";
 ///      and a second OIDC provider would want the same list.
 ///
 ///      **The trust model, in one line: the notary attests the reading, time
-///      does the expiry, and nobody owns rotation.** Every entry carries a
-///      stamp, verifiers check the stamp at use-site, and an expired key stops
-///      being trusted with no transaction from anyone. The owner's only lever
-///      over the key list is `untrustModulus`, which can only REMOVE trust.
+///      does the expiry, and nobody owns rotation.** Verifiers check the stamp
+///      at use-site, and an expired generation stops being trusted with no
+///      transaction from anyone. The owner's one lever is the Notary Service
+///      pointer: which notary a reading must carry, never which Google key
+///      is trusted.
 contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     // ─── State ──────────────────────────────────────────────────────
+
+    /// One reading of Google's key set: when the notary read it, and the
+    /// limb hash of every modulus it listed, in the order Google listed them.
+    struct Generation {
+        uint64 observedAt;
+        bytes32[] moduli;
+    }
 
     /// @custom:storage-location erc7201:libid.storage.GoogleJwtRoots
     struct GoogleJwtRootsStorage {
         /// Authenticates a reading and charges for it.
         INotaryService notary;
-        /// kid keccak -> the limb-keccak the circuit produces.
-        mapping(bytes32 => bytes32) modulusOfKid;
-        mapping(bytes32 => uint256) expiresAtKid;
-        /// modulusHash -> expiry. This is what a verifier reads: the JWT
-        /// circuit does not expose `kid`, so trust has to be checkable from
-        /// the modulus alone.
-        mapping(bytes32 => uint256) trustedHashExpiresAt;
-        /// When each kid was last written, by the reading's own `createdAt`.
-        /// Rotation is open, so without this a replayed older reading inside
-        /// the freshness window would roll a kid back to a modulus Google has
-        /// retired and re-stamp it for another TTL.
-        mapping(bytes32 => uint256) rotatedAtKid;
-        /// Every kid currently tracked, so keepers can enumerate the list
-        /// without an indexer. Bounded by MAX_TRACKED_KIDS; expired entries
-        /// leave via `prune()`, which anyone may call.
-        bytes32[] trackedKids;
-        /// kid keccak -> index+1 in `trackedKids` (0 = not tracked).
-        mapping(bytes32 => uint256) trackedKidIndex;
-        /// The timestamp of the freshest reading ever applied -- the notary's
-        /// observation time, not the block it landed in. A keeper compares
-        /// this to wall-clock to decide whether its reading would be news.
-        uint256 freshestObservedAt;
+        /// The latest reading applied. Google's set already lists the key it
+        /// will sign with next, so this is Google's current AND next keys.
+        Generation current;
+        /// The reading before it, kept for the tokens still in flight under a
+        /// key Google has since dropped.
+        Generation previous;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.GoogleJwtRoots")) - 1)) & ~bytes32(uint256(0xff))
@@ -97,20 +109,25 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     bytes32 public constant AUTHORITY = keccak256("www.googleapis.com");
     uint256 public constant FRESHNESS_WINDOW = 1 hours;
     uint256 public constant CLOCK_SKEW_GRACE = 5 minutes;
-    uint256 public constant DEFAULT_MODULUS_TTL = 30 days;
-    /// The most distinct kids the list will track at once. Google publishes a
-    /// handful of overlapping keys; a notarized reading cannot invent kids, so
-    /// this cap is headroom, not a working limit. It exists so the enumeration
-    /// below stays a bounded loop no submitter -- honest or not -- can bloat.
-    uint256 public constant MAX_TRACKED_KIDS = 16;
-    /// How much trusted runway `needsRotation()` insists on. Rotation re-stamps
-    /// every key for DEFAULT_MODULUS_TTL, so a keeper acting on this signal
+    /// How long a generation is trusted after the reading that wrote it, by
+    /// the reading's own clock. Google's keys overlap for days and a keeper
+    /// reads weekly, so this is runway for a keeper outage, not a key's life.
+    uint256 public constant READING_LIFETIME = 30 days;
+    /// The most keys one reading may carry. Google served four on 2026-09-03,
+    /// and a notarized reading cannot invent any, so this is headroom: it
+    /// bounds the set comparison below, not what Google publishes.
+    uint256 public constant MAX_KEYS = 8;
+    /// How much trusted runway `needsRotation()` insists on. A reading stamps
+    /// its set for READING_LIFETIME, so a keeper acting on this signal
     /// rotates roughly weekly rather than racing the expiry.
     uint256 public constant RENEWAL_MARGIN = 7 days;
 
     /// @dev The request line the keeper's prover puts on the wire, in
     ///      origin-form like every other verifier pins it. The path is what
-    ///      separates the key set from everything else googleapis.com serves.
+    ///      separates the key set from everything else googleapis.com serves,
+    ///      and the whole line -- through the CRLF -- is what keeps a query
+    ///      out: `?callback=` turns the same path into JSONP, a 200 whose
+    ///      body begins with bytes the requester chose.
     bytes private constant REQUEST_LINE = "GET /oauth2/v3/certs HTTP/1.1\r\n";
     /// @dev googleapis.com serves many virtual hosts under one certificate, so
     ///      the TLS authority alone does not pin which backend answered. The
@@ -122,7 +139,11 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     bytes private constant TRANSFER_ENCODING_NEEDLE = "\r\ntransfer-encoding:";
     bytes private constant CHUNKED_NEEDLE = "\r\ntransfer-encoding:chunked\r\n";
     bytes private constant CONTENT_LENGTH_NEEDLE = "\r\ncontent-length:";
+    bytes private constant CONTENT_ENCODING_NEEDLE = "\r\ncontent-encoding:";
     bytes private constant KEYS_TOKEN = '"keys"';
+    /// @dev 65537, the one public exponent the `google/v1` circuit verifies
+    ///      RS256 under.
+    bytes private constant EXPECTED_EXPONENT = "AQAB";
 
     uint256 private constant MODULUS_BYTES = 256;
     uint256 private constant MODULUS_LIMBS = 18;
@@ -130,24 +151,33 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     // ─── Events ─────────────────────────────────────────────────────
 
     event NotaryServiceChanged(address notary);
-    event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-    event ModulusUntrusted(bytes32 indexed modulusHash);
-    /// One key written by a rotation, with the reading's own timestamp. What a
-    /// keeper watches: `observedAt` orders readings, `expiresAt` says when this
-    /// entry stops being trusted if no rotation lands before then.
-    event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
-    /// An expired key left the tracked set. Permissionless -- time retired the
-    /// key, `prune()` merely reclaimed the slot.
-    event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
+    /// A different set than `current` landed: `current` became `previous`,
+    /// this reading became `current`. `kids` and `moduli` are the reading's
+    /// keys in the order Google listed them, `observedAt` the notary's clock
+    /// -- enough for a keeper to follow the list from logs alone.
+    event KeysRotated(uint64 observedAt, string[] kids, bytes32[] moduli);
+    /// A newer reading of the set already current: nothing shifted, and the
+    /// set's lifetime restarted from this reading's clock.
+    event ReadingRefreshed(uint64 observedAt);
 
     // ─── Errors ─────────────────────────────────────────────────────
 
     error ZeroAddress();
-    error TooManyKids();
     /// @dev A reading whose key set is empty says nothing about what Google
-    ///      publishes; applying it would move `freshestObservedAt` while
-    ///      writing no key and emitting nothing. Refused rather than charged.
+    ///      publishes; applying it would shift the live set into `previous`
+    ///      on the strength of a document that names no key. Refused rather
+    ///      than charged.
     error EmptyKeySet();
+    /// @dev More keys in one reading than MAX_KEYS.
+    error TooManyKeys(uint256 count);
+    /// @dev The same modulus twice in one reading. Google lists each key
+    ///      once; a document that repeats one is not the document this
+    ///      reads, and a set with a repeat would compare as a set it is not.
+    error DuplicateKey(bytes32 modulusHash);
+    /// @dev A JWK whose public exponent is not 65537. The verifier trusts a
+    ///      key by its modulus alone, so a key that would verify under a
+    ///      different exponent must never be listed.
+    error WrongExponent(bytes found);
     /// @dev Exact value, both ways: the Notary Fee is forwarded whole, so there
     ///      is no overpayment to refund and nothing captured in transit.
     error WrongValue(uint256 required, uint256 provided);
@@ -185,8 +215,12 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     /// @dev Both `Transfer-Encoding` and `Content-Length` are present, so two
     ///      parsers could frame two bodies.
     error ConflictingFraming();
+    /// @dev The response declares a `Content-Encoding`. The prover must not
+    ///      negotiate compression: gzip bytes would only fail later, somewhere
+    ///      in the JSON walk, and an explicit refusal names the cause.
+    error EncodedBody();
     /// @dev The member is absent, or present but not in the shape read here:
-    ///      `keys` must be an array, `kid` and `n` must be strings.
+    ///      `keys` must be an array, `kid`, `n` and `e` must be strings.
     error MissingMember(string name);
     error AmbiguousMember(string name);
     /// @dev A string value with no closing quote, or the `keys` array with no
@@ -269,112 +303,54 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         // told: the TLS server name it authenticated in the handshake.
         if (data.authorityId != AUTHORITY) revert WrongAuthority(AUTHORITY, data.authorityId);
 
-        uint256 createdAt = data.createdAt;
+        uint64 createdAt = data.createdAt;
         if (createdAt > block.timestamp + CLOCK_SKEW_GRACE) revert FutureProof();
         if (block.timestamp > createdAt + FRESHNESS_WINDOW) revert StaleProof();
 
         _requireJwksRequest(data.sent, data.sentTranscriptLength);
         bytes memory body = _jwksBody(data.received, data.recvTranscriptLength);
 
-        // Monotonic high-water mark of reading timestamps. Replaying an older
-        // reading leaves it alone, so it only ever moves forward.
-        if (createdAt > $.freshestObservedAt) $.freshestObservedAt = createdAt;
-
-        uint256 expiry = block.timestamp + DEFAULT_MODULUS_TTL;
-        _applyKeys(body, expiry, createdAt);
+        // The whole set is read before any of it is written: a reading is
+        // applied entire or refused entire, never half.
+        (string[] memory kids, bytes32[] memory moduli) = _readKeys(body);
+        _apply(createdAt, kids, moduli);
     }
 
-    /// @notice Stop trusting a key before anything replaces it.
-    ///
-    /// @dev Rotation already retires the key a kid used to carry, which covers
-    ///      the ordinary case. This covers the one that cannot wait: a key
-    ///      Google has not rotated yet, or has rotated in a way this list has
-    ///      not seen. Without it the only remedy for a compromised modulus is
-    ///      an upgrade, and a thirty-day stamp is a long time to hold a key
-    ///      nobody should be signing with.
-    ///
-    ///      Owner-only, and it can only ever REMOVE trust: the worst an owner
-    ///      does with it is refuse bindings, which the rotation any keeper can
-    ///      submit undoes.
-    function untrustModulus(bytes32 modulusHash) external onlyOwner {
-        delete _s().trustedHashExpiresAt[modulusHash];
-        emit ModulusUntrusted(modulusHash);
-    }
+    // ─── What a verifier, and a keeper, read ────────────────────────
 
-    /// @notice Drop every expired kid from the tracked set. Anyone may call it.
-    ///
-    /// @dev Expiry itself needs no transaction -- verifiers check the stamp at
-    ///      use-site, so an expired key is already untrusted the second its TTL
-    ///      passes. Pruning only reclaims enumeration slots (and the storage
-    ///      refund). Rotation calls this by itself when the set is full, so
-    ///      even the prune is optional housekeeping.
-    function prune() external {
-        _pruneExpired();
-    }
-
-    // ─── Keeper views ───────────────────────────────────────────────
-
-    /// One tracked key, as a keeper sees it.
-    struct RootInfo {
-        bytes32 kidHash;
-        bytes32 modulusHash;
-        /// The notarized reading that last wrote this kid (its `createdAt`).
-        uint256 observedAt;
-        /// When this entry stops being trusted, absent a fresher rotation.
-        uint256 expiresAt;
-    }
-
-    function modulusOfKid(bytes32 kidHash) external view returns (bytes32) {
-        return _s().modulusOfKid[kidHash];
-    }
-
-    function expiresAtKid(bytes32 kidHash) external view returns (uint256) {
-        return _s().expiresAtKid[kidHash];
-    }
-
-    /// @notice modulusHash -> expiry. What `GooglePlatformVerifier` reads.
+    /// @notice modulusHash -> when it stops being trusted, or zero. What
+    ///         `GooglePlatformVerifier` reads: the JWT circuit does not expose
+    ///         `kid`, so trust has to be checkable from the modulus alone.
+    /// @dev A key in both generations reports the current one's stamp: the
+    ///      later reading is the later word that Google still lists it.
     function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256) {
-        return _s().trustedHashExpiresAt[modulusHash];
+        GoogleJwtRootsStorage storage $ = _s();
+        if (_lists($.current.moduli, modulusHash)) return uint256($.current.observedAt) + READING_LIFETIME;
+        if (_lists($.previous.moduli, modulusHash)) return uint256($.previous.observedAt) + READING_LIFETIME;
+        return 0;
     }
 
-    function rotatedAtKid(bytes32 kidHash) external view returns (uint256) {
-        return _s().rotatedAtKid[kidHash];
+    /// @notice Both generations, as stored. One call tells a keeper the whole
+    ///         state of the list; an empty `current` is a list nothing has
+    ///         been read into yet.
+    function currentKeys() external view returns (Generation memory current, Generation memory previous) {
+        GoogleJwtRootsStorage storage $ = _s();
+        return ($.current, $.previous);
     }
 
+    /// @notice The `createdAt` of the reading in force -- the notary's clock,
+    ///         not the block it landed in. A keeper compares this to
+    ///         wall-clock to decide whether its reading would be news.
     function freshestObservedAt() external view returns (uint256) {
-        return _s().freshestObservedAt;
+        return _s().current.observedAt;
     }
 
-    /// @notice Every tracked key with its provenance and expiry, expired ones
-    ///         included until someone prunes. One call tells a keeper the whole
-    ///         state of the list.
-    function currentRoots() external view returns (RootInfo[] memory infos) {
-        GoogleJwtRootsStorage storage $ = _s();
-        uint256 n = $.trackedKids.length;
-        infos = new RootInfo[](n);
-        for (uint256 i = 0; i < n; ++i) {
-            bytes32 kidHash = $.trackedKids[i];
-            infos[i] = RootInfo({
-                kidHash: kidHash,
-                modulusHash: $.modulusOfKid[kidHash],
-                observedAt: $.rotatedAtKid[kidHash],
-                expiresAt: $.expiresAtKid[kidHash]
-            });
-        }
-    }
-
-    /// @notice True when no key is guaranteed trusted RENEWAL_MARGIN from now --
-    ///         the single bit a keeper polls to decide whether to fetch a fresh
-    ///         reading. True from deployment until the first rotation lands.
+    /// @notice True when the current generation is not guaranteed trusted
+    ///         RENEWAL_MARGIN from now -- the single bit a keeper polls to
+    ///         decide whether to fetch a fresh reading. True from deployment
+    ///         until the first rotation lands.
     function needsRotation() external view returns (bool) {
-        GoogleJwtRootsStorage storage $ = _s();
-        uint256 horizon = block.timestamp + RENEWAL_MARGIN;
-        uint256 n = $.trackedKids.length;
-        for (uint256 i = 0; i < n; ++i) {
-            bytes32 modulusHash = $.modulusOfKid[$.trackedKids[i]];
-            if ($.trustedHashExpiresAt[modulusHash] > horizon) return false;
-        }
-        return true;
+        return block.timestamp + RENEWAL_MARGIN >= uint256(_s().current.observedAt) + READING_LIFETIME;
     }
 
     // ─── The transcript ─────────────────────────────────────────────
@@ -467,6 +443,12 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         body = _slice(received, boundary + 4, received.length);
 
         bytes memory normalized = CeremonyAttestation.normalizeHeaderBytes(head);
+        // The body must be the document, not a compressed form of it. The
+        // prover sends no `Accept-Encoding`; a server that compresses anyway
+        // is refused by name rather than somewhere in the JSON walk.
+        (uint256 encodings,) = _find(normalized, CONTENT_ENCODING_NEEDLE);
+        if (encodings != 0) revert EncodedBody();
+
         (uint256 codings,) = _find(normalized, TRANSFER_ENCODING_NEEDLE);
         (uint256 lengths, uint256 at) = _find(normalized, CONTENT_LENGTH_NEEDLE);
         // Exactly one framing header, of one kind. Two of either, or one of
@@ -550,17 +532,18 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
 
     // ─── The key set ────────────────────────────────────────────────
 
-    /// @dev Read every JWK out of the body and apply it. The body is Google's
-    ///      pretty-printed JSON; this reads exactly the shape Google publishes
-    ///      and refuses anything it does not recognise, so it is a checker
-    ///      for one document rather than a JSON parser.
+    /// @dev Read every JWK out of the body, writing nothing. The body is
+    ///      Google's pretty-printed JSON; this reads exactly the shape Google
+    ///      publishes and refuses anything it does not recognise, so it is a
+    ///      checker for one document rather than a JSON parser.
     ///
     ///      `keys` is located by counting: the token appears once in the
     ///      whole body, or the document is not the one this reads. Objects are
     ///      flat -- a `{` or `[` inside one is refused -- so each ends at its
-    ///      first `}` and the walk is one forward pass bounded by the body,
-    ///      with the object count capped at MAX_TRACKED_KIDS.
-    function _applyKeys(bytes memory body, uint256 expiry, uint256 provenAt) private {
+    ///      first `}` and the walk is one forward pass bounded by the body.
+    ///      Past MAX_KEYS the walk only counts, so the refusal names how many
+    ///      keys the reading carries rather than the first one too many.
+    function _readKeys(bytes memory body) private pure returns (string[] memory kids, bytes32[] memory moduli) {
         (uint256 count, uint256 at) = _find(body, KEYS_TOKEN);
         if (count == 0) revert MissingMember("keys");
         if (count > 1) revert AmbiguousMember("keys");
@@ -571,6 +554,8 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         if (at >= body.length || body[at] != "[") revert MissingMember("keys");
         ++at;
 
+        kids = new string[](MAX_KEYS);
+        moduli = new bytes32[](MAX_KEYS);
         uint256 keys;
         while (true) {
             at = _ws(body, at);
@@ -585,19 +570,32 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
                 if (at >= body.length) revert UnterminatedMember("keys");
             }
             if (body[at] != "{") revert UnterminatedMember("keys");
-            if (keys == MAX_TRACKED_KIDS) revert TooManyKids();
 
             uint256 close = _objectEnd(body, at);
-            _applyKey(_slice(body, at, close + 1), expiry, provenAt);
+            if (keys < MAX_KEYS) (kids[keys], moduli[keys]) = _readKey(_slice(body, at, close + 1));
             ++keys;
             at = close + 1;
         }
 
         if (keys == 0) revert EmptyKeySet();
+        if (keys > MAX_KEYS) revert TooManyKeys(keys);
 
         at = _ws(body, at);
         if (at >= body.length || body[at] != "}") revert TrailingBytes();
         if (_ws(body, at + 1) != body.length) revert TrailingBytes();
+
+        assembly ("memory-safe") {
+            mstore(kids, keys)
+            mstore(moduli, keys)
+        }
+
+        // A set, so a repeat is refused rather than counted twice. Bounded by
+        // MAX_KEYS squared.
+        for (uint256 i = 1; i < keys; ++i) {
+            for (uint256 j = 0; j < i; ++j) {
+                if (moduli[i] == moduli[j]) revert DuplicateKey(moduli[i]);
+            }
+        }
     }
 
     /// @dev The index of the `}` closing the object opened at `open`.
@@ -610,13 +608,23 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         revert UnterminatedMember("keys");
     }
 
-    function _applyKey(bytes memory jwk, uint256 expiry, uint256 provenAt) private {
-        bytes memory kid = _member(jwk, "kid");
+    /// @dev One JWK: its kid, and the limb hash of its modulus.
+    ///
+    ///      The exponent is read and pinned, not stored. The `google/v1`
+    ///      circuit verifies RS256 with the public exponent fixed at 65537,
+    ///      and the verifier trusts a key by its modulus alone -- so a key
+    ///      Google published under another exponent would be trusted for a
+    ///      signature the circuit does not check. Google has only ever
+    ///      published `AQAB` here; anything else is refused by name.
+    function _readKey(bytes memory jwk) private pure returns (string memory kid, bytes32 modulusHash) {
+        kid = string(_member(jwk, "kid"));
         bytes memory nB64url = _member(jwk, "n");
+        bytes memory exponent = _member(jwk, "e");
+        if (keccak256(exponent) != keccak256(EXPECTED_EXPONENT)) revert WrongExponent(exponent);
 
         bytes memory rawN = _b64urlDecode(nB64url);
         if (rawN.length != MODULUS_BYTES) revert InvalidModulusLength();
-        _processClaim(kid, _modulusHash(rawN), expiry, provenAt);
+        modulusHash = _modulusHash(rawN);
     }
 
     /// @dev One string member of a flat object. The token `"name"` appears
@@ -659,96 +667,60 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
         return keccak256(packed);
     }
 
-    function _processClaim(bytes memory kid, bytes32 modulusHash, uint256 expiry, uint256 provenAt) private {
+    /// @dev Apply a set the notary read at `observedAt`. Three outcomes, and
+    ///      the notary's clock alone decides the first.
+    ///
+    ///      A reading dated no later than the one in force is ignored -- never
+    ///      refused. Rotation is open and a reading binds no contract, so
+    ///      anyone can replay any still-fresh reading anywhere, forever;
+    ///      ignoring keeps a front-runner from bricking the honest keeper by
+    ///      landing its reading first, and skipping keeps an older reading from
+    ///      rolling the set back or re-stamping its lifetime. No later includes
+    ///      equal: a second reading dated the same second cannot swap the set
+    ///      -- the rule for equal evidence everywhere in the protocol
+    ///      (REQ-COMMON-25A).
+    ///
+    ///      A newer reading of the same set is Google saying the set still
+    ///      stands: its lifetime restarts from this reading, nothing shifts,
+    ///      `previous` stays as it was. A newer reading of a different set is
+    ///      a rotation: what was current is kept one generation for the tokens
+    ///      still in flight under it, and what was previous is gone.
+    function _apply(uint64 observedAt, string[] memory kids, bytes32[] memory moduli) private {
         GoogleJwtRootsStorage storage $ = _s();
-        bytes32 kidHash = keccak256(kid);
-        // Ignore a claim proved no later than the one already applied -- the
-        // monotonic rule that makes replay harmless. Rotation is open and a
-        // reading binds no contract, so anyone can replay any still-fresh
-        // reading anywhere, forever; ignoring (never reverting) keeps a
-        // front-runner from bricking the honest keeper's batch by landing one
-        // claim from it first, and skipping (never applying) keeps an older
-        // reading from rolling a kid back or re-stamping its TTL.
-        //
-        // Strictly later, so equal evidence leaves the entry alone whatever it
-        // carries: a resubmission of the applied reading is a no-op that
-        // re-stamps nothing and emits nothing, and a second reading dated the
-        // same second cannot swap the kid's key and retire the one Google
-        // still signs with. That is the rule for equal evidence everywhere in
-        // the protocol (REQ-COMMON-25A).
-        if (provenAt <= $.rotatedAtKid[kidHash]) return;
-        bytes32 previous = $.modulusOfKid[kidHash];
-        $.rotatedAtKid[kidHash] = provenAt;
+        if (observedAt <= $.current.observedAt) return;
 
-        // The key this kid used to carry stops being trusted NOW, rather than
-        // when its thirty-day stamp runs out.
-        //
-        // The verifier resolves by modulus, not by kid, so leaving the old
-        // entry keeps a retired key usable for the rest of its TTL -- which is
-        // exactly the window a compromised key would be used in. Google
-        // publishes overlapping keys and tokens live about an hour, so the cost
-        // is that a token signed by the key Google just retired stops verifying
-        // a little early; the user signs in again.
-        if (previous != bytes32(0) && previous != modulusHash) {
-            delete $.trustedHashExpiresAt[previous];
-            emit ModulusUntrusted(previous);
-        } else if (previous == bytes32(0)) {
-            _trackKid(kidHash);
+        if (_sameSet($.current.moduli, moduli)) {
+            $.current.observedAt = observedAt;
+            emit ReadingRefreshed(observedAt);
+            return;
         }
 
-        $.modulusOfKid[kidHash] = modulusHash;
-        $.expiresAtKid[kidHash] = expiry;
-        $.trustedHashExpiresAt[modulusHash] = expiry;
-        emit ModulusRotated(kidHash, string(kid), modulusHash, expiry);
-        emit RootApplied(kidHash, modulusHash, provenAt, expiry);
+        $.previous.observedAt = $.current.observedAt;
+        $.previous.moduli = $.current.moduli;
+        $.current.observedAt = observedAt;
+        $.current.moduli = moduli;
+        emit KeysRotated(observedAt, kids, moduli);
     }
 
-    /// Add a kid to the enumeration. Growth is doubly bounded: a kid can only
-    /// enter through a notarized reading of Google's own JWKS (a submitter
-    /// cannot invent one), and the set is capped -- when full, expired entries
-    /// are pruned to make room, and only a set full of LIVE keys refuses.
-    function _trackKid(bytes32 kidHash) private {
-        GoogleJwtRootsStorage storage $ = _s();
-        if ($.trackedKidIndex[kidHash] != 0) return;
-        if ($.trackedKids.length >= MAX_TRACKED_KIDS) {
-            _pruneExpired();
-            if ($.trackedKids.length >= MAX_TRACKED_KIDS) revert TooManyKids();
+    /// @dev Whether `stored` and `read` list the same moduli, in any order.
+    ///      Both are sets -- a reading with a repeat is refused before it gets
+    ///      here, and every stored generation was once a reading -- so equal
+    ///      length plus every read modulus present is equality. Bounded by
+    ///      MAX_KEYS squared.
+    function _sameSet(bytes32[] storage stored, bytes32[] memory read) private view returns (bool) {
+        if (stored.length != read.length) return false;
+        for (uint256 i = 0; i < read.length; ++i) {
+            if (!_lists(stored, read[i])) return false;
         }
-        $.trackedKids.push(kidHash);
-        $.trackedKidIndex[kidHash] = $.trackedKids.length;
+        return true;
     }
 
-    /// Swap-remove every expired kid. `rotatedAtKid` survives on purpose: it is
-    /// the monotonic floor that keeps a replayed old reading from resurrecting
-    /// the entry the prune just removed.
-    function _pruneExpired() private {
-        GoogleJwtRootsStorage storage $ = _s();
-        uint256 i = $.trackedKids.length;
-        while (i > 0) {
-            i--;
-            bytes32 kidHash = $.trackedKids[i];
-            if ($.expiresAtKid[kidHash] > block.timestamp) continue;
-
-            bytes32 modulusHash = $.modulusOfKid[kidHash];
-            delete $.modulusOfKid[kidHash];
-            delete $.expiresAtKid[kidHash];
-            // Only clear the verifier-facing stamp if it is genuinely spent --
-            // it can sit above the kid's own expiry only if some fresher
-            // rotation re-trusted the same modulus under another kid.
-            if ($.trustedHashExpiresAt[modulusHash] <= block.timestamp) {
-                delete $.trustedHashExpiresAt[modulusHash];
-            }
-
-            uint256 last = $.trackedKids.length - 1;
-            if (i != last) {
-                bytes32 moved = $.trackedKids[last];
-                $.trackedKids[i] = moved;
-                $.trackedKidIndex[moved] = i + 1;
-            }
-            $.trackedKids.pop();
-            delete $.trackedKidIndex[kidHash];
-            emit RootPruned(kidHash, modulusHash);
+    function _lists(bytes32[] storage moduli, bytes32 modulusHash) private view returns (bool) {
+        uint256 n = moduli.length;
+        for (uint256 i = 0; i < n; ++i) {
+            if (moduli[i] == modulusHash) return true;
         }
+        return false;
     }
 
     // ─── Bytes ──────────────────────────────────────────────────────

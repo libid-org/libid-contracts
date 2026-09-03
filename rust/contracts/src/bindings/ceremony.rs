@@ -96,6 +96,15 @@ pub use proof_verifier_inner::CeremonyProofVerifier;
 /// Google names bind only once a notarized reading of Google's JWKS has
 /// landed here.
 ///
+/// The list is two generations of Google's key set and nothing else:
+/// `current` is the latest reading applied, `previous` the reading before
+/// it, kept for the tokens still in flight under a key Google has since
+/// dropped. A newer reading of the same set restarts `current`'s clock
+/// (`ReadingRefreshed`); a newer reading of a different set shifts `current`
+/// into `previous` and drops what `previous` held (`KeysRotated`). A
+/// generation is trusted until `READING_LIFETIME` after its reading's own
+/// `createdAt`, so there is nothing to prune or untrust by hand.
+///
 /// A rotation is an ordinary notarized session: the keeper reveals the whole
 /// `GET /oauth2/v3/certs` exchange, `rotate` hands the attested bytes and the
 /// notary's proof to the Notary Service with the Notary Fee attached (read
@@ -108,12 +117,12 @@ mod google_jwt_roots_inner {
     sol! {
         #[sol(rpc)]
         interface GoogleJwtRoots {
+            /// One reading of Google's key set: the notary's clock, and the
+            /// limb hash of every modulus it listed, in Google's order.
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct RootInfo {
-                bytes32 kidHash;
-                bytes32 modulusHash;
-                uint256 observedAt;
-                uint256 expiresAt;
+            struct Generation {
+                uint64 observedAt;
+                bytes32[] moduli;
             }
 
             function initialize(address owner_, address notary_) external;
@@ -125,20 +134,25 @@ mod google_jwt_roots_inner {
             function quoteRotation() external view returns (uint256);
             /// Permissionless. `attestedData` is the ceremony-common section
             /// 9.1 record of the JWKS session, `proof` the notary's
-            /// authentication of it (a 65-byte EIP-191 signature today).
+            /// authentication of it (a 65-byte EIP-191 signature today). A
+            /// reading dated no later than the current generation is
+            /// ignored, not refused.
             function rotate(bytes calldata attestedData, bytes calldata proof) external payable;
-            function untrustModulus(bytes32 modulusHash) external;
-            function prune() external;
 
-            function modulusOfKid(bytes32 kidHash) external view returns (bytes32);
-            function expiresAtKid(bytes32 kidHash) external view returns (uint256);
-            /// What `GooglePlatformVerifier` reads: modulus hash -> expiry,
-            /// zero when untrusted.
+            /// What `GooglePlatformVerifier` reads: modulus hash -> when it
+            /// stops being trusted, zero when neither generation lists it.
             function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
-            function rotatedAtKid(bytes32 kidHash) external view returns (uint256);
+            /// Both generations, as stored.
+            function currentKeys() external view returns (Generation memory current, Generation memory previous);
+            /// The current generation's `observedAt`: the notary's clock on
+            /// the reading in force.
             function freshestObservedAt() external view returns (uint256);
-            function currentRoots() external view returns (RootInfo[] memory);
+            /// True until the current generation is guaranteed trusted
+            /// `RENEWAL_MARGIN` from now; true on an empty list.
             function needsRotation() external view returns (bool);
+            function READING_LIFETIME() external view returns (uint256);
+            function RENEWAL_MARGIN() external view returns (uint256);
+            function MAX_KEYS() external view returns (uint256);
 
             function owner() external view returns (address);
             function pendingOwner() external view returns (address);
@@ -146,10 +160,11 @@ mod google_jwt_roots_inner {
             function acceptOwnership() external;
 
             event NotaryServiceChanged(address notary);
-            event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-            event ModulusUntrusted(bytes32 indexed modulusHash);
-            event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
-            event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
+            /// A different set landed: `kids` and `moduli` in the order
+            /// Google listed them, `observedAt` the notary's clock.
+            event KeysRotated(uint64 observedAt, string[] kids, bytes32[] moduli);
+            /// A newer reading of the set already current.
+            event ReadingRefreshed(uint64 observedAt);
         }
     }
 }

@@ -255,22 +255,32 @@ contract UpgradeSafetyTest is Test {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         r.initialize(OWNER, ns);
 
-        // A rotation lands BEFORE the upgrade, so what has to survive is real
-        // state in the namespaced slots rather than the empty list initialize
-        // left behind.
+        // Two rotations land BEFORE the upgrade -- two different one-key
+        // readings, so BOTH generations hold state -- and what has to survive
+        // is real state in the namespaced slots rather than the empty list
+        // initialize left behind.
         uint256 notaryKey = 0xA11CE5;
         vm.prank(OWNER);
         NotaryService(address(ns)).setNotary(vm.addr(notaryKey), true);
-        bytes memory attested = _jwksReading(uint64(vm.getBlockTimestamp()));
-        (uint8 v, bytes32 sigR, bytes32 sigS) =
-            vm.sign(notaryKey, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(attested))));
         vm.deal(address(this), 1 ether);
-        r.rotate{value: 7}(attested, abi.encodePacked(sigR, sigS, v));
-        bytes32 kidHash = keccak256("k");
-        bytes32 modulus = r.modulusOfKid(kidHash);
-        assertTrue(modulus != bytes32(0), "the rotation landed");
-        uint256 stamp = r.rotatedAtKid(kidHash);
-        uint256 expiry = r.expiresAtKid(kidHash);
+        vm.warp(1_770_000_000);
+        uint64 first = uint64(vm.getBlockTimestamp());
+        bytes memory attested = _jwksReading(first, JWKS_MODULUS);
+        r.rotate{value: 7}(attested, _signed(notaryKey, attested));
+        vm.warp(first + 60);
+        uint64 second = uint64(vm.getBlockTimestamp());
+        attested = _jwksReading(second, _otherModulus());
+        r.rotate{value: 7}(attested, _signed(notaryKey, attested));
+
+        (GoogleJwtRoots.Generation memory current, GoogleJwtRoots.Generation memory previous) = r.currentKeys();
+        assertEq(current.observedAt, second, "the second rotation landed");
+        assertEq(previous.observedAt, first, "the first rotation was kept");
+        assertEq(current.moduli.length, 1);
+        assertEq(previous.moduli.length, 1);
+        bytes32 newer = current.moduli[0];
+        bytes32 older = previous.moduli[0];
+        assertTrue(newer != older, "two different keys");
+        uint256 lifetime = r.READING_LIFETIME();
 
         GoogleJwtRoots impl2 = new GoogleJwtRoots();
         _expectNotOwner();
@@ -281,22 +291,42 @@ contract UpgradeSafetyTest is Test {
         assertEq(r.notaryService(), address(ns));
         assertEq(r.quoteRotation(), 7);
         assertEq(r.owner(), OWNER);
-        assertEq(r.modulusOfKid(kidHash), modulus, "the rotated key was lost");
-        assertEq(r.trustedHashExpiresAt(modulus), expiry, "the trust stamp was lost");
-        assertEq(r.rotatedAtKid(kidHash), stamp, "the provenance floor was lost");
-        assertEq(r.freshestObservedAt(), stamp);
-        assertEq(r.currentRoots().length, 1, "the tracked set was lost");
+        assertEq(r.trustedHashExpiresAt(newer), second + lifetime, "the current generation was lost");
+        assertEq(r.trustedHashExpiresAt(older), first + lifetime, "the previous generation was lost");
+        (current, previous) = r.currentKeys();
+        assertEq(current.observedAt, second);
+        assertEq(current.moduli.length, 1);
+        assertEq(current.moduli[0], newer);
+        assertEq(previous.observedAt, first);
+        assertEq(previous.moduli.length, 1);
+        assertEq(previous.moduli[0], older);
+        assertEq(r.freshestObservedAt(), second);
         assertFalse(r.needsRotation());
+    }
+
+    function _signed(uint256 key, bytes memory attested) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 sigR, bytes32 sigS) =
+            vm.sign(key, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(attested))));
+        return abi.encodePacked(sigR, sigS, v);
     }
 
     /// One notarized reading of Google's JWKS carrying one key: the request
     /// and the response revealed whole, nothing committed.
-    function _jwksReading(uint64 createdAt) internal pure returns (bytes memory) {
+    function _jwksReading(uint64 createdAt, string memory modulus) internal pure returns (bytes memory) {
         bytes memory sent = "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.com\r\nconnection: close\r\n\r\n";
-        bytes memory body = abi.encodePacked('{"keys":[{"kid":"k","n":"', JWKS_MODULUS, '"}]}');
+        bytes memory body = abi.encodePacked('{"keys":[{"kid":"k","n":"', modulus, '","e":"AQAB"}]}');
         bytes memory received =
             abi.encodePacked("HTTP/1.1 200 OK\r\ncontent-length: ", vm.toString(body.length), "\r\n\r\n", body);
         return AttestationBuilder.encode(keccak256("www.googleapis.com"), createdAt, _whole(sent), _whole(received));
+    }
+
+    /// A second 2048-bit modulus: the keeper's vector with its first
+    /// character changed -- still 342 characters of base64url, a different
+    /// key.
+    function _otherModulus() internal pure returns (string memory) {
+        bytes memory modulus = bytes(JWKS_MODULUS);
+        modulus[0] = "C";
+        return string(modulus);
     }
 
     function _whole(bytes memory transcript) internal pure returns (AttestationBuilder.Direction memory) {

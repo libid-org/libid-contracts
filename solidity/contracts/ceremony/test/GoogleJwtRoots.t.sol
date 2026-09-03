@@ -11,6 +11,19 @@ import {INotaryService} from "../INotaryService.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 
+/// `_splitLimbs` is internal so the hash a reading will write can be computed
+/// test-side, independent of the list's state: a key's hash is asserted from
+/// its bytes, never read back from the contract that wrote it.
+contract LimbHasher is GoogleJwtRoots {
+    function hashOf(bytes memory modulus) external pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_splitLimbs(modulus)));
+    }
+
+    function hashOfB64url(string memory modulus) external pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_splitLimbs(_b64urlDecode(bytes(modulus)))));
+    }
+}
+
 /// The `google/v1` profile's trust list, fed by a notarized reading of
 /// Google's JWKS endpoint.
 ///
@@ -23,6 +36,7 @@ import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 contract GoogleJwtRootsTest is Test {
     GoogleJwtRoots roots;
     NotaryService notary;
+    LimbHasher hasher;
 
     address constant OWNER = address(0xA11CE);
     address keeper = makeAddr("keeper");
@@ -34,8 +48,8 @@ contract GoogleJwtRootsTest is Test {
 
     /// Google's real body, fetched 2026-09-03: pretty-printed, two keys.
     string constant GOOGLE_JWKS = "contracts/ceremony/test/fixtures/google-jwks.json";
-    bytes32 constant GOOGLE_KID_1 = keccak256("943a3a5d7d919625a454e489b75c29adab57acba");
-    bytes32 constant GOOGLE_KID_2 = keccak256("f10f87405a979c1df36df26606734f33cd85c271");
+    string constant GOOGLE_KID_1 = "943a3a5d7d919625a454e489b75c29adab57acba";
+    string constant GOOGLE_KID_2 = "f10f87405a979c1df36df26606734f33cd85c271";
 
     /// The keeper's limb-hash vector. `decision::modulus_hash` in the keeper
     /// and `_splitLimbs` here must agree on this one, or a key the keeper
@@ -63,6 +77,7 @@ contract GoogleJwtRootsTest is Test {
             )
         );
         roots = _deployRoots(INotaryService(address(notary)));
+        hasher = new LimbHasher();
 
         vm.deal(address(this), 100 ether);
         vm.deal(keeper, 1 ether);
@@ -182,11 +197,25 @@ contract GoogleJwtRootsTest is Test {
         return _body(_jwk(kid, _modulus(seed)));
     }
 
+    function _twoKeys(string memory kidA, string memory seedA, string memory kidB, string memory seedB)
+        private
+        pure
+        returns (bytes memory)
+    {
+        return _body(abi.encodePacked(_jwk(kidA, _modulus(seedA)), ",", _jwk(kidB, _modulus(seedB))));
+    }
+
     /// A 2048-bit modulus derived from `seed`, base64url without padding: 256
     /// bytes encode to exactly 342 characters. Different seeds give different
     /// keys, which is the only property the caller needs.
     function _modulus(string memory seed) private pure returns (string memory) {
         return string(_b64url(_bytes(seed, 256)));
+    }
+
+    /// The limb hash the list writes for the key `seed` derives, computed
+    /// from the bytes rather than read back.
+    function _hash(string memory seed) private view returns (bytes32) {
+        return hasher.hashOf(_bytes(seed, 256));
     }
 
     function _bytes(string memory seed, uint256 count) private pure returns (bytes memory out) {
@@ -227,7 +256,8 @@ contract GoogleJwtRootsTest is Test {
         }
     }
 
-    /// `count` keys, `kid-0` .. `kid-<count-1>`, each with its own modulus.
+    /// `count` keys, `kid-0` .. `kid-<count-1>`, each with its own modulus
+    /// (seeded by its kid).
     function _manyKeys(uint256 count) private pure returns (bytes memory list) {
         for (uint256 i = 0; i < count; ++i) {
             string memory kid = string.concat("kid-", vm.toString(i));
@@ -236,42 +266,96 @@ contract GoogleJwtRootsTest is Test {
         return _body(list);
     }
 
-    /// Install `kid` carrying a key derived from `seed`, observed now, and
-    /// return the modulus hash it wrote.
-    function _installKid(string memory kid, string memory seed) private returns (bytes32) {
+    /// Install one key `kid` derived from `seed`, observed now, and return the
+    /// hash it wrote.
+    function _install(string memory kid, string memory seed) private returns (bytes32) {
         _rotate(_reading(_oneKey(kid, seed)));
-        return roots.modulusOfKid(keccak256(bytes(kid)));
+        return _hash(seed);
+    }
+
+    // ─── Reading the list back ──────────────────────────────────────
+
+    function _current() private view returns (GoogleJwtRoots.Generation memory current) {
+        (current,) = roots.currentKeys();
+    }
+
+    function _previous() private view returns (GoogleJwtRoots.Generation memory previous) {
+        (, previous) = roots.currentKeys();
+    }
+
+    function _one(bytes32 a) private pure returns (bytes32[] memory out) {
+        out = new bytes32[](1);
+        out[0] = a;
+    }
+
+    function _two(bytes32 a, bytes32 b) private pure returns (bytes32[] memory out) {
+        out = new bytes32[](2);
+        out[0] = a;
+        out[1] = b;
+    }
+
+    function _names(string memory a, string memory b) private pure returns (string[] memory out) {
+        out = new string[](2);
+        out[0] = a;
+        out[1] = b;
+    }
+
+    function _assertGeneration(
+        GoogleJwtRoots.Generation memory g,
+        uint64 observedAt,
+        bytes32[] memory moduli,
+        string memory label
+    ) private pure {
+        assertEq(g.observedAt, observedAt, string.concat(label, ": observedAt"));
+        assertEq(g.moduli, moduli, string.concat(label, ": moduli"));
+    }
+
+    function _assertEmpty(GoogleJwtRoots.Generation memory g, string memory label) private pure {
+        _assertGeneration(g, 0, new bytes32[](0), label);
+    }
+
+    /// The one `KeysRotated` among the recorded logs, decoded.
+    function _lastRotation() private returns (uint64 observedAt, string[] memory kids, bytes32[] memory moduli) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("KeysRotated(uint64,string[],bytes32[])");
+        uint256 seen;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].emitter != address(roots) || logs[i].topics[0] != topic) continue;
+            ++seen;
+            (observedAt, kids, moduli) = abi.decode(logs[i].data, (uint64, string[], bytes32[]));
+        }
+        assertEq(seen, 1, "one KeysRotated per rotation");
     }
 
     // ─── What it accepts ────────────────────────────────────────────
 
     function test_aContentLengthFramedReadingInstallsTheKeys() public {
-        bytes memory body = _body(abi.encodePacked(_jwk("kid-1", _modulus("one")), ",", _jwk("kid-2", _modulus("two"))));
-        _rotate(_reading(body));
+        uint64 at = _now();
+        _rotate(_reading(_twoKeys("kid-1", "one", "kid-2", "two")));
 
-        bytes32 first = roots.modulusOfKid(keccak256("kid-1"));
-        bytes32 second = roots.modulusOfKid(keccak256("kid-2"));
-        assertTrue(first != bytes32(0), "kid-1 installed");
-        assertTrue(second != bytes32(0), "kid-2 installed");
+        bytes32 first = _hash("one");
+        bytes32 second = _hash("two");
         assertTrue(first != second, "distinct keys");
-        assertEq(roots.trustedHashExpiresAt(first), block.timestamp + roots.DEFAULT_MODULUS_TTL());
-        assertEq(roots.trustedHashExpiresAt(second), block.timestamp + roots.DEFAULT_MODULUS_TTL());
-        assertEq(roots.expiresAtKid(keccak256("kid-1")), block.timestamp + roots.DEFAULT_MODULUS_TTL());
+        _assertGeneration(_current(), at, _two(first, second), "current");
+        _assertEmpty(_previous(), "nothing precedes the first reading");
+        assertEq(roots.trustedHashExpiresAt(first), at + roots.READING_LIFETIME());
+        assertEq(roots.trustedHashExpiresAt(second), at + roots.READING_LIFETIME());
     }
 
     /// Google serves the key set chunked. The chunk size here cuts the first
     /// modulus value three times, so the de-chunker is what reassembles it;
     /// the same body under `Content-Length` yields the same hash, which is the
-    /// framing being transparent.
+    /// framing being transparent -- the second reading refreshes the set
+    /// rather than rotating it.
     function test_aChunkedReadingInstallsTheKeys() public {
         bytes memory body = _oneKey("kid-1", "one");
         _rotate(_attest(REQUEST, _chunked(body, 100), _now()));
-        bytes32 viaChunked = roots.modulusOfKid(keccak256("kid-1"));
-        assertTrue(viaChunked != bytes32(0), "installed through chunked framing");
+        assertEq(_current().moduli, _one(_hash("one")), "installed through chunked framing");
 
         vm.warp(block.timestamp + 1);
         _rotate(_reading(body));
-        assertEq(roots.modulusOfKid(keccak256("kid-1")), viaChunked, "framing changed the key");
+        assertEq(_current().moduli, _one(_hash("one")), "framing changed the key");
+        _assertEmpty(_previous(), "framing changed the key");
     }
 
     /// The document this contract exists to read: Google's body, verbatim,
@@ -281,19 +365,23 @@ contract GoogleJwtRootsTest is Test {
         bytes memory body = bytes(vm.readFile(GOOGLE_JWKS));
         assertEq(string(_slice(body, 0, 13)), "{\n  \"keys\": [", "the fixture is Google's pretty-printed body");
 
+        vm.recordLogs();
         _rotate(_attest(REQUEST, _chunked(body, 512), _now()));
 
-        assertTrue(roots.modulusOfKid(GOOGLE_KID_1) != bytes32(0), "first Google key installed");
-        assertTrue(roots.modulusOfKid(GOOGLE_KID_2) != bytes32(0), "second Google key installed");
-        assertEq(roots.currentRoots().length, 2);
+        (, string[] memory kids, bytes32[] memory moduli) = _lastRotation();
+        assertEq(kids, _names(GOOGLE_KID_1, GOOGLE_KID_2), "both Google kids, in Google's order");
+        assertTrue(moduli[0] != moduli[1], "two distinct keys");
+        assertEq(_current().moduli, moduli);
         assertFalse(roots.needsRotation());
     }
 
     /// Cross-language pin: the keeper's `decision::modulus_hash` and the
-    /// Google circuit produce this value for this modulus.
+    /// Google circuit produce this value for this modulus. The test-side
+    /// hasher is pinned to the same vector, so every `_hash` below is too.
     function test_theLimbHashMatchesTheKeeper() public {
+        assertEq(hasher.hashOfB64url(KEEPER_MODULUS), KEEPER_MODULUS_HASH);
         _rotate(_reading(_body(_jwk("keeper", KEEPER_MODULUS))));
-        assertEq(roots.modulusOfKid(keccak256("keeper")), KEEPER_MODULUS_HASH);
+        assertEq(_current().moduli, _one(KEEPER_MODULUS_HASH));
         assertGt(roots.trustedHashExpiresAt(KEEPER_MODULUS_HASH), 0);
     }
 
@@ -305,68 +393,177 @@ contract GoogleJwtRootsTest is Test {
         bytes memory sig = _sign(attested);
         vm.prank(keeper);
         roots.rotate{value: FEE}(attested, sig);
-        assertTrue(roots.modulusOfKid(keccak256("kid-1")) != bytes32(0));
+        assertEq(_current().moduli, _one(_hash("one")));
     }
 
     /// The Notary Fee is the one thing a rotation costs beyond gas, and it
     /// accrues where every other attestation's does.
     function test_theRotationPaysTheNotaryFee() public {
         assertEq(roots.quoteRotation(), FEE);
-        _installKid("kid-1", "one");
+        _install("kid-1", "one");
         assertEq(address(notary).balance, FEE, "the fee reached the Notary Service");
         assertEq(address(roots).balance, 0, "nothing stays with the list");
     }
 
-    /// Re-applying the same reading writes the same values. It must not
-    /// revert: with an open caller set, a revert would let a front-runner land
-    /// the reading first and brick the honest keeper.
-    function test_replayingAReadingIsIdempotent() public {
+    // ─── Which readings count ───────────────────────────────────────
+
+    /// Re-applying the reading in force writes nothing and emits nothing --
+    /// in particular it does NOT restart the lifetime, so spamming one
+    /// reading for its whole freshness window cannot stretch trust by a
+    /// second. And it must not revert: with an open caller set, a revert
+    /// would let a front-runner land the reading first and brick the honest
+    /// keeper.
+    function test_replayingTheReadingInForceIsIgnored() public {
+        uint64 at = _now();
         bytes memory attested = _reading(_oneKey("kid-1", "one"));
         _rotate(attested);
-        bytes32 first = roots.modulusOfKid(keccak256("kid-1"));
-
-        _rotate(attested);
-        assertEq(roots.modulusOfKid(keccak256("kid-1")), first);
-    }
-
-    /// Resubmitting the exact reading already applied writes nothing -- in
-    /// particular it does NOT re-stamp the TTL, so spamming one reading for
-    /// its whole freshness window cannot stretch trust by even a second.
-    function test_anIdenticalResubmissionDoesNotRestampTheTtl() public {
-        bytes memory attested = _reading(_oneKey("kid-1", "one"));
-        _rotate(attested);
-        uint256 expiry = roots.expiresAtKid(keccak256("kid-1"));
 
         vm.warp(block.timestamp + 30 minutes); // still inside the window
         vm.recordLogs();
         _rotate(attested);
 
-        assertEq(roots.expiresAtKid(keccak256("kid-1")), expiry, "replay re-stamped the TTL");
         assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
+        _assertGeneration(_current(), at, _one(_hash("one")), "current");
+        _assertEmpty(_previous(), "a replay shifted the list");
+        assertEq(
+            roots.trustedHashExpiresAt(_hash("one")), at + roots.READING_LIFETIME(), "replay restarted the lifetime"
+        );
+    }
+
+    /// Two readings dated the same second cannot disagree: the second is
+    /// ignored whatever it carries, so equal evidence never swaps the set
+    /// and drops the keys Google still signs with.
+    function test_aReadingDatedTheSameSecondIsIgnored() public {
+        uint64 at = _now();
+        _rotate(_readingAt(_oneKey("kid-1", "one"), at));
+
+        vm.recordLogs();
+        _rotate(_readingAt(_oneKey("kid-1", "two"), at)); // must not revert, must not apply
+
+        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
+        _assertGeneration(_current(), at, _one(_hash("one")), "current");
+        _assertEmpty(_previous(), "the same second shifted the list");
+        assertEq(roots.trustedHashExpiresAt(_hash("two")), 0, "the same second installed a key");
     }
 
     /// The rollback that matters: a GENUINELY signed older reading, replayed
     /// inside its freshness window after a newer one has landed. The signature
-    /// verifies; the per-kid monotonic stamp is what refuses the regression --
+    /// verifies; the reading's own clock is what refuses the regression --
     /// silently, so a keeper batch is never bricked.
-    function test_aGenuinelySignedOlderReadingCannotRegressState() public {
-        bytes memory older = _readingAt(_oneKey("kid-1", "retired-modulus"), _now() - 30 minutes);
-        bytes32 newModulus = _installKid("kid-1", "current-modulus");
+    function test_aGenuinelySignedOlderReadingIsIgnored() public {
+        bytes memory older = _readingAt(_oneKey("kid-1", "retired"), _now() - 30 minutes);
+        uint64 at = _now();
+        bytes32 live = _install("kid-1", "live");
 
-        bytes32 kidHash = keccak256("kid-1");
-        uint256 stamp = roots.rotatedAtKid(kidHash);
-        uint256 expiry = roots.expiresAtKid(kidHash);
-
+        vm.recordLogs();
         _rotate(older); // must not revert, must not apply
 
-        assertEq(roots.modulusOfKid(kidHash), newModulus, "older reading rolled the kid back");
-        assertEq(roots.rotatedAtKid(kidHash), stamp, "older reading overwrote the stamp");
-        assertEq(roots.expiresAtKid(kidHash), expiry, "older reading re-stamped the TTL");
-        assertEq(roots.trustedHashExpiresAt(newModulus), expiry, "current key lost trust");
+        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
+        _assertGeneration(_current(), at, _one(live), "older reading rolled the set back");
+        _assertEmpty(_previous(), "older reading shifted the list");
+        assertEq(roots.trustedHashExpiresAt(_hash("retired")), 0, "older reading installed a retired key");
+        assertEq(roots.trustedHashExpiresAt(live), at + roots.READING_LIFETIME(), "live key lost trust");
     }
 
-    /// The freshest-reading mark only moves forward, whoever submits.
-    function test_freshestObservedAtIsMonotonic() public {
+    /// A newer reading of the set already current is Google saying the set
+    /// still stands: its lifetime restarts from the new reading, nothing
+    /// shifts, and the order Google listed the keys in is immaterial.
+    function test_aNewerReadingOfTheSameSetRefreshesWithoutShifting() public {
+        uint64 first = _now();
+        _rotate(_readingAt(_twoKeys("kid-1", "one", "kid-2", "two"), first));
+        bytes32[] memory set = _two(_hash("one"), _hash("two"));
+
+        vm.warp(first + 20 minutes);
+        uint64 second = first + 10 minutes;
+        vm.expectEmit(false, false, false, true);
+        emit GoogleJwtRoots.ReadingRefreshed(second);
+        _rotate(_readingAt(_twoKeys("kid-2", "two", "kid-1", "one"), second)); // the same set, reversed
+
+        _assertGeneration(_current(), second, set, "refreshed in place, original order kept");
+        _assertEmpty(_previous(), "a refresh shifted the list");
+        assertEq(roots.trustedHashExpiresAt(_hash("one")), second + roots.READING_LIFETIME(), "lifetime restarted");
+        assertEq(roots.trustedHashExpiresAt(_hash("two")), second + roots.READING_LIFETIME(), "lifetime restarted");
+        assertEq(roots.freshestObservedAt(), second);
+    }
+
+    /// A newer reading of a different set is a rotation: what was current is
+    /// kept one generation back, the reading becomes current, and the event
+    /// carries the reading's keys in the order Google listed them.
+    function test_aNewerReadingOfADifferentSetRotates() public {
+        uint64 first = _now();
+        bytes32 old = _install("kid-a", "a");
+
+        vm.warp(first + 20 minutes);
+        uint64 second = first + 10 minutes;
+        bytes32[] memory incoming = _two(_hash("b"), _hash("c"));
+        vm.expectEmit(false, false, false, true);
+        emit GoogleJwtRoots.KeysRotated(second, _names("kid-b", "kid-c"), incoming);
+        _rotate(_readingAt(_twoKeys("kid-b", "b", "kid-c", "c"), second));
+
+        _assertGeneration(_current(), second, incoming, "current");
+        _assertGeneration(_previous(), first, _one(old), "previous");
+        assertEq(roots.trustedHashExpiresAt(old), first + roots.READING_LIFETIME(), "the old set keeps its own stamp");
+        assertEq(roots.trustedHashExpiresAt(_hash("b")), second + roots.READING_LIFETIME());
+        assertEq(roots.trustedHashExpiresAt(_hash("c")), second + roots.READING_LIFETIME());
+        assertEq(roots.freshestObservedAt(), second);
+    }
+
+    /// Two generations and no history: a third distinct set drops the oldest
+    /// outright, and a key only that set listed stops being trusted -- with
+    /// no prune, no untrust, no transaction but the rotation itself.
+    function test_aThirdSetDropsTheOldest() public {
+        uint64 first = _now();
+        bytes32 a = _install("kid-a", "a");
+        vm.warp(first + 1 minutes);
+        uint64 second = _now();
+        bytes32 b = _install("kid-b", "b");
+        vm.warp(second + 1 minutes);
+        uint64 third = _now();
+        bytes32 c = _install("kid-c", "c");
+
+        _assertGeneration(_current(), third, _one(c), "current");
+        _assertGeneration(_previous(), second, _one(b), "previous");
+        assertEq(roots.trustedHashExpiresAt(a), 0, "the oldest set is still trusted");
+        assertEq(roots.trustedHashExpiresAt(b), second + roots.READING_LIFETIME());
+        assertEq(roots.trustedHashExpiresAt(c), third + roots.READING_LIFETIME());
+    }
+
+    /// Google's sets overlap -- a key is usually in the reading before and
+    /// the reading after -- and a key in both generations carries the current
+    /// one's stamp: the later reading is the later word that it is listed.
+    function test_aKeyInBothGenerationsCarriesTheCurrentStamp() public {
+        uint64 first = _now();
+        _rotate(_readingAt(_twoKeys("kid-1", "one", "kid-2", "two"), first));
+        vm.warp(first + 1 minutes);
+        uint64 second = _now();
+        _rotate(_readingAt(_twoKeys("kid-2", "two", "kid-3", "three"), second));
+
+        assertEq(roots.trustedHashExpiresAt(_hash("two")), second + roots.READING_LIFETIME(), "in both: current stamp");
+        assertEq(roots.trustedHashExpiresAt(_hash("one")), first + roots.READING_LIFETIME(), "previous only");
+        assertEq(roots.trustedHashExpiresAt(_hash("three")), second + roots.READING_LIFETIME(), "current only");
+    }
+
+    /// Trust lapses by the reading's own clock, with no transaction from
+    /// anyone: the stamp is `createdAt + READING_LIFETIME` -- the notary's
+    /// time, not the block the rotation landed in -- and past it the
+    /// verifier-facing read is already in the past.
+    function test_trustLapsesByTheReadingsOwnClockWithNoCall() public {
+        uint64 observedAt = _now() - 30 minutes;
+        _rotate(_readingAt(_oneKey("kid-1", "one"), observedAt));
+        uint256 stamp = observedAt + roots.READING_LIFETIME();
+        assertEq(roots.trustedHashExpiresAt(_hash("one")), stamp, "anchored to the reading, not the block");
+        assertTrue(stamp < block.timestamp + roots.READING_LIFETIME(), "block time did not stretch it");
+
+        vm.warp(stamp);
+        assertEq(roots.trustedHashExpiresAt(_hash("one")), stamp, "nothing rewrote the stamp");
+        assertTrue(roots.trustedHashExpiresAt(_hash("one")) <= block.timestamp, "expired by time alone");
+        assertTrue(roots.needsRotation());
+        _assertGeneration(_current(), observedAt, _one(_hash("one")), "the generation is still what was read");
+    }
+
+    /// The freshest-reading mark is the current generation's clock: it only
+    /// ever moves forward, whether the newer reading refreshes or rotates.
+    function test_freshestObservedAtIsTheReadingInForce() public {
         assertEq(roots.freshestObservedAt(), 0);
         uint64 first = _now();
         _rotate(_readingAt(_oneKey("kid-1", "one"), first));
@@ -376,162 +573,59 @@ contract GoogleJwtRootsTest is Test {
         assertEq(roots.freshestObservedAt(), first, "an older reading moved the mark");
 
         vm.warp(first + 20 minutes);
-        _rotate(_readingAt(_oneKey("kid-1", "one"), first + 10 minutes));
-        assertEq(roots.freshestObservedAt(), first + 10 minutes, "a newer reading must move the mark");
-    }
-
-    // ─── Losing trust ───────────────────────────────────────────────
-
-    /// The verifier resolves by modulus, not by kid, so a key that a rotation
-    /// replaced has to stop being trusted at that moment. Leaving it keeps a
-    /// retired key usable for the rest of its thirty-day stamp -- which is the
-    /// exact window a compromised key would be used in.
-    function test_rotatingAKidRetiresTheKeyItCarried() public {
-        bytes32 first = _installKid("kid-1", "modulus-one");
-        assertGt(roots.trustedHashExpiresAt(first), 0, "first key trusted");
-
-        vm.warp(block.timestamp + 1 minutes);
-        vm.expectEmit(true, false, false, true);
-        emit GoogleJwtRoots.ModulusUntrusted(first);
-        bytes32 second = _installKid("kid-1", "modulus-two");
-
-        assertGt(roots.trustedHashExpiresAt(second), 0, "second key trusted");
-        assertEq(roots.trustedHashExpiresAt(first), 0, "the replaced key is no longer trusted");
-    }
-
-    /// The case that cannot wait for a rotation: a key Google has not retired,
-    /// or has retired in a way this list has not seen yet.
-    function test_theOwnerCanUntrustAKeyOutright() public {
-        bytes32 modulusHash = _installKid("kid-1", "one");
-        assertGt(roots.trustedHashExpiresAt(modulusHash), 0);
-
-        vm.prank(OWNER);
-        vm.expectEmit(true, false, false, true);
-        emit GoogleJwtRoots.ModulusUntrusted(modulusHash);
-        roots.untrustModulus(modulusHash);
-
-        assertEq(roots.trustedHashExpiresAt(modulusHash), 0, "no longer trusted");
-    }
-
-    function test_onlyTheOwnerUntrusts() public {
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper));
-        roots.untrustModulus(bytes32(uint256(1)));
-    }
-
-    // ─── Expiry and pruning ─────────────────────────────────────────
-
-    /// Time alone retires a key: past its stamp the verifier-facing read says
-    /// expired, with no transaction from anyone. `prune()` -- callable by
-    /// anyone -- then reclaims the bookkeeping.
-    function test_anExpiredKeyIsPrunableByAnyone() public {
-        uint64 provenAt = _now();
-        bytes32 modulusHash = _installKid("kid-1", "one");
-        bytes32 kidHash = keccak256("kid-1");
-        uint256 expiry = roots.expiresAtKid(kidHash);
-
-        vm.warp(expiry); // the stamp is spent; use-site checks already refuse it
-
-        vm.expectEmit(true, false, false, true);
-        emit GoogleJwtRoots.RootPruned(kidHash, modulusHash);
-        vm.prank(keeper);
-        roots.prune();
-
-        assertEq(roots.modulusOfKid(kidHash), bytes32(0), "kid still tracked");
-        assertEq(roots.expiresAtKid(kidHash), 0);
-        assertEq(roots.trustedHashExpiresAt(modulusHash), 0, "spent stamp not cleared");
-        assertEq(roots.currentRoots().length, 0, "enumeration not reclaimed");
-        // The monotonic floor survives the prune: an old reading still cannot
-        // resurrect what time retired.
-        assertEq(roots.rotatedAtKid(kidHash), provenAt, "provenance floor lost");
-    }
-
-    /// Pruning is a no-op while the keys are alive.
-    function test_pruneLeavesLiveKeysAlone() public {
-        bytes32 modulusHash = _installKid("kid-1", "one");
-
-        vm.prank(keeper);
-        roots.prune();
-
-        assertEq(roots.currentRoots().length, 1, "a live key was pruned");
-        assertGt(roots.trustedHashExpiresAt(modulusHash), 0);
-    }
-
-    /// The tracked set is capped, and the cap defends itself: a full set first
-    /// sheds its expired entries, and only a set full of LIVE keys refuses.
-    /// Since every kid must arrive inside a notarized reading of Google's own
-    /// JWKS, an adversary cannot even choose the kids -- this is the ceiling
-    /// on Google's, not the submitter's, behavior.
-    function test_theTrackedSetIsBoundedAndSelfPrunes() public {
-        uint256 max = roots.MAX_TRACKED_KIDS();
-        _rotate(_reading(_manyKeys(max)));
-        assertEq(roots.currentRoots().length, max, "set should sit at the cap");
-
-        // A brand-new kid while every slot holds a live key: refused.
-        _refuses(_reading(_oneKey("kid-overflow", "overflow")), GoogleJwtRoots.TooManyKids.selector);
-
-        // Once the old stamps are spent, the same insert prunes its own room.
-        vm.warp(block.timestamp + roots.DEFAULT_MODULUS_TTL() + 1);
-        _rotate(_reading(_oneKey("kid-overflow", "overflow")));
-        assertEq(roots.currentRoots().length, 1, "expired entries should have been shed");
-        assertEq(roots.currentRoots()[0].kidHash, keccak256("kid-overflow"));
+        _rotate(_readingAt(_oneKey("kid-1", "one"), first + 10 minutes)); // same set: refresh
+        assertEq(roots.freshestObservedAt(), first + 10 minutes, "a refresh must move the mark");
+        _rotate(_readingAt(_oneKey("kid-2", "two"), first + 15 minutes)); // different set: rotation
+        assertEq(roots.freshestObservedAt(), first + 15 minutes, "a rotation must move the mark");
     }
 
     // ─── What a keeper reads ────────────────────────────────────────
 
-    /// One call, the whole state: every tracked key with its provenance and
-    /// expiry.
-    function test_currentRootsDescribesTheWholeList() public {
-        uint64 provenAt = _now() - 5 minutes;
-        _rotate(_readingAt(_manyKeys(3), provenAt));
-
-        GoogleJwtRoots.RootInfo[] memory infos = roots.currentRoots();
-        assertEq(infos.length, 3, "every key should be listed");
-        for (uint256 i = 0; i < infos.length; ++i) {
-            assertEq(infos[i].kidHash, keccak256(bytes(string.concat("kid-", vm.toString(i)))));
-            assertEq(infos[i].modulusHash, roots.modulusOfKid(infos[i].kidHash));
-            assertEq(infos[i].observedAt, provenAt, "provenance is the reading's timestamp");
-            assertEq(infos[i].expiresAt, roots.trustedHashExpiresAt(infos[i].modulusHash));
-        }
+    /// Before any reading: two empty generations, a zero mark, and a list
+    /// that wants a rotation.
+    function test_currentKeysStartsEmpty() public view {
+        _assertEmpty(_current(), "current");
+        _assertEmpty(_previous(), "previous");
+        assertEq(roots.freshestObservedAt(), 0);
+        assertTrue(roots.needsRotation());
     }
 
     /// The single bit a keeper polls: true until the first rotation, false
-    /// while a key has RENEWAL_MARGIN of trusted runway, true again as the
-    /// runway shortens -- and long before anything actually expires.
+    /// while the current generation has RENEWAL_MARGIN of trusted runway,
+    /// true again as the runway shortens -- and long before it expires.
     function test_needsRotationTracksTheTrustedRunway() public {
         assertTrue(roots.needsRotation(), "an empty list needs a rotation");
 
-        _installKid("kid-1", "one");
+        uint64 at = _now();
+        _install("kid-1", "one");
         assertFalse(roots.needsRotation(), "a fresh rotation buys quiet");
 
-        uint256 expiry = roots.expiresAtKid(keccak256("kid-1"));
-        vm.warp(expiry - roots.RENEWAL_MARGIN());
+        uint256 stamp = at + roots.READING_LIFETIME();
+        vm.warp(stamp - roots.RENEWAL_MARGIN() - 1);
+        assertFalse(roots.needsRotation(), "still a second of margin to spare");
+        vm.warp(stamp - roots.RENEWAL_MARGIN());
         assertTrue(roots.needsRotation(), "the margin should trip before expiry does");
     }
 
-    /// Each applied key announces itself with the reading's own timestamp --
-    /// the notary's clock, not the block's -- so a bot can follow the list
-    /// from logs alone.
-    function test_rotationEmitsRootAppliedWithProvenance() public {
+    /// The rotation announces the reading's keys -- kids and limb hashes in
+    /// the order Google listed them -- with the reading's own timestamp, the
+    /// notary's clock, so a bot can follow the list from logs alone.
+    function test_aRotationAnnouncesTheKeysInReadingOrder() public {
         uint64 provenAt = _now() - 10 minutes;
-        bytes32 kidHash = keccak256("kid-1");
 
         vm.recordLogs();
-        _rotate(_readingAt(_oneKey("kid-1", "one"), provenAt));
+        _rotate(_readingAt(_manyKeys(3), provenAt));
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 topic = keccak256("RootApplied(bytes32,bytes32,uint256,uint256)");
-        uint256 seen;
-        for (uint256 i = 0; i < logs.length; ++i) {
-            if (logs[i].emitter != address(roots) || logs[i].topics[0] != topic) continue;
-            ++seen;
-            assertEq(logs[i].topics[1], kidHash);
-            assertEq(logs[i].topics[2], roots.modulusOfKid(kidHash));
-            (uint256 observedAt, uint256 expiresAt) = abi.decode(logs[i].data, (uint256, uint256));
-            assertEq(observedAt, provenAt, "observedAt is the notary's clock");
-            assertEq(expiresAt, block.timestamp + roots.DEFAULT_MODULUS_TTL());
+        (uint64 observedAt, string[] memory kids, bytes32[] memory moduli) = _lastRotation();
+        assertEq(observedAt, provenAt, "observedAt is the notary's clock");
+        assertEq(kids.length, 3);
+        assertEq(moduli.length, 3);
+        for (uint256 i = 0; i < 3; ++i) {
+            string memory kid = string.concat("kid-", vm.toString(i));
+            assertEq(kids[i], kid, "kid in reading order");
+            assertEq(moduli[i], _hash(kid), "modulus in reading order");
         }
-        assertEq(seen, 1, "one RootApplied per key");
+        assertEq(_current().moduli, moduli, "the event is what was stored");
     }
 
     // ─── Administration ─────────────────────────────────────────────
@@ -565,7 +659,7 @@ contract GoogleJwtRootsTest is Test {
 
         // ...and the new one's does, at the new fee.
         roots.rotate{value: 2 * FEE}(attested, _signWith(otherKey, attested));
-        assertTrue(roots.modulusOfKid(keccak256("kid-1")) != bytes32(0));
+        assertEq(_current().moduli, _one(_hash("one")));
         assertEq(address(other).balance, 2 * FEE);
     }
 
@@ -765,6 +859,17 @@ contract GoogleJwtRootsTest is Test {
         _refuses(_withRequest(request), GoogleJwtRoots.WrongRequestLine.selector);
     }
 
+    /// The same path with a query is another document. Google really serves
+    /// `/oauth2/v3/certs?callback=<name>` as a 200 `text/javascript` JSONP
+    /// body -- `<name>({...})` -- that begins with bytes the requester chose,
+    /// so the whole request line through its CRLF is pinned, and a query is
+    /// refused before any byte of the response is read.
+    function test_refusesAQueryInTheRequestTarget() public {
+        bytes memory request =
+            abi.encodePacked("GET /oauth2/v3/certs?callback=foo HTTP/1.1\r\n", _slice(REQUEST, 31, REQUEST.length));
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongRequestLine.selector);
+    }
+
     /// Only the origin-form line, like every other verifier.
     function test_refusesAnAbsoluteFormRequestTarget() public {
         bytes memory request = abi.encodePacked(
@@ -890,6 +995,23 @@ contract GoogleJwtRootsTest is Test {
         _refuses(_withResponse(response), GoogleJwtRoots.NoHeadBoundary.selector);
     }
 
+    /// The prover negotiates no compression, so a `Content-Encoding` is a
+    /// body this contract cannot read. Refused by name, before the framing
+    /// is even looked at, rather than as some byte deep in the JSON walk.
+    function test_refusesAnEncodedBody() public {
+        bytes memory body = _oneKey("kid-1", "one");
+        bytes memory response = abi.encodePacked(
+            STATUS_OK,
+            CONTENT_TYPE,
+            "content-encoding: gzip\r\n",
+            "content-length: ",
+            vm.toString(body.length),
+            "\r\n\r\n",
+            body
+        );
+        _refuses(_withResponse(response), GoogleJwtRoots.EncodedBody.selector);
+    }
+
     /// Every deviation from strict chunked framing is one error: a size that
     /// is not hex, a chunk extension, a missing terminator, trailers, an
     /// over-long size, and chunk data not followed by CRLF.
@@ -961,7 +1083,7 @@ contract GoogleJwtRootsTest is Test {
     function test_acceptsABodyDelimitedByConnectionClose() public {
         bytes memory response = abi.encodePacked(STATUS_OK, CONTENT_TYPE, "\r\n", _oneKey("kid-1", "one"));
         _rotate(_withResponse(response));
-        assertTrue(roots.modulusOfKid(keccak256("kid-1")) != bytes32(0));
+        assertEq(_current().moduli, _one(_hash("one")));
     }
 
     // ─── What it refuses: the key set ───────────────────────────────
@@ -999,6 +1121,23 @@ contract GoogleJwtRootsTest is Test {
     function test_refusesAKeyWithoutAKid() public {
         bytes memory body = _body(abi.encodePacked('{"kty":"RSA","n":"', _modulus("one"), '","e":"AQAB"}'));
         _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "kid"));
+    }
+
+    /// The circuit verifies RS256 under 65537 and nothing else, and the
+    /// verifier trusts a key by its modulus alone -- so a key published with
+    /// any other exponent must never be listed, and one that names no
+    /// exponent is not a key this list can vouch for.
+    function test_refusesAnotherExponent() public {
+        bytes memory body = _body(abi.encodePacked('{"kid":"kid-1","n":"', _modulus("one"), '","e":"AQAC"}'));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.WrongExponent.selector, bytes("AQAC")));
+        // 65537 in a padded or longer encoding is still not the token pinned.
+        body = _body(abi.encodePacked('{"kid":"kid-1","n":"', _modulus("one"), '","e":"AQAB="}'));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.WrongExponent.selector, bytes("AQAB=")));
+    }
+
+    function test_refusesAKeyWithoutAnExponent() public {
+        bytes memory body = _body(abi.encodePacked('{"kty":"RSA","kid":"kid-1","n":"', _modulus("one"), '"}'));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "e"));
     }
 
     /// Two `kid` members in one object: a duplicate leaves the value
@@ -1045,9 +1184,21 @@ contract GoogleJwtRootsTest is Test {
         _refuses(_withBody(body), GoogleJwtRoots.UnexpectedNesting.selector);
     }
 
-    /// The cap on tracked kids is also the cap on keys in one reading.
-    function test_refusesSeventeenKeys() public {
-        _refuses(_withBody(_manyKeys(17)), GoogleJwtRoots.TooManyKids.selector);
+    /// One reading carries at most MAX_KEYS keys, and the refusal names how
+    /// many it carried. The cap itself is accepted.
+    function test_refusesNineKeys() public {
+        uint256 max = roots.MAX_KEYS();
+        assertEq(max, 8);
+        _refuses(_withBody(_manyKeys(max + 1)), abi.encodeWithSelector(GoogleJwtRoots.TooManyKeys.selector, max + 1));
+        _rotate(_withBody(_manyKeys(max)));
+        assertEq(_current().moduli.length, max, "the cap itself is a valid reading");
+    }
+
+    /// A set, not a list: the same modulus twice is not the document Google
+    /// publishes, and a set with a repeat would compare as a set it is not.
+    function test_refusesADuplicateModulus() public {
+        bytes memory body = _twoKeys("kid-1", "one", "kid-2", "one");
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.DuplicateKey.selector, _hash("one")));
     }
 
     function test_refusesTrailingBytes() public {
@@ -1077,29 +1228,11 @@ contract GoogleJwtRootsTest is Test {
     }
 
     /// A reading with no keys says nothing about what Google publishes. It
-    /// would pay the fee, move `freshestObservedAt` and emit nothing.
+    /// would pay the fee and shift the live set into `previous` on the
+    /// strength of a document that names no key.
     function test_refusesAnEmptyKeySet() public {
         _refuses(_withBody('{"keys":[]}'), GoogleJwtRoots.EmptyKeySet.selector);
         _refuses(_withBody('{"keys": [ ]}'), GoogleJwtRoots.EmptyKeySet.selector);
-    }
-
-    /// Two readings dated the same second cannot disagree about a kid: the
-    /// second is ignored whatever it carries, so equal evidence never swaps a
-    /// key and retires the one Google still signs with.
-    function test_aReadingDatedTheSameSecondCannotSwapAKey() public {
-        uint64 at = _now();
-        _rotate(_readingAt(_oneKey("kid-1", "one"), at));
-        bytes32 kidHash = keccak256("kid-1");
-        bytes32 installed = roots.modulusOfKid(kidHash);
-        uint256 expiry = roots.expiresAtKid(kidHash);
-
-        vm.recordLogs();
-        _rotate(_readingAt(_oneKey("kid-1", "two"), at)); // must not revert, must not apply
-
-        assertEq(roots.modulusOfKid(kidHash), installed, "the same second swapped the key");
-        assertEq(roots.trustedHashExpiresAt(installed), expiry, "the installed key lost trust");
-        assertEq(roots.rotatedAtKid(kidHash), at, "the stamp moved");
-        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
     }
 
     /// The header the body is located by gets the rule every other read

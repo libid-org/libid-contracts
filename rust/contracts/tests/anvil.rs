@@ -154,12 +154,17 @@ async fn deploys_the_identity_stack_behind_proxies() {
     );
 
     // The root list points at the Notary Service, quotes its fee, and starts
-    // empty — so it wants a rotation before any Google name can bind.
+    // with both generations empty — so it wants a rotation before any Google
+    // name can bind.
     let roots = GoogleJwtRoots::new(roots_proxy, &provider);
     assert_eq!(roots.notaryService().call().await.unwrap(), notary_proxy);
     assert_eq!(roots.quoteRotation().call().await.unwrap(), fee);
     assert!(roots.needsRotation().call().await.unwrap());
-    assert!(roots.currentRoots().call().await.unwrap().is_empty());
+    let keys = roots.currentKeys().call().await.unwrap();
+    assert_eq!(keys.current.observedAt, 0);
+    assert!(keys.current.moduli.is_empty());
+    assert_eq!(keys.previous.observedAt, 0);
+    assert!(keys.previous.moduli.is_empty());
 }
 
 /// (b) The Notary Service lifecycle: deploy behind a proxy, add a second

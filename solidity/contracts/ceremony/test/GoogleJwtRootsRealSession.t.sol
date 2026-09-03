@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -195,31 +195,39 @@ contract GoogleJwtRootsRealSessionTest is Test {
     // ─── The real rotation ──────────────────────────────────────────
 
     /// The real bytes, the real signature, a real Notary Service trusting the
-    /// key that signed: every kid Google published that minute is installed,
-    /// stamped with the notary's clock, and the fee lands where every other
-    /// attestation's does.
+    /// key that signed: every kid Google published that minute is installed
+    /// as the current generation, trusted for the lifetime from the notary's
+    /// clock, and the fee lands where every other attestation's does.
     function test_theRealReadingInstallsEveryKidGoogleServed() public {
+        vm.recordLogs();
         roots.rotate{value: FEE}(record, signature);
 
         bytes memory json = _realBody();
         string[] memory kids = _kids();
         assertEq(_count(json, "\"kid\""), kids.length, "the list above names every kid in the body");
-
-        bytes32[] memory moduli = new bytes32[](kids.length);
         for (uint256 i = 0; i < kids.length; ++i) {
             assertTrue(_contains(json, abi.encodePacked("\"kid\": \"", kids[i], "\"")), "kid is in the body");
-            bytes32 kidHash = keccak256(bytes(kids[i]));
-            moduli[i] = roots.modulusOfKid(kidHash);
+        }
+
+        // The rotation announces the reading's keys in the order Google
+        // listed them, so the event is what ties each kid to its modulus.
+        (uint64 observedAt, string[] memory announced, bytes32[] memory moduli) = _rotation();
+        assertEq(observedAt, createdAt, "stamped with the notary's clock");
+        assertEq(announced, kids, "every kid, in the fixture's order");
+        assertEq(moduli.length, kids.length);
+        uint256 stamp = createdAt + roots.READING_LIFETIME();
+        for (uint256 i = 0; i < moduli.length; ++i) {
             assertTrue(moduli[i] != bytes32(0), "kid installed");
-            assertEq(roots.rotatedAtKid(kidHash), createdAt, "stamped with the notary's clock");
-            assertEq(roots.expiresAtKid(kidHash), block.timestamp + roots.DEFAULT_MODULUS_TTL());
-            assertEq(roots.trustedHashExpiresAt(moduli[i]), block.timestamp + roots.DEFAULT_MODULUS_TTL());
+            assertEq(roots.trustedHashExpiresAt(moduli[i]), stamp, "trusted for the lifetime, from the reading's clock");
             for (uint256 j = 0; j < i; ++j) {
                 assertTrue(moduli[i] != moduli[j], "four distinct keys");
             }
         }
 
-        assertEq(roots.currentRoots().length, kids.length);
+        (GoogleJwtRoots.Generation memory current, GoogleJwtRoots.Generation memory previous) = roots.currentKeys();
+        assertEq(current.observedAt, createdAt);
+        assertEq(current.moduli, moduli, "four moduli, in the fixture's order");
+        assertEq(previous.moduli.length, 0, "nothing precedes the first reading");
         assertFalse(roots.needsRotation());
         assertEq(roots.freshestObservedAt(), createdAt);
         assertEq(address(notary).balance, FEE, "the fee reached the Notary Service");
@@ -250,12 +258,10 @@ contract GoogleJwtRootsRealSessionTest is Test {
         GoogleJwtRoots again = _deployRoots();
         again.rotate{value: FEE}(reread, _signWith(TEST_KEY, reread));
 
-        string[] memory kids = _kids();
-        for (uint256 i = 0; i < kids.length; ++i) {
-            bytes32 kidHash = keccak256(bytes(kids[i]));
-            assertEq(again.modulusOfKid(kidHash), roots.modulusOfKid(kidHash), "framing changed the key");
-        }
-        assertEq(again.currentRoots().length, kids.length);
+        (GoogleJwtRoots.Generation memory viaChunked,) = roots.currentKeys();
+        (GoogleJwtRoots.Generation memory viaLength,) = again.currentKeys();
+        assertEq(viaLength.moduli.length, _kids().length);
+        assertEq(viaLength.moduli, viaChunked.moduli, "framing changed the key");
     }
 
     // ─── The ways to cheat with it ──────────────────────────────────
@@ -305,7 +311,8 @@ contract GoogleJwtRootsRealSessionTest is Test {
 
         vm.warp(createdAt + window);
         roots.rotate{value: FEE}(record, signature);
-        assertEq(roots.currentRoots().length, 4);
+        (GoogleJwtRoots.Generation memory current,) = roots.currentKeys();
+        assertEq(current.moduli.length, 4);
     }
 
     /// The real request with a second `Host` smuggled in behind a bare LF --
@@ -344,6 +351,19 @@ contract GoogleJwtRootsRealSessionTest is Test {
     /// the head, de-chunked.
     function _realBody() private view returns (bytes memory) {
         return _dechunk(_afterHead(this.decode(record).received.revealed[0].value));
+    }
+
+    /// The one `KeysRotated` among the recorded logs, decoded.
+    function _rotation() private returns (uint64 observedAt, string[] memory kids, bytes32[] memory moduli) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("KeysRotated(uint64,string[],bytes32[])");
+        uint256 seen;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].emitter != address(roots) || logs[i].topics[0] != topic) continue;
+            ++seen;
+            (observedAt, kids, moduli) = abi.decode(logs[i].data, (uint64, string[], bytes32[]));
+        }
+        assertEq(seen, 1, "one KeysRotated per rotation");
     }
 
     function _signWith(uint256 key, bytes memory attested) private pure returns (bytes memory) {
