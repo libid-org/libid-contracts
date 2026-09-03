@@ -18,7 +18,7 @@ import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 /// response is framed by the test, and the notary is `vm.sign`. Every byte
 /// there is one a test author chose. This file starts from the other end: the
 /// fixture is a genuine MPC-TLS session with www.googleapis.com, captured on
-/// 2026-09-03 by `notary/examples/notarize_jwks.rs` through a notary signing
+/// 2026-09-03 by libid-org/notary's `examples/notarize_jwks.rs` through a notary signing
 /// with anvil #0, and nothing in it was written by hand -- the request line is
 /// what the keeper's prover put on the wire, the head is what Google's front
 /// end answered, the framing is Google's, the key set is the one Google

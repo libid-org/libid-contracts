@@ -698,16 +698,11 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     ///      `NotNewer`. Rotation is open and a reading binds no contract, so
     ///      anyone can replay any still-fresh reading anywhere, forever; the
     ///      refusal keeps an older reading from rolling the set back and a
-    ///      replay from re-stamping the lifetime. It used to be a silent
-    ///      return, on the rule that a permissionless path must never revert
-    ///      or a front-runner could brick the honest keeper by landing first.
-    ///      That rule belonged to the per-claim nullifier design, where the
-    ///      first submission consumed the claim; here nothing is consumed --
-    ///      the front-runner's reading IS the keeper's, applied -- so the
-    ///      keeper's transaction has nothing left to do, and a revert says so
-    ///      while rolling the Notary Fee back with the state. The return
-    ///      charged the fee for nothing done and gave the keeper no signal.
-    ///      No later includes equal: a second reading dated the same second
+    ///      replay from re-stamping the lifetime. A front-runner landing the
+    ///      keeper's own reading first consumes nothing -- that reading IS
+    ///      the keeper's, applied -- so the keeper's transaction has nothing
+    ///      left to do, and the revert says so while rolling the Notary Fee
+    ///      back with the state. No later includes equal: a second reading dated the same second
     ///      cannot swap the set -- the rule for equal evidence everywhere in
     ///      the protocol (REQ-COMMON-25A). The freshness checks in `rotate`
     ///      run first, so a stale or future record is named as such.

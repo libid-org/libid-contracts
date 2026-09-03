@@ -1,8 +1,9 @@
 # @libid/contracts
 
-Typed, viem-ready ABIs for every libid contract, a call builder for every
-state-changing function, and the identity helper layer: handle normalization
-and name resolution.
+Typed, viem-ready ABIs for the libid identity stack (NotaryService,
+CeremonyProofVerifier, GoogleJwtRoots, IdentityNames, LibidFactory, WTIA9), a
+call builder for every state-changing function, and the identity helper layer:
+handle normalization and name resolution.
 
 Both `src/abis/` and `src/calls/` are generated from the forge artifacts
 (`solidity/out`) by `scripts/codegen.mjs`, and neither is committed — CI

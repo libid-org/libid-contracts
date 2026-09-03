@@ -411,7 +411,7 @@ contract GoogleJwtRootsTest is Test {
     /// reading's own clock on both sides. Nothing is written -- in particular
     /// the lifetime does NOT restart, so spamming one reading for its whole
     /// freshness window cannot stretch trust by a second -- and the revert
-    /// hands the fee back, where a silent return charged it for nothing done.
+    /// hands the fee back rather than charging it for nothing done.
     function test_replayingTheReadingInForceIsRefused() public {
         uint64 at = _now();
         bytes memory attested = _reading(_oneKey("kid-1", "one"));
@@ -463,13 +463,11 @@ contract GoogleJwtRootsTest is Test {
         assertEq(roots.trustedHashExpiresAt(live), at + roots.READING_LIFETIME(), "live key lost trust");
     }
 
-    /// The front-run shape the silent return once existed for: a stranger
-    /// lands the keeper's own reading first. The keeper's transaction is
-    /// refused, its fee comes back with the revert -- gas is all it lost --
-    /// and its next reading lands as usual. Nothing was consumed: with no
-    /// nullifier there is nothing a front-runner can spend on the keeper's
-    /// behalf, which is why "never revert, or the keeper is bricked" no
-    /// longer applies.
+    /// The front-run shape: a stranger lands the keeper's own reading first.
+    /// The keeper's transaction is refused, its fee comes back with the
+    /// revert -- gas is all it lost -- and its next reading lands as usual.
+    /// Nothing was consumed: with no nullifier there is nothing a
+    /// front-runner can spend on the keeper's behalf.
     function test_aFrontRunKeeperLosesGasOnly() public {
         uint64 at = _now();
         bytes memory attested = _reading(_oneKey("kid-1", "one"));
