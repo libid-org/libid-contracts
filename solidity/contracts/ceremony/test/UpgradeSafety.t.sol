@@ -21,8 +21,6 @@ import {HandleVectors} from "../../identity/HandleVectors.sol";
 import {HandleNormalizer} from "../../identity/HandleNormalizer.sol";
 import {IdentityNodes} from "../../identity/IdentityNodes.sol";
 import {StubPlatformVerifier} from "../../identity/test/StubPlatformVerifier.sol";
-import {Notary} from "../../notary/Notary.sol";
-import {deployNotary} from "../../notary/test/DeployNotary.sol";
 
 contract RHonk is IHonkVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
@@ -67,6 +65,9 @@ contract UpgradeSafetyTest is Test {
             0x92a7c997eeb454ceeeb8ef2d99ba7d4b830287ff966f129f9049c466a8342400
         );
         assertEq(_slot("libid.storage.IdentityNames"), NAMES_ROOT);
+        assertEq(
+            _slot("libid.storage.IdentityJwksRoots"), 0x1aceb787a5cb65251c62e0afbe6fbce480e0d1c9636ff7b90cdca2969527ef00
+        );
     }
 
     function _implOf(address proxy) internal view returns (address) {
@@ -243,15 +244,15 @@ contract UpgradeSafetyTest is Test {
     // ─── IdentityJwksRoots ──────────────────────────────────────────
 
     function test_upgrade_IdentityJwksRoots() public {
-        Notary n = deployNotary(OWNER, NOTARY);
+        INotaryService ns = INotaryService(address(_notaryService()));
         IdentityJwksRoots impl = new IdentityJwksRoots();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(OWNER, address(n));
+        impl.initialize(OWNER, ns);
         IdentityJwksRoots r = IdentityJwksRoots(
-            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, address(n)))))
+            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, ns))))
         );
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        r.initialize(OWNER, address(n));
+        r.initialize(OWNER, ns);
 
         IdentityJwksRoots impl2 = new IdentityJwksRoots();
         _expectNotOwner();
@@ -259,7 +260,9 @@ contract UpgradeSafetyTest is Test {
         vm.prank(OWNER);
         r.upgradeToAndCall(address(impl2), "");
         assertEq(_implOf(address(r)), address(impl2));
-        assertEq(address(r.notaryContract()), address(n));
+        assertEq(r.notaryService(), address(ns));
+        assertEq(r.quoteRotation(), 7);
+        assertTrue(r.needsRotation());
         assertEq(r.owner(), OWNER);
     }
 

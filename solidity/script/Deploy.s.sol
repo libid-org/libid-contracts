@@ -15,6 +15,7 @@ import {XZkVerifier, IHonkVerifier} from "../contracts/login/zk/XZkVerifier.sol"
 import {IZkSessionVerifier} from "../contracts/login/zk/IZkSessionVerifier.sol";
 import {IdentityNames} from "../contracts/identity/IdentityNames.sol";
 import {NotaryService} from "../contracts/ceremony/NotaryService.sol";
+import {INotaryService} from "../contracts/ceremony/INotaryService.sol";
 import {CeremonyProofVerifier} from "../contracts/ceremony/CeremonyProofVerifier.sol";
 import {IProofVerifier} from "../contracts/ceremony/IProofVerifier.sol";
 import {HandleVectors} from "../contracts/identity/HandleVectors.sol";
@@ -185,11 +186,13 @@ contract Deploy is Script, BankDiamondDeployer {
 
         // The JWKS root list is the naming system's own. Google's Platform
         // Verifier reads the trusted moduli through it, and nothing is trusted
-        // until a notarized reading of Google's JWKS lands.
+        // until a notarized reading of Google's JWKS lands -- verified through
+        // the Notary Service above, like every other notarized session.
         IdentityJwksRoots rootsImpl = new IdentityJwksRoots();
         address jwksRootsAddr = address(
             new ERC1967Proxy(
-                address(rootsImpl), abi.encodeCall(IdentityJwksRoots.initialize, (deployer, address(notaryContract)))
+                address(rootsImpl),
+                abi.encodeCall(IdentityJwksRoots.initialize, (deployer, INotaryService(notaryServiceAddr)))
             )
         );
 

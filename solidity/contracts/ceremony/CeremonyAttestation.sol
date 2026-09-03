@@ -243,7 +243,7 @@ library CeremonyAttestation {
         // copy the whole revealed transcript again and rescan it, so every
         // rejected submission would pay twice for the check that rejected it --
         // on a buffer the prover sizes.
-        uint256 headers = _countNeedle(_normalizeHeaderBytes(revealed));
+        uint256 headers = _countNeedle(normalizeHeaderBytes(revealed));
         if (headers != 1) revert NotOneAuthorizationHeader(headers);
 
         // Framing, on RAW bytes at known offsets. Two fixed comparisons make
@@ -256,13 +256,20 @@ library CeremonyAttestation {
         }
     }
 
-    /// @dev Lowercase ASCII and drop every space and horizontal tab, keeping CR
-    ///      and LF (REQ-COMMON-39). Field names and the scheme token are
-    ///      case-insensitive and the colon admits whitespace, so a literal
-    ///      search over raw bytes is evadable. Removing only bytes absent from
-    ///      the needle can create a spurious match, which over-rejects and is
-    ///      safe, but can never hide a real one.
-    function _normalizeHeaderBytes(bytes memory raw) private pure returns (bytes memory out) {
+    /// @notice Lowercase ASCII and drop every space and horizontal tab, keeping
+    ///         CR and LF (REQ-COMMON-39).
+    ///
+    /// @dev Field names and the scheme token are case-insensitive and the
+    ///      colon admits whitespace, so a literal search over raw bytes is
+    ///      evadable. Removing only bytes absent from the needle can create a
+    ///      spurious match, which over-rejects and is safe, but can never hide
+    ///      a real one.
+    ///
+    ///      `internal` for the same reason `concatRevealed` is: a header
+    ///      COUNT reads this, and what it strips decides what a count can
+    ///      miss -- so one implementation of it, shared with the JWKS root
+    ///      list's `Host` scan, rather than two.
+    function normalizeHeaderBytes(bytes memory raw) internal pure returns (bytes memory out) {
         out = new bytes(raw.length);
         uint256 n;
         for (uint256 i = 0; i < raw.length; ++i) {

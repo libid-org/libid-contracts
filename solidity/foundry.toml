@@ -22,12 +22,9 @@ fs_permissions = [
     # self-skip when these files are absent.
     { access = "read", path = "circuits/jwt_email/target" },
     { access = "read", path = "contracts/login/test/fixtures/oidc" },
-    # The naming system keeps its own copy: the rotation proof binds no
-    # contract, so the same notarized reading feeds both trust lists, but the
-    # identity tree must not read out of the login tree.
-    { access = "read", path = "contracts/identity/test/fixtures/oidc" },
-    # TS/Solidity parity fixture for bind-request encoding (vendored from the
-    # browser identity package; see BindEncoding.t.sol).
+    # Google's real JWKS body, as served today, so the root list's parser is
+    # tested against the document it will actually read rather than a shape
+    # a test author remembered (see IdentityJwksRoots.t.sol).
     { access = "read", path = "contracts/identity/test/fixtures" },
     { access = "read", path = "out" }, # diamond deployer reads facet methodIdentifiers
 ]
