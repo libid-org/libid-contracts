@@ -202,27 +202,8 @@ library CeremonyAttestation {
 
         requireExactCoverage(block_, length);
 
-        // Obsolete line folding is illegal in HTTP/1.1 and defeats the needle:
-        // `authorization:\r\n Bearer x` normalizes to
-        // `authorization:\r\nbearer`, because normalization strips the space
-        // but keeps the CRLF the fold introduced. The header is then never
-        // counted, and a server honouring the fold authenticates with it.
         bytes memory revealed = concatRevealed(block_);
-        for (uint256 i = 0; i + 2 < revealed.length; ++i) {
-            if (revealed[i] == 0x0d && revealed[i + 1] == 0x0a && (revealed[i + 2] == 0x20 || revealed[i + 2] == 0x09))
-            {
-                revert ObsoleteLineFold(i);
-            }
-        }
-        // Every LF must be part of a CRLF. Otherwise
-        // `...\nauthorization: Bearer <victim>\r\n` starts a header line the
-        // CRLF-anchored needle never counts, while a lenient platform parser
-        // honours it.
-        for (uint256 i = 0; i < revealed.length; ++i) {
-            if (revealed[i] == 0x0a && (i == 0 || revealed[i - 1] != 0x0d)) {
-                revert BareLineFeed(i);
-            }
-        }
+        requireCrlfLineEndings(revealed);
 
         // Counted over the CONCATENATION, not per range.
         //
@@ -243,7 +224,7 @@ library CeremonyAttestation {
         // copy the whole revealed transcript again and rescan it, so every
         // rejected submission would pay twice for the check that rejected it --
         // on a buffer the prover sizes.
-        uint256 headers = _countNeedle(_normalizeHeaderBytes(revealed));
+        uint256 headers = _countNeedle(normalizeHeaderBytes(revealed));
         if (headers != 1) revert NotOneAuthorizationHeader(headers);
 
         // Framing, on RAW bytes at known offsets. Two fixed comparisons make
@@ -256,13 +237,62 @@ library CeremonyAttestation {
         }
     }
 
-    /// @dev Lowercase ASCII and drop every space and horizontal tab, keeping CR
-    ///      and LF (REQ-COMMON-39). Field names and the scheme token are
-    ///      case-insensitive and the colon admits whitespace, so a literal
-    ///      search over raw bytes is evadable. Removing only bytes absent from
-    ///      the needle can create a spurious match, which over-rejects and is
-    ///      safe, but can never hide a real one.
-    function _normalizeHeaderBytes(bytes memory raw) private pure returns (bytes memory out) {
+    /// @notice Every line ending in the revealed request bytes is a CRLF, and
+    ///         no line continues the one before it.
+    ///
+    /// @dev A CRLF-anchored header count is only as good as the line
+    ///      structure it anchors to, and HTTP/1.1 parsers in the wild accept
+    ///      two shapes the needle cannot see.
+    ///
+    ///      Obsolete line folding is illegal in HTTP/1.1 and defeats the
+    ///      needle: `authorization:\r\n Bearer x` normalizes to
+    ///      `authorization:\r\nbearer`, because normalization strips the space
+    ///      but keeps the CRLF the fold introduced. The header is then never
+    ///      counted, and a server honouring the fold authenticates with it.
+    ///
+    ///      Every LF must be part of a CRLF. Otherwise
+    ///      `...\nauthorization: Bearer <victim>\r\n` starts a header line the
+    ///      CRLF-anchored needle never counts, while a lenient platform parser
+    ///      honours it.
+    ///
+    ///      `internal` for the same reason `normalizeHeaderBytes` is: what
+    ///      this refuses decides what a header count can miss, so it is one
+    ///      implementation shared by every count -- the bearer header here and
+    ///      the JWKS root list's `Host` -- rather than one per caller. The
+    ///      `Host` count learned this the hard way: Google's front end honours
+    ///      a bare-LF `Host: storage.googleapis.com` and routes to the storage
+    ///      backend, while a needle count sees only the CRLF one before it.
+    ///
+    ///      Runs BEFORE the count, over the raw bytes: normalization keeps CR
+    ///      and LF, so the offsets it reports are transcript offsets.
+    function requireCrlfLineEndings(bytes memory revealed) internal pure {
+        for (uint256 i = 0; i + 2 < revealed.length; ++i) {
+            if (revealed[i] == 0x0d && revealed[i + 1] == 0x0a && (revealed[i + 2] == 0x20 || revealed[i + 2] == 0x09))
+            {
+                revert ObsoleteLineFold(i);
+            }
+        }
+        for (uint256 i = 0; i < revealed.length; ++i) {
+            if (revealed[i] == 0x0a && (i == 0 || revealed[i - 1] != 0x0d)) {
+                revert BareLineFeed(i);
+            }
+        }
+    }
+
+    /// @notice Lowercase ASCII and drop every space and horizontal tab, keeping
+    ///         CR and LF (REQ-COMMON-39).
+    ///
+    /// @dev Field names and the scheme token are case-insensitive and the
+    ///      colon admits whitespace, so a literal search over raw bytes is
+    ///      evadable. Removing only bytes absent from the needle can create a
+    ///      spurious match, which over-rejects and is safe, but can never hide
+    ///      a real one.
+    ///
+    ///      `internal` for the same reason `concatRevealed` is: a header
+    ///      COUNT reads this, and what it strips decides what a count can
+    ///      miss -- so one implementation of it, shared with the JWKS root
+    ///      list's `Host` scan, rather than two.
+    function normalizeHeaderBytes(bytes memory raw) internal pure returns (bytes memory out) {
         out = new bytes(raw.length);
         uint256 n;
         for (uint256 i = 0; i < raw.length; ++i) {

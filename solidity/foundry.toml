@@ -2,8 +2,8 @@
 src = "contracts"
 out = "out"
 libs = ["lib"]
-# Tests live beside the code they cover — contracts/login/test, contracts/
-# transfer/test, contracts/identity/test — so discovery goes through src
+# Tests live beside the code they cover — contracts/ceremony/test, contracts/
+# identity/test, contracts/factory/test — so discovery goes through src
 # rather than one test directory.
 test = "contracts"
 solc = "0.8.33"
@@ -18,16 +18,11 @@ optimizer_runs = 200
 bytecode_hash = "none"
 cbor_metadata = false
 fs_permissions = [
-    # Local proof artifacts, if someone drops them in; the OIDC flow tests
-    # self-skip when these files are absent.
-    { access = "read", path = "circuits/jwt_email/target" },
-    { access = "read", path = "contracts/login/test/fixtures/oidc" },
-    # The naming system keeps its own copy: the rotation proof binds no
-    # contract, so the same notarized reading feeds both trust lists, but the
-    # identity tree must not read out of the login tree.
-    { access = "read", path = "contracts/identity/test/fixtures/oidc" },
-    # TS/Solidity parity fixture for bind-request encoding (vendored from the
-    # browser identity package; see BindEncoding.t.sol).
-    { access = "read", path = "contracts/identity/test/fixtures" },
-    { access = "read", path = "out" }, # diamond deployer reads facet methodIdentifiers
+    # Google's real JWKS body, as served today, so the root list's parser is
+    # tested against the document it will actually read rather than a shape
+    # a test author remembered (see GoogleJwtRoots.t.sol) -- and a whole
+    # notarized session of it, signature included, so the real path is tested
+    # end to end (see GoogleJwtRootsRealSession.t.sol).
+    { access = "read", path = "contracts/ceremony/test/fixtures" },
+    { access = "read", path = "out" }, # the factory tests read creation code from the artifacts
 ]

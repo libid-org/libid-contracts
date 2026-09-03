@@ -60,7 +60,7 @@ contract CeremonyProfileTest is Test {
     }
 
     /// @dev The pinned fixture in CeremonyAttestation.t.sol opens with the
-    ///      format tag, the X platform id and the identity session tag. If
+    ///      X API authority id and nothing else names a platform. If
     ///      these constants and that fixture ever drift apart, one of them is
     ///      wrong.
     function test_theAttestationFixtureUsesTheseConstants() public pure {

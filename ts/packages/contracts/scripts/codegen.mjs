@@ -29,29 +29,18 @@ const callsDir = join(packageDir, 'src', 'calls')
 
 // Every contract the package ships an ABI for. `file` is the source unit under
 // solidity/out, `name` the contract inside it, `exportName` what a consumer
-// imports. IBank exports as `bankAbi`: it is the facade the whole diamond
-// answers to, and the facet ABIs exist for anyone wiring cuts by hand.
+// imports.
 const contracts = [
-  { file: 'Registry.sol', name: 'Registry', exportName: 'registryAbi' },
-  { file: 'Notary.sol', name: 'Notary', exportName: 'notaryAbi' },
-  { file: 'WalletFactory.sol', name: 'WalletFactory', exportName: 'walletFactoryAbi' },
-  { file: 'WebWallet.sol', name: 'WebWallet', exportName: 'webWalletAbi' },
-  { file: 'IBank.sol', name: 'IBank', exportName: 'bankAbi' },
-  { file: 'AdminFacet.sol', name: 'AdminFacet', exportName: 'adminFacetAbi' },
-  { file: 'VaultFacet.sol', name: 'VaultFacet', exportName: 'vaultFacetAbi' },
-  { file: 'TransferFacet.sol', name: 'TransferFacet', exportName: 'transferFacetAbi' },
-  { file: 'DiamondLoupeFacet.sol', name: 'DiamondLoupeFacet', exportName: 'diamondLoupeFacetAbi' },
   { file: 'IdentityNames.sol', name: 'IdentityNames', exportName: 'identityNamesAbi' },
   { file: 'HandleResolver.sol', name: 'HandleResolver', exportName: 'handleResolverAbi' },
-  { file: 'IdentityJwksRoots.sol', name: 'IdentityJwksRoots', exportName: 'identityJwksRootsAbi' },
-  { file: 'XZkVerifier.sol', name: 'XZkVerifier', exportName: 'xZkVerifierAbi' },
+  { file: 'NotaryService.sol', name: 'NotaryService', exportName: 'notaryServiceAbi' },
   {
-    file: 'GoogleOidcVerifier.sol',
-    name: 'GoogleOidcVerifier',
-    exportName: 'googleOidcVerifierAbi',
+    file: 'CeremonyProofVerifier.sol',
+    name: 'CeremonyProofVerifier',
+    exportName: 'ceremonyProofVerifierAbi',
   },
+  { file: 'GoogleJwtRoots.sol', name: 'GoogleJwtRoots', exportName: 'googleJwtRootsAbi' },
   { file: 'LibidFactory.sol', name: 'LibidFactory', exportName: 'libidFactoryAbi' },
-  { file: 'MockERC20.sol', name: 'MockERC20', exportName: 'mockErc20Abi' },
   { file: 'WTIA9.sol', name: 'WTIA9', exportName: 'wtia9Abi' },
 ]
 
@@ -116,7 +105,7 @@ export const ${exportName} = ${body} as const satisfies Abi
 /// Arguments are not spelled out here: `ContractFunctionArgs` reads them off
 /// the ABI, so there is no Solidity-to-TypeScript type table in this script to
 /// drift from the real one. It resolves overloads to a union of tuples too,
-/// which is what lets `webTransferV2` keep one name.
+/// which is what keeps one builder per name should a contract ever overload one.
 ///
 /// Payable functions take `value` before their arguments. That is the whole
 /// reason to distinguish them: a caller who forgets the value on a payable

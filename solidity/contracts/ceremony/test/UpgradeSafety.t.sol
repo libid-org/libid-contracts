@@ -10,19 +10,17 @@ import {CeremonyProofVerifier} from "../CeremonyProofVerifier.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {XPlatformVerifier} from "../XPlatformVerifier.sol";
 import {GitHubPlatformVerifier} from "../GitHubPlatformVerifier.sol";
-import {GooglePlatformVerifier, IJwksRoots} from "../GooglePlatformVerifier.sol";
+import {GooglePlatformVerifier, IGoogleJwtRoots} from "../GooglePlatformVerifier.sol";
 import {INotaryService} from "../INotaryService.sol";
 import {IHonkVerifier} from "../PlatformVerifierBase.sol";
 import {IPlatformVerifier} from "../IPlatformVerifier.sol";
 import {IProofVerifier} from "../IProofVerifier.sol";
 import {IdentityNames} from "../../identity/IdentityNames.sol";
-import {IdentityJwksRoots} from "../../identity/IdentityJwksRoots.sol";
+import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 import {HandleVectors} from "../../identity/HandleVectors.sol";
-import {HandleNormalizer} from "../../identity/HandleNormalizer.sol";
 import {IdentityNodes} from "../../identity/IdentityNodes.sol";
 import {StubPlatformVerifier} from "../../identity/test/StubPlatformVerifier.sol";
-import {Notary} from "../../notary/Notary.sol";
-import {deployNotary} from "../../notary/test/DeployNotary.sol";
+import {AttestationBuilder} from "./AttestationBuilder.sol";
 
 contract RHonk is IHonkVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
@@ -30,7 +28,7 @@ contract RHonk is IHonkVerifier {
     }
 }
 
-contract RRoots is IJwksRoots {
+contract RRoots is IGoogleJwtRoots {
     function trustedHashExpiresAt(bytes32) external pure returns (uint256) {
         return 0;
     }
@@ -45,6 +43,7 @@ contract UpgradeSafetyTest is Test {
     bytes32 constant IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     bytes32 constant REENTRANCY_SLOT = 0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
     bytes32 constant NAMES_ROOT = 0x064503501234cc9c6e116cf4a84c07475158dabb6a3dcee437a89227e23bf200;
+    bytes32 constant ROOTS_ROOT = 0x7f78ff13201a03086d4b08e3085224c34a9fc247d0f67d11acd0db52976eb300;
     bytes32 constant X = HandleVectors.PLATFORM_X;
 
     function _slot(string memory ns) internal pure returns (bytes32) {
@@ -67,6 +66,7 @@ contract UpgradeSafetyTest is Test {
             0x92a7c997eeb454ceeeb8ef2d99ba7d4b830287ff966f129f9049c466a8342400
         );
         assertEq(_slot("libid.storage.IdentityNames"), NAMES_ROOT);
+        assertEq(_slot("libid.storage.GoogleJwtRoots"), ROOTS_ROOT);
     }
 
     function _implOf(address proxy) internal view returns (address) {
@@ -232,7 +232,7 @@ contract UpgradeSafetyTest is Test {
         vm.prank(OWNER);
         v.upgradeToAndCall(address(impl2), "");
         assertEq(_implOf(address(v)), address(impl2));
-        assertEq(v.jwksRoots(), address(roots));
+        assertEq(v.jwtRoots(), address(roots));
         assertEq(v.honkVerifier(), address(honk));
         assertEq(v.notaryService(), address(0));
         (,, uint64 c) = v.protocolParameters();
@@ -240,28 +240,121 @@ contract UpgradeSafetyTest is Test {
         assertEq(v.owner(), OWNER);
     }
 
-    // ─── IdentityJwksRoots ──────────────────────────────────────────
+    // ─── GoogleJwtRoots ──────────────────────────────────────────
 
-    function test_upgrade_IdentityJwksRoots() public {
-        Notary n = deployNotary(OWNER, NOTARY);
-        IdentityJwksRoots impl = new IdentityJwksRoots();
+    function test_upgrade_GoogleJwtRoots() public {
+        INotaryService ns = INotaryService(address(_notaryService()));
+        GoogleJwtRoots impl = new GoogleJwtRoots();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(OWNER, address(n));
-        IdentityJwksRoots r = IdentityJwksRoots(
-            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, address(n)))))
+        impl.initialize(OWNER, ns);
+        GoogleJwtRoots r = GoogleJwtRoots(
+            address(new ERC1967Proxy(address(impl), abi.encodeCall(GoogleJwtRoots.initialize, (OWNER, ns))))
         );
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        r.initialize(OWNER, address(n));
+        r.initialize(OWNER, ns);
 
-        IdentityJwksRoots impl2 = new IdentityJwksRoots();
+        // Two rotations land BEFORE the upgrade -- two different one-key
+        // readings, so BOTH generations hold state -- and what has to survive
+        // is real state in the namespaced slots rather than the empty list
+        // initialize left behind.
+        uint256 notaryKey = 0xA11CE5;
+        vm.prank(OWNER);
+        NotaryService(address(ns)).setNotary(vm.addr(notaryKey), true);
+        vm.deal(address(this), 1 ether);
+        vm.warp(1_770_000_000);
+        uint64 first = uint64(vm.getBlockTimestamp());
+        bytes memory attested = _jwksReading(first, JWKS_MODULUS);
+        r.rotate{value: 7}(attested, _signed(notaryKey, attested));
+        vm.warp(first + 60);
+        uint64 second = uint64(vm.getBlockTimestamp());
+        attested = _jwksReading(second, _otherModulus());
+        r.rotate{value: 7}(attested, _signed(notaryKey, attested));
+
+        (GoogleJwtRoots.Generation memory current, GoogleJwtRoots.Generation memory previous) = r.currentKeys();
+        assertEq(current.observedAt, second, "the second rotation landed");
+        assertEq(previous.observedAt, first, "the first rotation was kept");
+        assertEq(current.moduli.length, 1);
+        assertEq(previous.moduli.length, 1);
+        bytes32 newer = current.moduli[0];
+        bytes32 older = previous.moduli[0];
+        assertTrue(newer != older, "two different keys");
+        uint256 lifetime = r.READING_LIFETIME();
+
+        // The layout those two generations sit in, pinned word by word.
+        // `notary` is word 0 of the namespace; a Generation is two words --
+        // its stamp, then the length word of its dynamic array, whose
+        // elements hang off keccak256(that word's slot) -- so `current` is
+        // words 1-2 and `previous` words 3-4. A field added to Generation
+        // moves `previous`, and an upgraded implementation would then read
+        // the old generation's stamp as the new field: this is where that
+        // has to fail, loudly, before any upgrade does.
+        uint256 base = uint256(ROOTS_ROOT);
+        assertEq(uint256(vm.load(address(r), bytes32(base))), uint256(uint160(address(ns))), "word 0: notary");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 1))), second, "word 1: current.observedAt");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 2))), 1, "word 2: current.moduli.length");
+        assertEq(vm.load(address(r), keccak256(abi.encode(base + 2))), newer, "current.moduli[0]");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 3))), first, "word 3: previous.observedAt");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 4))), 1, "word 4: previous.moduli.length");
+        assertEq(vm.load(address(r), keccak256(abi.encode(base + 4))), older, "previous.moduli[0]");
+
+        GoogleJwtRoots impl2 = new GoogleJwtRoots();
         _expectNotOwner();
         r.upgradeToAndCall(address(impl2), "");
         vm.prank(OWNER);
         r.upgradeToAndCall(address(impl2), "");
         assertEq(_implOf(address(r)), address(impl2));
-        assertEq(address(r.notaryContract()), address(n));
+        assertEq(r.notaryService(), address(ns));
+        assertEq(r.quoteRotation(), 7);
         assertEq(r.owner(), OWNER);
+        assertEq(r.trustedHashExpiresAt(newer), second + lifetime, "the current generation was lost");
+        assertEq(r.trustedHashExpiresAt(older), first + lifetime, "the previous generation was lost");
+        (current, previous) = r.currentKeys();
+        assertEq(current.observedAt, second);
+        assertEq(current.moduli.length, 1);
+        assertEq(current.moduli[0], newer);
+        assertEq(previous.observedAt, first);
+        assertEq(previous.moduli.length, 1);
+        assertEq(previous.moduli[0], older);
+        assertEq(r.freshestObservedAt(), second);
+        assertFalse(r.needsRotation());
     }
+
+    function _signed(uint256 key, bytes memory attested) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 sigR, bytes32 sigS) =
+            vm.sign(key, keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(attested))));
+        return abi.encodePacked(sigR, sigS, v);
+    }
+
+    /// One notarized reading of Google's JWKS carrying one key: the request
+    /// and the response revealed whole, nothing committed.
+    function _jwksReading(uint64 createdAt, string memory modulus) internal pure returns (bytes memory) {
+        bytes memory sent = "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.com\r\nconnection: close\r\n\r\n";
+        bytes memory body = abi.encodePacked('{"keys":[{"kid":"k","n":"', modulus, '","e":"AQAB"}]}');
+        bytes memory received =
+            abi.encodePacked("HTTP/1.1 200 OK\r\ncontent-length: ", vm.toString(body.length), "\r\n\r\n", body);
+        return AttestationBuilder.encode(keccak256("www.googleapis.com"), createdAt, _whole(sent), _whole(received));
+    }
+
+    /// A second 2048-bit modulus: the keeper's vector with its first
+    /// character changed -- still 342 characters of base64url, a different
+    /// key.
+    function _otherModulus() internal pure returns (string memory) {
+        bytes memory modulus = bytes(JWKS_MODULUS);
+        modulus[0] = "C";
+        return string(modulus);
+    }
+
+    function _whole(bytes memory transcript) internal pure returns (AttestationBuilder.Direction memory) {
+        return AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: transcript})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(transcript.length)
+        });
+    }
+
+    /// A 2048-bit modulus in base64url (the keeper's own test vector).
+    string internal constant JWKS_MODULUS =
+        "BAsSGSAnLjU8Q0pRWF9mbXR7gomQl56lrLO6wcjP1t3k6_L5BQwTGiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PP6Bg0UGyIpMDc-RUxTWmFob3Z9hIuSmaCnrrW8w8rR2N_m7fT7Bw4VHCMqMTg_Rk1UW2JpcHd-hYyTmqGor7a9xMvS2eDn7vUBCA8WHSQrMjlAR05VXGNqcXh_ho2Um6KpsLe-xczT2uHo7_YCCRAXHiUsMzpBSE9WXWRrcnmAh46VnKOqsbi_xs3U2-Lp8PcDChEYHyYtNDtCSVBXXmVsc3qBiI-WnaSrsrnAx87V3OPq8fgECxIZIA";
 
     // ─── IdentityNames ──────────────────────────────────────────────
 
@@ -330,40 +423,12 @@ contract UpgradeSafetyTest is Test {
         assertEq(at, 1_780_000_000);
     }
 
-    // The two Platform layouts, replicated so the slot arithmetic is measured
-    // rather than asserted from memory.
-    struct MainPlatform {
-        HandleNormalizer.Rules rules;
-        uint32 latestVersion;
-        bool configured;
-    }
-
-    struct PrPlatform {
-        HandleNormalizer.Rules rules;
-        bool configured;
-    }
-
-    MainPlatform mainP;
-    PrPlatform prP;
-
-    /// Emulate the storage a main-deployed IdentityNames proxy holds for a
-    /// configured platform, then read it through the PR implementation.
-    function _emulateMainPlatform(uint32 latestVersion, bool configured) internal {
-        bytes32 entry = keccak256(abi.encode(X, uint256(NAMES_ROOT) + 3));
-        HandleNormalizer.Rules memory r = HandleVectors.rulesFor(X);
-        uint256 rulesWord = uint256(r.maxLength) | (r.stripLeadingAt ? 1 << 16 : 0) | (r.isEmail ? 1 << 24 : 0)
-            | (r.allowUnderscore ? 1 << 32 : 0) | (r.allowHyphen ? 1 << 40 : 0);
-        vm.store(address(names), entry, bytes32(rulesWord));
-        uint256 w = uint256(latestVersion) | (configured ? uint256(1) << 32 : 0);
-        vm.store(address(names), bytes32(uint256(entry) + 1), bytes32(w));
-    }
-
     function _claimExternal(address who, uint256 nonce) external {
         _claimAs(who, nonce);
     }
 
-    /// Binding lost `version` (uint32 at byte offset 28). Stale bits in that
-    /// word are ignored by the PR's reads, and a fresh write leaves them as-is.
+    /// `Binding` once carried a `version` (uint32 at byte offset 28). Stale bits
+    /// in that word are ignored by the current reads, and a fresh write leaves them as-is.
     function test_bindingStaleVersionWordIsIgnored() public {
         _names();
         vm.prank(OWNER);

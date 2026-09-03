@@ -1,37 +1,36 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Registry} from "../contracts/login/Registry.sol";
-import {WalletFactory} from "../contracts/login/WalletFactory.sol";
-import {WebWallet} from "../contracts/login/WebWallet.sol";
-import {IBank} from "../contracts/transfer/bank/IBank.sol";
-import {BankDiamondDeployer} from "../contracts/transfer/script/BankDiamondDeployer.sol";
-import {Notary} from "../contracts/notary/Notary.sol";
-import {MockERC20} from "../contracts/transfer/MockERC20.sol";
-import {XHonkVerifier} from "../contracts/login/zk/XHonkVerifier.sol";
-import {XZkVerifier, IHonkVerifier} from "../contracts/login/zk/XZkVerifier.sol";
-import {IZkSessionVerifier} from "../contracts/login/zk/IZkSessionVerifier.sol";
 import {IdentityNames} from "../contracts/identity/IdentityNames.sol";
 import {NotaryService} from "../contracts/ceremony/NotaryService.sol";
+import {INotaryService} from "../contracts/ceremony/INotaryService.sol";
 import {CeremonyProofVerifier} from "../contracts/ceremony/CeremonyProofVerifier.sol";
 import {IProofVerifier} from "../contracts/ceremony/IProofVerifier.sol";
 import {HandleVectors} from "../contracts/identity/HandleVectors.sol";
-import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
+import {GoogleJwtRoots} from "../contracts/ceremony/GoogleJwtRoots.sol";
 
-/// @notice Deploy full stack to any EVM chain.
+/// @notice Deploy the identity stack to any EVM chain.
+///
+/// Four UUPS proxies, in dependency order: the Notary Service every notarized
+/// session is verified through, the Proof Verifier the naming system
+/// dispatches claims through, the naming system itself with a keyspace per
+/// platform, and the Google JWT root list that pays the Notary Service for
+/// each rotation. No Platform Verifier is registered here -- that needs the
+/// ceremony circuit artifacts, which arrive with their own release.
 ///
 /// Usage:
-///   forge script contracts/script/Deploy.s.sol \
+///   forge script script/Deploy.s.sol \
 ///     --rpc-url http://127.0.0.1:8545 \
 ///     --broadcast \
 ///     --private-key $PRIVATE_KEY
 ///
-/// Optional env:
-///   NOTARY_ADDRESS   — notary signing key address.
-///   BACKEND_ADDRESS  — backend signing key address.
-contract Deploy is Script, BankDiamondDeployer {
+/// Env:
+///   DEPLOYER_KEY / PRIVATE_KEY — deployer private key (one of the two).
+///   NOTARY_ADDRESS   — the first trusted notary signing key (default: deployer).
+///   NOTARY_FEE_WEI   — what one attestation verification costs (default: 0).
+contract Deploy is Script {
     function run() external {
         string memory deployerKeyHex = vm.envOr("DEPLOYER_KEY", vm.envOr("PRIVATE_KEY", string("")));
         require(bytes(deployerKeyHex).length > 0, "set DEPLOYER_KEY or PRIVATE_KEY");
@@ -42,137 +41,38 @@ contract Deploy is Script, BankDiamondDeployer {
         uint256 deployerKey = vm.parseUint(deployerKeyHex);
         address deployer = vm.addr(deployerKey);
         address notaryAddr = vm.envOr("NOTARY_ADDRESS", deployer);
-        address backendAddr = vm.envOr("BACKEND_ADDRESS", deployer);
+        uint256 notaryFee = vm.envOr("NOTARY_FEE_WEI", uint256(0));
 
         vm.startBroadcast(deployerKey);
 
-        // 0. Notary (UUPS proxy) — the ONE notary-attestation verifier every
-        //    other contract points at. Deployed first so its proxy address can
-        //    be wired into every consumer's initialize. Key rotation is
-        //    `notaryContract.setNotary`; a proof-system change is a UUPS
-        //    upgrade of this proxy alone.
-        Notary notaryImpl = new Notary();
-        Notary notaryContract = Notary(
-            address(new ERC1967Proxy(address(notaryImpl), abi.encodeCall(Notary.initialize, (deployer, notaryAddr))))
-        );
-
-        // 1. WebWallet implementation (beacon target)
-        WebWallet walletImpl = new WebWallet();
-
-        // 2. WalletFactory (UUPS proxy)
-        WalletFactory factoryImpl = new WalletFactory();
-        WalletFactory factory = WalletFactory(
-            address(
-                new ERC1967Proxy(
-                    address(factoryImpl),
-                    abi.encodeCall(WalletFactory.initialize, (deployer, address(walletImpl), address(0)))
-                )
+        // 1. The Notary Service (UUPS proxy) -- the ONE place a notary
+        //    attestation is authenticated, deployed first so its proxy address
+        //    can be wired into every consumer's initialize. It derives the
+        //    digest from the attested bytes itself (REQ-COMMON-49) and charges
+        //    the Notary Fee. Key rotation is `setNotary`; a fee change is
+        //    `setFee`; a proof-system change is a UUPS upgrade of this proxy
+        //    alone.
+        NotaryService notaryServiceImpl = new NotaryService();
+        address notaryServiceAddr = address(
+            new ERC1967Proxy(
+                address(notaryServiceImpl), abi.encodeCall(NotaryService.initialize, (deployer, notaryAddr, notaryFee))
             )
         );
 
-        // 4. Registry (UUPS proxy) — unified MPC + ZK registration
-        Registry registryImpl = new Registry();
-        Registry registry = Registry(
-            address(
-                new ERC1967Proxy(
-                    address(registryImpl),
-                    abi.encodeCall(
-                        Registry.initialize, (address(notaryContract), backendAddr, address(factory), deployer)
-                    )
-                )
-            )
-        );
+        // 2. The ceremony core the Consumer dispatches through. Without it
+        //    `proofVerifier` reads zero, `quoteClaim` calls address zero and
+        //    every resolver reverts `UnknownPlatform` -- a deployment that can
+        //    bind nothing.
+        CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
+        address proofVerifierAddr =
+            address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (deployer))));
 
-        // 5. Bank (EIP-2535 diamond) — facets + BankInit (seeds templates/prefixes).
-        //    Same BANK_CONTRACT_ADDRESS surface as before; the diamond keeps every
-        //    Bank function signature, so backend/frontend need only the new address.
-        IBank bank = IBank(deployBankDiamond(deployer, address(notaryContract), backendAddr, address(registry)));
-
-        // 6. XHonkVerifier — single UltraHonk verifier for the merged
-        //    X dual-session proof. Called from XZkVerifier.
-        XHonkVerifier xHonk = new XHonkVerifier();
-
-        // 7. MockERC20 dev token
-        MockERC20 devToken = new MockERC20("DEV Token", "DEV");
-
-        // 8. Wire factory <-> registry
-        factory.setRegistry(address(registry));
-
-        // 9. Register dev token in Bank. Name must include the "$" prefix —
-        //    the comment parser keeps it (e.g. "$DEV") and the bot sends that
-        //    exact string as tokenName_, so the on-chain name must match.
-        bank.registerToken("$DEV", address(devToken));
-
-        // 10. Mint dev tokens to deployer for testing (1M tokens)
-        devToken.mint(deployer, 1_000_000 ether);
-
-        // 11. Deploy XZkVerifier (UUPS proxy) and register it with Registry
-        //     under the "api.x.com" platform. One X app serves both the browser
-        //     ZK flow and the backend OAuth flow, so the verifier's client_id is
-        //     just $X_CLIENT_ID (must match the browser's NEXT_PUBLIC_X_CLIENT_ID).
-        string memory xClientIdStr = vm.envOr("X_CLIENT_ID", string(""));
-        address xZkVerifierAddr;
-        if (bytes(xClientIdStr).length > 0) {
-            XZkVerifier xZkImpl = new XZkVerifier();
-            xZkVerifierAddr = address(
-                new ERC1967Proxy(
-                    address(xZkImpl),
-                    abi.encodeCall(
-                        XZkVerifier.initialize,
-                        (
-                            deployer,
-                            address(notaryContract),
-                            IHonkVerifier(address(xHonk)),
-                            bytes(xClientIdStr),
-                            "/2/users/me",
-                            "\"username\":\"",
-                            "api.x.com"
-                        )
-                    )
-                )
-            );
-            registry.setZkVerifier("api.x.com", IZkSessionVerifier(xZkVerifierAddr));
-        }
-
-        // 13. Seed supported platforms (mirrors deploy.rs platform_configs)
-        registry.setPlatform("api.x.com", "/2/users/me", "\"username\":\"", "\"id\":\"", "\"");
-        registry.setPlatform("api.github.com", "/user", "\"login\":\"", "\"id\":", ",");
-        registry.setPlatform("discord.com", "/api/users/@me", "\"username\":\"", "\"id\":\"", "\"");
-        registry.setPlatform("www.googleapis.com", "/oauth2/v2/userinfo", "\"email\": \"", "\"id\": \"", "\"");
-
-        // 14. The naming system: one contract holding the names, and an
-        //     adapter per platform that reads the proof that platform's login
-        //     already produces. Nothing here changes how anybody logs in.
-        //
-        //     The future allowance differs by platform because they report on
-        //     different scales. A notary states wall-clock time, so an X or
-        //     GitHub observation is never ahead; a Google claim carries the
-        //     token's `exp`, roughly an hour past issuance, because the circuit
-        //     exposes no `iat`.
+        // 3. The naming system: one contract holding the names, dispatching
+        //    every claim through the Proof Verifier above.
         IdentityNames namesImpl = new IdentityNames();
         address identityNamesAddr =
             address(new ERC1967Proxy(address(namesImpl), abi.encodeCall(IdentityNames.initialize, (deployer))));
         IdentityNames names = IdentityNames(identityNamesAddr);
-
-        // The ceremony core the Consumer dispatches through. Without it
-        // `proofVerifier` reads zero, `quoteClaim` calls address zero and every
-        // resolver reverts `UnknownPlatform` -- a deployment that can bind
-        // nothing.
-        //
-        // The Notary Service is separate from `Notary` above and must be: that
-        // one takes a caller-supplied digest, which REQ-COMMON-49 forbids. Both
-        // are trusted with the same signing key.
-        NotaryService notaryServiceImpl = new NotaryService();
-        address notaryServiceAddr = address(
-            new ERC1967Proxy(
-                address(notaryServiceImpl),
-                abi.encodeCall(NotaryService.initialize, (deployer, notaryAddr, vm.envOr("NOTARY_FEE_WEI", uint256(0))))
-            )
-        );
-
-        CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
-        address proofVerifierAddr =
-            address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (deployer))));
         names.setProofVerifier(IProofVerifier(proofVerifierAddr));
 
         // A keyspace per platform. Registering a Platform Verifier against a
@@ -183,13 +83,16 @@ contract Deploy is Script, BankDiamondDeployer {
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_GITHUB);
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_GOOGLE);
 
-        // The JWKS root list is the naming system's own. Google's Platform
-        // Verifier reads the trusted moduli through it, and nothing is trusted
-        // until a notarized reading of Google's JWKS lands.
-        IdentityJwksRoots rootsImpl = new IdentityJwksRoots();
-        address jwksRootsAddr = address(
+        // 4. The Google JWT root list, beside the Platform Verifier it serves.
+        //    That verifier reads the trusted moduli through it, and nothing
+        //    is trusted until a notarized reading of Google's JWKS lands --
+        //    verified through the Notary Service above, like every other
+        //    notarized session, and paying the same fee.
+        GoogleJwtRoots rootsImpl = new GoogleJwtRoots();
+        address jwtRootsAddr = address(
             new ERC1967Proxy(
-                address(rootsImpl), abi.encodeCall(IdentityJwksRoots.initialize, (deployer, address(notaryContract)))
+                address(rootsImpl),
+                abi.encodeCall(GoogleJwtRoots.initialize, (deployer, INotaryService(notaryServiceAddr)))
             )
         );
 
@@ -197,18 +100,10 @@ contract Deploy is Script, BankDiamondDeployer {
 
         console.log("=== Deployment complete ===");
         console.log("Deployer:               ", deployer);
-        console.log("WEBWALLET_IMPL=         ", address(walletImpl));
-        console.log("WALLET_FACTORY_ADDRESS= ", address(factory));
-        console.log("REGISTRY_CONTRACT_ADDRESS= ", address(registry));
-        console.log("BANK_CONTRACT_ADDRESS= ", address(bank));
-        console.log("DEV_TOKEN_ADDRESS= ", address(devToken));
-        console.log("NOTARY_CONTRACT_ADDRESS= ", address(notaryContract));
-        console.log("XHonkVerifier:          ", address(xHonk));
-        console.log("XZkVerifier:            ", xZkVerifierAddr);
-        console.log("IDENTITY_NAMES_ADDRESS= ", identityNamesAddr);
         console.log("NOTARY_SERVICE_ADDRESS= ", notaryServiceAddr);
         console.log("CEREMONY_PROOF_VERIFIER_ADDRESS= ", proofVerifierAddr);
-        console.log("IDENTITY_JWKS_ROOTS_ADDRESS= ", jwksRootsAddr);
+        console.log("IDENTITY_NAMES_ADDRESS= ", identityNamesAddr);
+        console.log("GOOGLE_JWT_ROOTS_ADDRESS= ", jwtRootsAddr);
         console.log("NOTE: no Platform Verifier is registered yet. Add one with");
         console.log("      CeremonyProofVerifier.setVerifier once the ceremony");
         console.log("      circuit artifacts are released. Until then a platform");
@@ -216,7 +111,7 @@ contract Deploy is Script, BankDiamondDeployer {
         // Nothing is trusted until a notarized reading of Google's JWKS lands.
         // Until then every Google claim reverts `UntrustedModulus`, which reads
         // as a bad proof rather than an unseeded list.
-        console.log("NOTE: point a JWKS rotation listener at IDENTITY_JWKS_ROOTS_ADDRESS");
+        console.log("NOTE: point the keeper at GOOGLE_JWT_ROOTS_ADDRESS");
         console.log("      before Google names work. The trust list starts empty.");
     }
 

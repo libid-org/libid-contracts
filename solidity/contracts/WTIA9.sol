@@ -17,9 +17,9 @@ pragma solidity ^0.8.20;
 ///
 ///      1. `withdraw` uses `call` rather than `transfer`. `transfer` forwards a
 ///         fixed 2300 gas stipend, which is enough for an EOA but reverts for a
-///         contract recipient whose `receive` does anything at all — including
-///         this repo's own WebWallet, which emits an event on native receipt.
-///         WETH9 predates that being a known hazard.
+///         contract recipient whose `receive` does anything at all — a smart
+///         account that logs an event on native receipt, say. WETH9 predates
+///         that being a known hazard.
 ///      2. Balances are decremented *before* the external call
 ///         (checks-effects-interactions), so a malicious `receive` cannot
 ///         re-enter and withdraw twice. The original is safe only by accident

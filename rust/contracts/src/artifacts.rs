@@ -14,10 +14,7 @@ use std::{
 
 use alloy::{
     hex,
-    primitives::{
-        Bytes,
-        FixedBytes,
-    },
+    primitives::Bytes,
     providers::Provider,
 };
 use include_dir::{
@@ -34,39 +31,21 @@ use crate::error::{
 static EMBEDDED: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/artifacts");
 
 /// Every deployable contract the crate covers, as `(file, contract)` — the
-/// artifact lives at `<file>.sol/<contract>.json`. Interfaces (`IBank`) are
-/// vendored for their `methodIdentifiers` but carry no bytecode, so they are
-/// not listed here. Keep in sync with `scripts/vendor-artifacts.sh`.
+/// artifact lives at `<file>.sol/<contract>.json`. Keep in sync with
+/// `scripts/vendor-artifacts.sh`.
 pub const COVERED: &[(&str, &str)] = &[
-    // login
-    ("Registry", "Registry"),
-    ("Notary", "Notary"),
-    ("WalletFactory", "WalletFactory"),
-    ("WebWallet", "WebWallet"),
+    // ceremony
+    ("NotaryService", "NotaryService"),
+    ("CeremonyProofVerifier", "CeremonyProofVerifier"),
     ("ERC1967Proxy", "ERC1967Proxy"),
-    ("XZkVerifier", "XZkVerifier"),
-    ("XHonkVerifier", "XHonkVerifier"),
-    // oidc — the Google OIDC circuit verifier is generated into `Verifier.sol`
-    // under the contract name `HonkVerifier`
-    ("Verifier", "HonkVerifier"),
-    ("GoogleOidcVerifier", "GoogleOidcVerifier"),
-    // transfer (bank diamond)
-    ("Diamond", "Diamond"),
-    ("DiamondCutFacet", "DiamondCutFacet"),
-    ("DiamondLoupeFacet", "DiamondLoupeFacet"),
-    ("OwnershipFacet", "OwnershipFacet"),
-    ("AdminFacet", "AdminFacet"),
-    ("VaultFacet", "VaultFacet"),
-    ("TransferFacet", "TransferFacet"),
-    ("BankInit", "BankInit"),
-    ("MockERC20", "MockERC20"),
-    ("WTIA9", "WTIA9"),
+    ("GoogleJwtRoots", "GoogleJwtRoots"),
     // identity
     ("IdentityNames", "IdentityNames"),
+    // ens (deployed once per network, not CREATE3-canonical)
     ("HandleResolver", "HandleResolver"),
-    ("IdentityJwksRoots", "IdentityJwksRoots"),
     // factory
     ("LibidFactory", "LibidFactory"),
+    ("WTIA9", "WTIA9"),
 ];
 
 enum Source {
@@ -127,7 +106,7 @@ impl Artifacts {
     }
 
     /// Creation bytecode where the source file and contract names differ
-    /// (`Verifier.sol` → `HonkVerifier`).
+    /// (a bb-generated `Verifier.sol` holding `HonkVerifier`, say).
     pub fn bytecode_named(&self, file: &str, contract: &str) -> Result<Bytes> {
         let hex_str = self.bytecode_hex(file, contract)?;
         if hex_str.contains("__$") {
@@ -146,9 +125,11 @@ impl Artifacts {
 
     /// Creation bytecode with every external library it references deployed
     /// (recursively) through `provider` and linked in. Mirrors what forge does
-    /// automatically: the generated UltraHonk verifiers link `ZKTranscriptLib`.
-    /// For artifacts with no link references this behaves like
-    /// [`Self::bytecode_named`] (no transaction is sent).
+    /// automatically. Nothing covered today links a library; the UltraHonk
+    /// verifiers the ceremony circuits bring link `ZKTranscriptLib`, and this
+    /// is the path they will deploy through. For artifacts with no link
+    /// references this behaves like [`Self::bytecode_named`] (no transaction
+    /// is sent).
     ///
     /// `sender` opts into explicit nonce management (see
     /// [`deploy_contract_from`](crate::deploy::deploy_contract_from)).
@@ -183,27 +164,6 @@ impl Artifacts {
                 Ok((sig.clone(), sel.to_owned()))
             })
             .collect()
-    }
-
-    /// All external function selectors of a facet, decoded from its
-    /// `methodIdentifiers`. Mirrors `BankDiamondDeployer._selectors`.
-    pub fn facet_selectors(&self, contract: &str) -> Result<Vec<FixedBytes<4>>> {
-        let methods = self.method_identifiers(contract)?;
-        let mut selectors = Vec::with_capacity(methods.len());
-        for (sig, hex_sel) in &methods {
-            let bytes = hex::decode(hex_sel).map_err(|e| Error::Artifact {
-                detail: format!("invalid selector hex for {sig}: {e}"),
-            })?;
-            let arr: [u8; 4] =
-                bytes.as_slice().try_into().map_err(|_| Error::Artifact {
-                    detail: format!(
-                        "selector for {sig} is {} bytes, expected 4",
-                        bytes.len()
-                    ),
-                })?;
-            selectors.push(FixedBytes::<4>::from(arr));
-        }
-        Ok(selectors)
     }
 
     /// The raw `bytecode.object` hex (no `0x`), link placeholders intact.
@@ -242,8 +202,8 @@ mod tests {
     use super::*;
 
     /// Every covered contract's creation bytecode is present and non-empty.
-    /// The Honk verifiers carry link placeholders, so only the hex is checked
-    /// here; linking is exercised by the anvil tests.
+    /// Only the hex is checked here so a future artifact with link
+    /// placeholders still passes; linking is the anvil tests' business.
     #[test]
     fn every_covered_contract_has_bytecode() {
         let artifacts = Artifacts::embedded();
@@ -258,7 +218,9 @@ mod tests {
         }
     }
 
-    /// Contracts without link references decode straight to bytes.
+    /// Contracts without link references decode straight to bytes — which is
+    /// every covered contract today, so this doubles as the check that none of
+    /// them silently grew a library dependency the vendor script must follow.
     #[test]
     fn unlinked_contracts_decode() {
         let artifacts = Artifacts::embedded();
@@ -274,56 +236,5 @@ mod tests {
                 assert!(!bytecode.is_empty());
             }
         }
-    }
-
-    /// The Honk verifiers link `ZKTranscriptLib`, and the library artifact
-    /// they resolve against is vendored alongside them.
-    #[test]
-    fn honk_verifiers_link_the_transcript_lib() {
-        let artifacts = Artifacts::embedded();
-        for (file, contract) in [
-            ("XHonkVerifier", "XHonkVerifier"),
-            ("Verifier", "HonkVerifier"),
-        ] {
-            let refs = artifacts.link_references(file, contract).unwrap();
-            assert!(!refs.is_empty(), "{contract} should carry link references");
-            for (lib_path, libs) in &refs {
-                let stem = std::path::Path::new(lib_path)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap();
-                for lib_name in libs.as_object().unwrap().keys() {
-                    let lib_hex = artifacts.bytecode_hex(stem, lib_name).unwrap();
-                    assert!(!lib_hex.is_empty(), "{lib_name} library missing");
-                }
-            }
-        }
-    }
-
-    /// Facet selector extraction: every Bank facet exposes selectors, they are
-    /// 4 bytes each, and none repeats across facets (a diamondCut would revert
-    /// on a duplicate).
-    #[test]
-    fn facet_selectors_extract_and_are_disjoint() {
-        let artifacts = Artifacts::embedded();
-        let mut all = std::collections::BTreeSet::new();
-        for facet in [
-            "DiamondCutFacet",
-            "DiamondLoupeFacet",
-            "OwnershipFacet",
-            "AdminFacet",
-            "VaultFacet",
-            "TransferFacet",
-        ] {
-            let selectors = artifacts.facet_selectors(facet).unwrap();
-            assert!(!selectors.is_empty(), "{facet} has no selectors");
-            for sel in selectors {
-                assert!(all.insert(sel), "duplicate selector {sel} in {facet}");
-            }
-        }
-        // diamondCut(FacetCut[],address,bytes) — the one selector the Diamond
-        // constructor wires in itself.
-        let cut = artifacts.method_identifiers("DiamondCutFacet").unwrap();
-        assert!(cut.keys().any(|sig| sig.starts_with("diamondCut(")));
     }
 }

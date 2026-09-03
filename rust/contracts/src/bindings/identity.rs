@@ -1,6 +1,5 @@
 //! Bindings for the identity-names stack (`solidity/contracts/identity/`):
-//! `IdentityNames`, the per-platform verifiers, and the Google JWKS trust
-//! list.
+//! `IdentityNames`.
 
 /// Bindings for `identity/IdentityNames.sol`.
 ///
@@ -84,63 +83,3 @@ mod names_inner {
 }
 
 pub use names_inner::IdentityNames;
-
-/// Bindings for `identity/IdentityJwksRoots.sol` — the naming system's own
-/// Google JWKS trust list. Starts EMPTY: Google names bind only once a
-/// notarized reading of Google's JWKS has landed here.
-#[allow(clippy::too_many_arguments, unused_attributes)]
-mod jwks_roots_inner {
-    use alloy::sol;
-
-    sol! {
-        #[sol(rpc)]
-        interface IdentityJwksRoots {
-            #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct NotarizedJwksProof {
-                bytes notarySignature;
-                bytes32 domainHash;
-                bytes32 clientRandom;
-                bytes32 serverRandom;
-                bytes serverEphemeralKey;
-                bytes32 transcriptRoot;
-                uint256 timestamp;
-                bytes32[] domainPath;
-                bytes32[] endpointPath;
-            }
-
-            #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct JwkClaim {
-                bytes jwkBytes;
-                bytes32[] jwkPath;
-                bytes kid;
-                bytes nB64url;
-            }
-
-            #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            struct RootInfo {
-                bytes32 kidHash;
-                bytes32 modulusHash;
-                uint256 observedAt;
-                uint256 expiresAt;
-            }
-
-            function initialize(address owner_, address notaryContract_) external;
-            function untrustModulus(bytes32 modulusHash) external;
-            function rotate(NotarizedJwksProof calldata proof, JwkClaim[] calldata claims) external;
-            function prune() external;
-            function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
-            function notaryContract() external view returns (address);
-            function notary() external view returns (address);
-            function currentRoots() external view returns (RootInfo[] memory);
-            function freshestObservedAt() external view returns (uint256);
-            function needsRotation() external view returns (bool);
-
-            event ModulusRotated(bytes32 indexed kidHash, string kid, bytes32 modulusHash, uint256 expiresAt);
-            event ModulusUntrusted(bytes32 indexed modulusHash);
-            event RootApplied(bytes32 indexed kidHash, bytes32 indexed modulusHash, uint256 observedAt, uint256 expiresAt);
-            event RootPruned(bytes32 indexed kidHash, bytes32 modulusHash);
-        }
-    }
-}
-
-pub use jwks_roots_inner::IdentityJwksRoots;
