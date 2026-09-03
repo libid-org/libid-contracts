@@ -163,6 +163,9 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     error WrongHost();
     /// @dev Not `HTTP/1.1 200 `.
     error WrongStatusLine();
+    /// @dev A direction with no blank line ending its head. Raised for the
+    ///      request too: its `Host` count runs over the head alone, and a
+    ///      request whose head never ends has no head to count in.
     error NoHeadBoundary();
     error BadChunkFraming();
     /// @dev The declared `Content-Length` is not the body the transcript
@@ -388,16 +391,35 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
 
     /// @dev The request must be the keeper's, to Google's JWKS endpoint, on
     ///      Google's own host.
+    ///
+    ///      The `Host` count is the whole of the virtual-host pin, so it gets
+    ///      every guard the bearer-header count gets, in the same order. The
+    ///      notary vouches that these bytes crossed a TLS session to
+    ///      www.googleapis.com and nothing about their HTTP shape; the prover
+    ///      chose them. Google's front end honours a `Host` line that only a
+    ///      bare LF separates from the one before it, and routes to that
+    ///      backend -- so a count that anchors on CRLF must first insist the
+    ///      request has no other kind of line ending.
     function _requireJwksRequest(CeremonyAttestation.DirectionBlock memory block_, uint32 length) private pure {
         bytes memory sent = _wholeDirection(block_, length);
         if (!_startsWith(sent, REQUEST_LINE)) revert WrongRequestLine();
+        CeremonyAttestation.requireCrlfLineEndings(sent);
+
+        // Only the head names a host. A `Host` after the blank line is body
+        // bytes to the server, whatever the count would make of it, so the
+        // count stops where the server stops reading headers. The head keeps
+        // the CRLF that closes its last line, so a line-anchored needle
+        // matches that line too.
+        uint256 boundary = _indexOf(sent, HEAD_BOUNDARY, 0);
+        if (boundary == type(uint256).max) revert NoHeadBoundary();
+        bytes memory head = _slice(sent, 0, boundary + 2);
 
         // Counted over normalized bytes, so a second `Host` cannot hide
         // behind case or whitespace (REQ-COMMON-39's rule, applied to a
         // different header). Exactly one: with two, which the backend
         // honoured is the backend's business, not something this contract
         // can know.
-        bytes memory normalized = CeremonyAttestation.normalizeHeaderBytes(sent);
+        bytes memory normalized = CeremonyAttestation.normalizeHeaderBytes(head);
         (uint256 count, uint256 at) = _find(normalized, HOST_NEEDLE);
         if (count != 1) revert NotOneHostHeader(count);
 

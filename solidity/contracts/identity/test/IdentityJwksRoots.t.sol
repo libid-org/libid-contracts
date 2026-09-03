@@ -798,6 +798,57 @@ contract IdentityJwksRootsTest is Test {
         _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 2));
     }
 
+    /// The notary vouches for the bytes, not their HTTP shape. Google's front
+    /// end honours a second `Host` that a bare LF separates from the line
+    /// before it -- confirmed live: this request is answered by the storage
+    /// backend -- while a CRLF-anchored count sees one `Host`, the right one.
+    /// The bare LF is refused before anything is counted, at its offset.
+    function test_refusesASecondHostHeaderBehindABareLineFeed() public {
+        bytes memory request = abi.encodePacked(
+            "GET /oauth2/v3/certs HTTP/1.1\r\n",
+            "x-a: b\nhost: storage.googleapis.com\r\n",
+            "host: www.googleapis.com\r\n",
+            "connection: close\r\n\r\n"
+        );
+        _refuses(_withRequest(request), abi.encodeWithSelector(CeremonyAttestation.BareLineFeed.selector, 37));
+    }
+
+    /// An obsolete line fold normalizes to `\r\nhost:` -- the fold's space is
+    /// stripped, its CRLF kept -- so a folded continuation would be counted as
+    /// the one legitimate `Host` and pair with a bare-LF second one. The fold
+    /// is refused first, at the CRLF that starts it.
+    function test_refusesAnObsoleteLineFoldInTheRequest() public {
+        bytes memory request = abi.encodePacked(
+            "GET /oauth2/v3/certs HTTP/1.1\r\n", "x-a: b\r\n host: www.googleapis.com\r\n", "connection: close\r\n\r\n"
+        );
+        _refuses(_withRequest(request), abi.encodeWithSelector(CeremonyAttestation.ObsoleteLineFold.selector, 37));
+
+        // The pairing the fold enables: a folded right host over a bare-LF
+        // wrong one. The fold scan runs first and names the fold.
+        request = abi.encodePacked(
+            "GET /oauth2/v3/certs HTTP/1.1\r\n",
+            "x-a: b\r\n host: www.googleapis.com\r\n",
+            "x-b: c\nhost: storage.googleapis.com\r\n",
+            "connection: close\r\n\r\n"
+        );
+        _refuses(_withRequest(request), abi.encodeWithSelector(CeremonyAttestation.ObsoleteLineFold.selector, 37));
+    }
+
+    /// The server reads hosts from the head. A `Host` after the blank line
+    /// is body bytes, and does not satisfy the count.
+    function test_aHostInTheRequestBodyDoesNotCount() public {
+        bytes memory request = abi.encodePacked(
+            "GET /oauth2/v3/certs HTTP/1.1\r\n", "connection: close\r\n\r\n", "host: www.googleapis.com\r\n"
+        );
+        _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 0));
+    }
+
+    /// A head that never ends has no head to count in.
+    function test_refusesARequestWhoseHeadNeverEnds() public {
+        bytes memory request = "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.com\r\n";
+        _refuses(_withRequest(request), IdentityJwksRoots.NoHeadBoundary.selector);
+    }
+
     function test_refusesARequestWithoutAHostHeader() public {
         bytes memory request = "GET /oauth2/v3/certs HTTP/1.1\r\nconnection: close\r\n\r\n";
         _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 0));
