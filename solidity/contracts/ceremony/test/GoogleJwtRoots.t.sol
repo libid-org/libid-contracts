@@ -407,22 +407,20 @@ contract GoogleJwtRootsTest is Test {
 
     // ─── Which readings count ───────────────────────────────────────
 
-    /// Re-applying the reading in force writes nothing and emits nothing --
-    /// in particular it does NOT restart the lifetime, so spamming one
-    /// reading for its whole freshness window cannot stretch trust by a
-    /// second. And it must not revert: with an open caller set, a revert
-    /// would let a front-runner land the reading first and brick the honest
-    /// keeper.
-    function test_replayingTheReadingInForceIsIgnored() public {
+    /// Re-applying the reading in force is refused: `NotNewer`, with the
+    /// reading's own clock on both sides. Nothing is written -- in particular
+    /// the lifetime does NOT restart, so spamming one reading for its whole
+    /// freshness window cannot stretch trust by a second -- and the revert
+    /// hands the fee back, where a silent return charged it for nothing done.
+    function test_replayingTheReadingInForceIsRefused() public {
         uint64 at = _now();
         bytes memory attested = _reading(_oneKey("kid-1", "one"));
         _rotate(attested);
 
         vm.warp(block.timestamp + 30 minutes); // still inside the window
-        vm.recordLogs();
-        _rotate(attested);
+        _refuses(attested, abi.encodeWithSelector(GoogleJwtRoots.NotNewer.selector, at, at));
 
-        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
+        assertEq(address(notary).balance, FEE, "the refused replay paid a fee");
         _assertGeneration(_current(), at, _one(_hash("one")), "current");
         _assertEmpty(_previous(), "a replay shifted the list");
         assertEq(
@@ -431,16 +429,16 @@ contract GoogleJwtRootsTest is Test {
     }
 
     /// Two readings dated the same second cannot disagree: the second is
-    /// ignored whatever it carries, so equal evidence never swaps the set
+    /// refused whatever it carries, so equal evidence never swaps the set
     /// and drops the keys Google still signs with.
-    function test_aReadingDatedTheSameSecondIsIgnored() public {
+    function test_aReadingDatedTheSameSecondIsRefused() public {
         uint64 at = _now();
         _rotate(_readingAt(_oneKey("kid-1", "one"), at));
 
-        vm.recordLogs();
-        _rotate(_readingAt(_oneKey("kid-1", "two"), at)); // must not revert, must not apply
+        _refuses(
+            _readingAt(_oneKey("kid-1", "two"), at), abi.encodeWithSelector(GoogleJwtRoots.NotNewer.selector, at, at)
+        );
 
-        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
         _assertGeneration(_current(), at, _one(_hash("one")), "current");
         _assertEmpty(_previous(), "the same second shifted the list");
         assertEq(roots.trustedHashExpiresAt(_hash("two")), 0, "the same second installed a key");
@@ -448,21 +446,53 @@ contract GoogleJwtRootsTest is Test {
 
     /// The rollback that matters: a GENUINELY signed older reading, replayed
     /// inside its freshness window after a newer one has landed. The signature
-    /// verifies; the reading's own clock is what refuses the regression --
-    /// silently, so a keeper batch is never bricked.
-    function test_aGenuinelySignedOlderReadingIsIgnored() public {
-        bytes memory older = _readingAt(_oneKey("kid-1", "retired"), _now() - 30 minutes);
+    /// verifies; the reading's own clock is what refuses the regression, and
+    /// the error carries both clocks, so a keeper reading it knows which
+    /// reading it lost to.
+    function test_aGenuinelySignedOlderReadingIsRefused() public {
+        uint64 dated = _now() - 30 minutes;
+        bytes memory older = _readingAt(_oneKey("kid-1", "retired"), dated);
         uint64 at = _now();
         bytes32 live = _install("kid-1", "live");
 
-        vm.recordLogs();
-        _rotate(older); // must not revert, must not apply
+        _refuses(older, abi.encodeWithSelector(GoogleJwtRoots.NotNewer.selector, dated, at));
 
-        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
         _assertGeneration(_current(), at, _one(live), "older reading rolled the set back");
         _assertEmpty(_previous(), "older reading shifted the list");
         assertEq(roots.trustedHashExpiresAt(_hash("retired")), 0, "older reading installed a retired key");
         assertEq(roots.trustedHashExpiresAt(live), at + roots.READING_LIFETIME(), "live key lost trust");
+    }
+
+    /// The front-run shape the silent return once existed for: a stranger
+    /// lands the keeper's own reading first. The keeper's transaction is
+    /// refused, its fee comes back with the revert -- gas is all it lost --
+    /// and its next reading lands as usual. Nothing was consumed: with no
+    /// nullifier there is nothing a front-runner can spend on the keeper's
+    /// behalf, which is why "never revert, or the keeper is bricked" no
+    /// longer applies.
+    function test_aFrontRunKeeperLosesGasOnly() public {
+        uint64 at = _now();
+        bytes memory attested = _reading(_oneKey("kid-1", "one"));
+        bytes memory sig = _sign(attested);
+        address stranger = makeAddr("stranger");
+        vm.deal(stranger, 1 ether);
+        vm.prank(stranger);
+        roots.rotate{value: FEE}(attested, sig);
+
+        uint256 funds = keeper.balance;
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(GoogleJwtRoots.NotNewer.selector, at, at));
+        roots.rotate{value: FEE}(attested, sig);
+        assertEq(keeper.balance, funds, "the refused reading kept the keeper's fee");
+        assertEq(address(notary).balance, FEE, "one fee reached the service: the stranger's");
+
+        vm.warp(at + 1 minutes);
+        bytes memory next = _reading(_oneKey("kid-1", "one"));
+        sig = _sign(next);
+        vm.prank(keeper);
+        roots.rotate{value: FEE}(next, sig);
+        assertEq(roots.freshestObservedAt(), at + 1 minutes, "the keeper's next reading landed");
+        assertEq(address(notary).balance, 2 * FEE);
     }
 
     /// A newer reading of the set already current is Google saying the set
@@ -562,14 +592,18 @@ contract GoogleJwtRootsTest is Test {
     }
 
     /// The freshest-reading mark is the current generation's clock: it only
-    /// ever moves forward, whether the newer reading refreshes or rotates.
+    /// ever moves forward, whether the newer reading refreshes or rotates,
+    /// and an older reading is refused against it.
     function test_freshestObservedAtIsTheReadingInForce() public {
         assertEq(roots.freshestObservedAt(), 0);
         uint64 first = _now();
         _rotate(_readingAt(_oneKey("kid-1", "one"), first));
         assertEq(roots.freshestObservedAt(), first);
 
-        _rotate(_readingAt(_oneKey("kid-1", "one"), first - 10 minutes));
+        _refuses(
+            _readingAt(_oneKey("kid-1", "one"), first - 10 minutes),
+            abi.encodeWithSelector(GoogleJwtRoots.NotNewer.selector, first - 10 minutes, first)
+        );
         assertEq(roots.freshestObservedAt(), first, "an older reading moved the mark");
 
         vm.warp(first + 20 minutes);

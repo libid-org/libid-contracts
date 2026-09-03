@@ -135,8 +135,9 @@ mod google_jwt_roots_inner {
             /// Permissionless. `attestedData` is the ceremony-common section
             /// 9.1 record of the JWKS session, `proof` the notary's
             /// authentication of it (a 65-byte EIP-191 signature today). A
-            /// reading dated no later than the current generation is
-            /// ignored, not refused.
+            /// reading dated no later than the current generation is refused
+            /// with `NotNewer(createdAt, observedAt)`, and the revert hands
+            /// the fee back.
             function rotate(bytes calldata attestedData, bytes calldata proof) external payable;
 
             /// What `GooglePlatformVerifier` reads: modulus hash -> when it

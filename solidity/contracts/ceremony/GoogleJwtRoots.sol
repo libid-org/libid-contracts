@@ -50,8 +50,9 @@ import {INotaryService} from "./INotaryService.sol";
 ///      front-runner could consume a reading's digest and brick the honest
 ///      keeper. Freshness comes from the notary's signed `createdAt` plus the
 ///      window below, and a reading dated no later than the one in force is
-///      ignored rather than refused. A rotation pays the Notary Fee, which is
-///      the one thing a submitter needs beyond gas.
+///      refused (`NotNewer`). A rotation pays the Notary Fee, which is the one
+///      thing a submitter needs beyond gas -- and a refused one pays nothing,
+///      since the revert rolls the fee back with the state.
 ///
 ///      **The reading names no contract.** The attested record is the TLS
 ///      session alone -- authority, notary clock, transcript -- so the same
@@ -184,6 +185,12 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     error WrongAuthority(bytes32 expected, bytes32 found);
     error FutureProof();
     error StaleProof();
+    /// @dev Dated no later than the reading in force: a replay of it, or an
+    ///      older reading landing after a newer one. Refused, not ignored, so
+    ///      the Notary Fee rolls back with the state and a keeper that was
+    ///      front-run learns it from the revert rather than from a fee paid
+    ///      for nothing done.
+    error NotNewer(uint64 createdAt, uint64 observedAt);
     /// @dev A direction carries a commitment. The reading must hide nothing:
     ///      a hidden byte is a byte this contract reads around, and the join
     ///      below is only safe when there is nothing to read around.
@@ -674,15 +681,23 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     /// @dev Apply a set the notary read at `observedAt`. Three outcomes, and
     ///      the notary's clock alone decides the first.
     ///
-    ///      A reading dated no later than the one in force is ignored -- never
-    ///      refused. Rotation is open and a reading binds no contract, so
-    ///      anyone can replay any still-fresh reading anywhere, forever;
-    ///      ignoring keeps a front-runner from bricking the honest keeper by
-    ///      landing its reading first, and skipping keeps an older reading from
-    ///      rolling the set back or re-stamping its lifetime. No later includes
-    ///      equal: a second reading dated the same second cannot swap the set
-    ///      -- the rule for equal evidence everywhere in the protocol
-    ///      (REQ-COMMON-25A).
+    ///      A reading dated no later than the one in force is refused,
+    ///      `NotNewer`. Rotation is open and a reading binds no contract, so
+    ///      anyone can replay any still-fresh reading anywhere, forever; the
+    ///      refusal keeps an older reading from rolling the set back and a
+    ///      replay from re-stamping the lifetime. It used to be a silent
+    ///      return, on the rule that a permissionless path must never revert
+    ///      or a front-runner could brick the honest keeper by landing first.
+    ///      That rule belonged to the per-claim nullifier design, where the
+    ///      first submission consumed the claim; here nothing is consumed --
+    ///      the front-runner's reading IS the keeper's, applied -- so the
+    ///      keeper's transaction has nothing left to do, and a revert says so
+    ///      while rolling the Notary Fee back with the state. The return
+    ///      charged the fee for nothing done and gave the keeper no signal.
+    ///      No later includes equal: a second reading dated the same second
+    ///      cannot swap the set -- the rule for equal evidence everywhere in
+    ///      the protocol (REQ-COMMON-25A). The freshness checks in `rotate`
+    ///      run first, so a stale or future record is named as such.
     ///
     ///      A newer reading of the same set is Google saying the set still
     ///      stands: its lifetime restarts from this reading, nothing shifts,
@@ -691,7 +706,7 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     ///      still in flight under it, and what was previous is gone.
     function _apply(uint64 observedAt, string[] memory kids, bytes32[] memory moduli) private {
         GoogleJwtRootsStorage storage $ = _s();
-        if (observedAt <= $.current.observedAt) return;
+        if (observedAt <= $.current.observedAt) revert NotNewer(observedAt, $.current.observedAt);
 
         if (_sameSet($.current.moduli, moduli)) {
             $.current.observedAt = observedAt;
