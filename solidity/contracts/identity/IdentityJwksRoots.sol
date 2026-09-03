@@ -118,6 +118,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     bytes private constant EXPECTED_HOST = "www.googleapis.com";
     bytes private constant STATUS_LINE = "HTTP/1.1 200 ";
     bytes private constant HEAD_BOUNDARY = "\r\n\r\n";
+    bytes private constant TRANSFER_ENCODING_NEEDLE = "\r\ntransfer-encoding:";
     bytes private constant CHUNKED_NEEDLE = "\r\ntransfer-encoding:chunked\r\n";
     bytes private constant CONTENT_LENGTH_NEEDLE = "\r\ncontent-length:";
     bytes private constant KEYS_TOKEN = '"keys"';
@@ -142,6 +143,10 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
 
     error ZeroAddress();
     error TooManyKids();
+    /// @dev A reading whose key set is empty says nothing about what Google
+    ///      publishes; applying it would move `freshestObservedAt` while
+    ///      writing no key and emitting nothing. Refused rather than charged.
+    error EmptyKeySet();
     /// @dev Exact value, both ways: the Notary Fee is forwarded whole, so there
     ///      is no overpayment to refund and nothing captured in transit.
     error WrongValue(uint256 required, uint256 provided);
@@ -172,6 +177,13 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     ///      carries. A value that is not a decimal declares no length any
     ///      body can match.
     error ContentLengthMismatch(uint256 declared, uint256 found);
+    /// @dev A framing header appears more than once. The header the body is
+    ///      located by gets the rule every other read gets (REQ-COMMON-19A):
+    ///      a delimiter matching twice is refused, not chosen from.
+    error DuplicateFramingHeader(string name, uint256 count);
+    /// @dev Both `Transfer-Encoding` and `Content-Length` are present, so two
+    ///      parsers could frame two bodies.
+    error ConflictingFraming();
     /// @dev The member is absent, or present but not in the shape read here:
     ///      `keys` must be an array, `kid` and `n` must be strings.
     error MissingMember(string name);
@@ -454,11 +466,25 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         body = _slice(received, boundary + 4, received.length);
 
         bytes memory normalized = CeremonyAttestation.normalizeHeaderBytes(head);
-        (uint256 chunked,) = _find(normalized, CHUNKED_NEEDLE);
-        if (chunked != 0) return _dechunk(body);
+        (uint256 codings,) = _find(normalized, TRANSFER_ENCODING_NEEDLE);
+        (uint256 lengths, uint256 at) = _find(normalized, CONTENT_LENGTH_NEEDLE);
+        // Exactly one framing header, of one kind. Two of either, or one of
+        // each, is a message two parsers could frame two ways -- the
+        // request-smuggling shape -- and a field read from revealed bytes is
+        // refused when its delimiter matches twice, not read from whichever
+        // copy the server happened to honour.
+        if (codings > 1) revert DuplicateFramingHeader("transfer-encoding", codings);
+        if (lengths > 1) revert DuplicateFramingHeader("content-length", lengths);
+        if (codings != 0 && lengths != 0) revert ConflictingFraming();
 
-        (uint256 declaredLength, uint256 at) = _find(normalized, CONTENT_LENGTH_NEEDLE);
-        if (declaredLength != 0) {
+        if (codings != 0) {
+            // The one coding this reads. Any other frames a body this
+            // contract cannot locate.
+            (uint256 chunked,) = _find(normalized, CHUNKED_NEEDLE);
+            if (chunked != 1) revert BadChunkFraming();
+            return _dechunk(body);
+        }
+        if (lengths != 0) {
             uint256 declared = _decimal(normalized, at + CONTENT_LENGTH_NEEDLE.length, body.length);
             if (declared != body.length) revert ContentLengthMismatch(declared, body.length);
         }
@@ -566,6 +592,8 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
             at = close + 1;
         }
 
+        if (keys == 0) revert EmptyKeySet();
+
         at = _ws(body, at);
         if (at >= body.length || body[at] != "}") revert TrailingBytes();
         if (_ws(body, at + 1) != body.length) revert TrailingBytes();
@@ -640,13 +668,15 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         // front-runner from bricking the honest keeper's batch by landing one
         // claim from it first, and skipping (never applying) keeps an older
         // reading from rolling a kid back or re-stamping its TTL.
-        if (provenAt < $.rotatedAtKid[kidHash]) return;
+        //
+        // Strictly later, so equal evidence leaves the entry alone whatever it
+        // carries: a resubmission of the applied reading is a no-op that
+        // re-stamps nothing and emits nothing, and a second reading dated the
+        // same second cannot swap the kid's key and retire the one Google
+        // still signs with. That is the rule for equal evidence everywhere in
+        // the naming system (REQ-COMMON-25A).
+        if (provenAt <= $.rotatedAtKid[kidHash]) return;
         bytes32 previous = $.modulusOfKid[kidHash];
-        // A byte-identical resubmission of the applied reading is a no-op:
-        // nothing is written, nothing is emitted, and in particular the TTL is
-        // NOT re-stamped -- so spamming the same reading neither grows state
-        // nor stretches trust.
-        if (provenAt == $.rotatedAtKid[kidHash] && previous == modulusHash) return;
         $.rotatedAtKid[kidHash] = provenAt;
 
         // The key this kid used to carry stops being trusted NOW, rather than

@@ -44,7 +44,8 @@ contract IdentityJwksRootsTest is Test {
         "BAsSGSAnLjU8Q0pRWF9mbXR7gomQl56lrLO6wcjP1t3k6_L5BQwTGiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PP6Bg0UGyIpMDc-RUxTWmFob3Z9hIuSmaCnrrW8w8rR2N_m7fT7Bw4VHCMqMTg_Rk1UW2JpcHd-hYyTmqGor7a9xMvS2eDn7vUBCA8WHSQrMjlAR05VXGNqcXh_ho2Um6KpsLe-xczT2uHo7_YCCRAXHiUsMzpBSE9WXWRrcnmAh46VnKOqsbi_xs3U2-Lp8PcDChEYHyYtNDtCSVBXXmVsc3qBiI-WnaSrsrnAx87V3OPq8fgECxIZIA";
     bytes32 constant KEEPER_MODULUS_HASH = 0xc5c1457ba4adf8bb84324e8595bf883639aa7ebd7aa7e7626a0b51f90e6838bc;
 
-    /// The request the keeper's prover sends, byte for byte.
+    /// The request the keeper's prover sends. The User-Agent value is not
+    /// read on chain, so the version it carries is immaterial.
     bytes constant REQUEST = "GET /oauth2/v3/certs HTTP/1.1\r\n" "host: www.googleapis.com\r\n" "connection: close\r\n"
         "accept: application/json\r\n" "user-agent: libid-keeper/0.1.0\r\n" "\r\n";
     bytes constant STATUS_OK = "HTTP/1.1 200 OK\r\n";
@@ -1078,6 +1079,61 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesAnImpossibleBase64Length() public {
         bytes memory body = _body(_jwk("kid-1", "AAAAA"));
         _refuses(_withBody(body), IdentityJwksRoots.InvalidB64Length.selector);
+    }
+
+    /// A reading with no keys says nothing about what Google publishes. It
+    /// would pay the fee, move `freshestObservedAt` and emit nothing.
+    function test_refusesAnEmptyKeySet() public {
+        _refuses(_withBody('{"keys":[]}'), IdentityJwksRoots.EmptyKeySet.selector);
+        _refuses(_withBody('{"keys": [ ]}'), IdentityJwksRoots.EmptyKeySet.selector);
+    }
+
+    /// Two readings dated the same second cannot disagree about a kid: the
+    /// second is ignored whatever it carries, so equal evidence never swaps a
+    /// key and retires the one Google still signs with.
+    function test_aReadingDatedTheSameSecondCannotSwapAKey() public {
+        uint64 at = _now();
+        _rotate(_readingAt(_oneKey("kid-1", "one"), at));
+        bytes32 kidHash = keccak256("kid-1");
+        bytes32 installed = roots.modulusOfKid(kidHash);
+        uint256 expiry = roots.expiresAtKid(kidHash);
+
+        vm.recordLogs();
+        _rotate(_readingAt(_oneKey("kid-1", "two"), at)); // must not revert, must not apply
+
+        assertEq(roots.modulusOfKid(kidHash), installed, "the same second swapped the key");
+        assertEq(roots.trustedHashExpiresAt(installed), expiry, "the installed key lost trust");
+        assertEq(roots.rotatedAtKid(kidHash), at, "the stamp moved");
+        assertEq(vm.getRecordedLogs().length, 0, "a no-op emitted something");
+    }
+
+    /// The header the body is located by gets the rule every other read
+    /// gets: a delimiter that matches twice is refused, not chosen from.
+    function test_refusesDuplicateOrConflictingFramingHeaders() public {
+        bytes memory body = _oneKey("kid-1", "one");
+        bytes memory length = abi.encodePacked("content-length: ", vm.toString(body.length), "\r\n");
+        _refuses(
+            _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, length, length, "\r\n", body)),
+            abi.encodeWithSelector(IdentityJwksRoots.DuplicateFramingHeader.selector, "content-length", 2)
+        );
+        bytes memory chunked = "transfer-encoding: chunked\r\n";
+        _refuses(
+            _withResponse(
+                abi.encodePacked(
+                    STATUS_OK, CONTENT_TYPE, chunked, "Transfer-Encoding: identity\r\n", "\r\n", _chunks(body, 64)
+                )
+            ),
+            abi.encodeWithSelector(IdentityJwksRoots.DuplicateFramingHeader.selector, "transfer-encoding", 2)
+        );
+        _refuses(
+            _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, chunked, length, "\r\n", _chunks(body, 64))),
+            IdentityJwksRoots.ConflictingFraming.selector
+        );
+        // A coding other than chunked frames a body this contract cannot locate.
+        _refuses(
+            _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, "transfer-encoding: gzip\r\n", "\r\n", body)),
+            IdentityJwksRoots.BadChunkFraming.selector
+        );
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
