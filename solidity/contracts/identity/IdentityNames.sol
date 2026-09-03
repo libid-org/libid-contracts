@@ -25,7 +25,7 @@ import {IdentityNodes} from "./IdentityNodes.sol";
 ///      to, and that address has to be the caller. Nothing else grants a
 ///      binding: there is no owner function that writes, moves or deletes an
 ///      entry in either mapping. An account's own fresh proof retires the
-///      handle that account used to hold, and nobody else's — see `bind`.
+///      handle that account used to hold, and nobody else's — see `claim`.
 ///
 ///      **What the owner can still do, stated plainly.** It configures which
 ///      verifiers a platform uses, and a verifier is trusted to report what a
@@ -101,7 +101,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      **The account id follows from what a version is.** A version is
     ///      another way to prove the SAME account — a notarized session, an
     ///      OIDC token — not another account space. The account did not change,
-    ///      so its id did not change, and `bind` keys every version on the same
+    ///      so its id did not change, and `claim` keys every version on the same
     ///      `idNode(platformId, attested.userId)`.
     ///
     ///      Read that as a test, not as a rule to remember: a proof format that
@@ -157,7 +157,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// the plaintext either way, so an indexer never needs this, and only a
         /// contract that must display a name does.
         mapping(address => mapping(bytes32 => string)) published;
-        /// platformId -> its keyspace: handle rules and current version.
+        /// platformId -> its keyspace: handle rules, and whether it is configured.
         mapping(bytes32 => Platform) platforms;
         /// idNode -> the handle node that account last proved, and back.
         ///
@@ -267,10 +267,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// @notice What a ceremony carried that a binding does not keep.
     ///
-    /// @dev Beside `IdentityBound`, not inside it. The two paths share that
-    ///      event, and only a ceremony authenticates an OAuth client -- a field
-    ///      the legacy path could never fill is a field an indexer must always
-    ///      test for emptiness.
+    /// @dev Beside `IdentityBound`, not inside it: the binding keeps no
+    ///      client identifier, so carrying one on `IdentityBound` would give
+    ///      every indexer a field to test for emptiness.
     ///
     ///      `clientIdentifier` is the exact bytes the platform authenticated.
     ///      The contract has no use for them: the digest already binds the
@@ -285,7 +284,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
     /// @notice A handle stopped resolving because the account that held it
     ///         proved a different one.
-    /// @dev Nobody else's entry can be retired this way. See `bind`.
+    /// @dev Nobody else's entry can be retired this way. See `claim`.
     event HandleRetired(bytes32 indexed platformId, bytes32 indexed handleNode, address indexed owner);
 
     /// @notice A platform's keyspace was configured or reconfigured.
@@ -494,11 +493,9 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         emit ProofVerifierConfigured(address(verifier));
     }
 
-    /// @dev Everything after authentication, shared by both entry points.
-    ///
-    ///      Which proof established a name is the authentication half's
-    ///      business; the keyspace, the ordering and the display are the same
-    ///      whichever half ran.
+    /// @dev Everything after authentication. Which proof established a name
+    ///      is `claim`'s business; the keyspace, the ordering and the display
+    ///      are decided here.
     function _write(
         bytes32 platformId,
         string memory userId,
@@ -590,7 +587,7 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @notice Withdraw a published handle. Affects the caller's record only.
     ///
     /// @dev Publishing is the one thing here a user can undo, and it needs its
-    ///      own door. Passing `publishName: false` to `bind` does NOT clear an
+    ///      own door. Passing `publishName: false` to `claim` does NOT clear an
     ///      earlier publish — a caller that binds again after a rename should
     ///      not silently withdraw a name because a flag defaulted; it refreshes
     ///      the published string to the handle just proved. Withdrawing what

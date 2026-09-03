@@ -6,8 +6,8 @@
 /// whose arguments have to land in the right order — then reads the balances
 /// back. Without it, "generated" and "usable" are two different claims.
 ///
-/// Skips when anvil or the compiled artifact is missing, like the OIDC
-/// proof-artifact tests do. CI always has both: the same job installs foundry
+/// Skips when anvil or the compiled artifact is missing. CI always has both:
+/// the same job installs foundry
 /// and builds the contracts this reads.
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'

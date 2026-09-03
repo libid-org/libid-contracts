@@ -18,7 +18,6 @@ import {IProofVerifier} from "../IProofVerifier.sol";
 import {IdentityNames} from "../../identity/IdentityNames.sol";
 import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 import {HandleVectors} from "../../identity/HandleVectors.sol";
-import {HandleNormalizer} from "../../identity/HandleNormalizer.sol";
 import {IdentityNodes} from "../../identity/IdentityNodes.sol";
 import {StubPlatformVerifier} from "../../identity/test/StubPlatformVerifier.sol";
 import {AttestationBuilder} from "./AttestationBuilder.sol";
@@ -424,40 +423,12 @@ contract UpgradeSafetyTest is Test {
         assertEq(at, 1_780_000_000);
     }
 
-    // The two Platform layouts, replicated so the slot arithmetic is measured
-    // rather than asserted from memory.
-    struct MainPlatform {
-        HandleNormalizer.Rules rules;
-        uint32 latestVersion;
-        bool configured;
-    }
-
-    struct PrPlatform {
-        HandleNormalizer.Rules rules;
-        bool configured;
-    }
-
-    MainPlatform mainP;
-    PrPlatform prP;
-
-    /// Emulate the storage a main-deployed IdentityNames proxy holds for a
-    /// configured platform, then read it through the PR implementation.
-    function _emulateMainPlatform(uint32 latestVersion, bool configured) internal {
-        bytes32 entry = keccak256(abi.encode(X, uint256(NAMES_ROOT) + 3));
-        HandleNormalizer.Rules memory r = HandleVectors.rulesFor(X);
-        uint256 rulesWord = uint256(r.maxLength) | (r.stripLeadingAt ? 1 << 16 : 0) | (r.isEmail ? 1 << 24 : 0)
-            | (r.allowUnderscore ? 1 << 32 : 0) | (r.allowHyphen ? 1 << 40 : 0);
-        vm.store(address(names), entry, bytes32(rulesWord));
-        uint256 w = uint256(latestVersion) | (configured ? uint256(1) << 32 : 0);
-        vm.store(address(names), bytes32(uint256(entry) + 1), bytes32(w));
-    }
-
     function _claimExternal(address who, uint256 nonce) external {
         _claimAs(who, nonce);
     }
 
-    /// Binding lost `version` (uint32 at byte offset 28). Stale bits in that
-    /// word are ignored by the PR's reads, and a fresh write leaves them as-is.
+    /// `Binding` once carried a `version` (uint32 at byte offset 28). Stale bits
+    /// in that word are ignored by the current reads, and a fresh write leaves them as-is.
     function test_bindingStaleVersionWordIsIgnored() public {
         _names();
         vm.prank(OWNER);

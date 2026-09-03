@@ -1,4 +1,4 @@
-//! Proxy plumbing shared by every stack: the ERC1967 proxy constructor and
+//! Proxy plumbing shared by every proxied contract: the ERC1967 proxy constructor and
 //! the UUPS upgrade entrypoint.
 
 #[allow(clippy::too_many_arguments, unused_attributes)]

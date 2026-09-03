@@ -395,7 +395,7 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// REQ-PLAT-52B: mirror of XPlatformVerifier.t.sol:412 test_provesAgainstTheCommitmentsTheNotarySigned
+    /// REQ-PLAT-52B: mirror of XPlatformVerifier.t.sol:403 test_provesAgainstTheCommitmentsTheNotarySigned
     /// using this file's TOKEN_COMMITMENT / IDENTITY_COMMITMENT (verified passing as test_P25_…).
     function test_provesAgainstTheCommitmentsTheNotarySigned() public { /* copy of the X test */ }
 }

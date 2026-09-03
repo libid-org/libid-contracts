@@ -104,7 +104,7 @@ export const ${exportName} = ${body} as const satisfies Abi
 /// Arguments are not spelled out here: `ContractFunctionArgs` reads them off
 /// the ABI, so there is no Solidity-to-TypeScript type table in this script to
 /// drift from the real one. It resolves overloads to a union of tuples too,
-/// which is what lets `webTransferV2` keep one name.
+/// which is what keeps one builder per name should a contract ever overload one.
 ///
 /// Payable functions take `value` before their arguments. That is the whole
 /// reason to distinguish them: a caller who forgets the value on a payable
