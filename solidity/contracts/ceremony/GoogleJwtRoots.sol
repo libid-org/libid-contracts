@@ -36,6 +36,18 @@ import {INotaryService} from "./INotaryService.sol";
 ///      reading can land in between. One generation back covers that;
 ///      further back is history.
 ///
+///      Two generations remember two distinct sets, and that bound is a
+///      known tradeoff. Google's backends do not all answer alike during a
+///      rotation, so if three distinct sets are ever served at once and two
+///      of them lack the same still-live key -- a remove-before-add
+///      rotation -- a submitter ordering genuine readings can push that key
+///      out until the next reading that lists it lands. Tokens under it fail
+///      meanwhile; nothing is inserted; the keeper's next poll sees the key
+///      untrusted and restores it. Accepted (2026-09-03) over a per-modulus
+///      last-seen list, which would close it at the cost of remembering keys
+///      by modulus for a lifetime; revisit if Google's rotation ever shows
+///      that shape.
+///
 ///      The reading is an ordinary notarized session -- the section 9.1
 ///      record every Platform Verifier consumes, authenticated by the same
 ///      Notary Service and charged the same Notary Fee. What differs is the
