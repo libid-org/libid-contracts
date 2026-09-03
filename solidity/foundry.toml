@@ -4,8 +4,7 @@ out = "out"
 libs = ["lib"]
 # Tests live beside the code they cover — contracts/ceremony/test, contracts/
 # identity/test, contracts/factory/test — so discovery goes through src
-# rather than one test directory. archived/ is outside every root on
-# purpose: what it holds is reference, not source (see archived/README.md).
+# rather than one test directory.
 test = "contracts"
 solc = "0.8.33"
 evm_version = "cancun"

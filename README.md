@@ -16,8 +16,6 @@ solidity/            # Foundry project root
     identity/        # IdentityNames, IdentityJwksRoots, handle normalization
     factory/         # LibidFactory: deterministic CREATE3 deployment
     WTIA9.sol        # wrapped TIA
-  archived/          # the frozen wallet and bank products: reference only,
-                     # never compiled (see archived/README.md)
   script/Deploy.s.sol
   lib/               # git submodules (openzeppelin, forge-std)
 rust/contracts/      # libid-contracts crate: alloy bindings + embedded artifacts
