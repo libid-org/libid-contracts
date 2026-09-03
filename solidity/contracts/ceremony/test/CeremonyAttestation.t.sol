@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {CeremonyAttestation} from "../CeremonyAttestation.sol";
+import {AttestationBuilder} from "./AttestationBuilder.sol";
 
 /// @notice Pins the section 9.1 decoder against bytes produced by the Rust
 ///         encoder in `libid-rs/crates/libid-ceremony`.
@@ -142,5 +143,53 @@ contract CeremonyAttestationTest is Test {
         tampered[43] = 0x50; // sentTranscriptLength 60 -> 80
         vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.CoverageGap.selector, 60, 80));
         this.coverSent(tampered);
+    }
+
+    function _sentOnly(AttestationBuilder.Range[] memory r, AttestationBuilder.Commitment[] memory c, uint32 len)
+        private
+        pure
+        returns (bytes memory)
+    {
+        AttestationBuilder.Direction memory d = AttestationBuilder.Direction({revealed: r, commitments: c, length: len});
+        AttestationBuilder.Direction memory e = AttestationBuilder.Direction({
+            revealed: new AttestationBuilder.Range[](0), commitments: AttestationBuilder.none(), length: 0
+        });
+        return AttestationBuilder.encode(bytes32(uint256(1)), 1, d, e);
+    }
+
+    function test_rejectsAnEmptyRange() public {
+        vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.EmptyRange.selector, uint32(3)));
+        this.decode(
+            _sentOnly(
+                AttestationBuilder.one(AttestationBuilder.Range({start: 3, value: ""})), AttestationBuilder.none(), 10
+            )
+        );
+    }
+
+    function test_rejectsRangesOutOfOrder() public {
+        vm.expectRevert(abi.encodeWithSelector(CeremonyAttestation.OutOfOrder.selector, uint32(0), uint32(10)));
+        this.decode(
+            _sentOnly(
+                AttestationBuilder.two(
+                    AttestationBuilder.Range({start: 5, value: "aaaaa"}),
+                    AttestationBuilder.Range({start: 0, value: "bbbbb"})
+                ),
+                AttestationBuilder.none(),
+                10
+            )
+        );
+    }
+
+    function test_rejectsACommitmentOverlappingARevealedRange() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(CeremonyAttestation.CommitmentOverlapsRevealed.selector, uint32(3), uint32(10))
+        );
+        this.decode(
+            _sentOnly(
+                AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: "aaaaa"})),
+                AttestationBuilder.one(AttestationBuilder.Commitment({start: 3, end: 10, value: bytes32(uint256(1))})),
+                10
+            )
+        );
     }
 }

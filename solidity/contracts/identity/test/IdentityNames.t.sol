@@ -12,6 +12,7 @@ import {CeremonyProofVerifier} from "../../ceremony/CeremonyProofVerifier.sol";
 import {IPlatformVerifier} from "../../ceremony/IPlatformVerifier.sol";
 import {IProofVerifier} from "../../ceremony/IProofVerifier.sol";
 import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @notice The identity contract, against a stubbed Platform Verifier.
 ///
@@ -629,7 +630,7 @@ contract IdentityNamesTest is Test {
 
         _stage("123", "alice", alice, 100);
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(CeremonyProofVerifier.UnknownVersion.selector, fresh, V1));
         _claim(fresh, false);
     }
 
@@ -692,7 +693,7 @@ contract IdentityNamesTest is Test {
 
     function test_onlyTheOwnerConfiguresAPlatform() public {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         names.setPlatform(X, HandleVectors.rulesFor(X));
     }
 }

@@ -10,6 +10,8 @@ import {GooglePlatformVerifier, IJwksRoots} from "../GooglePlatformVerifier.sol"
 import {ICeremony} from "../ICeremony.sol";
 import {INotaryService} from "../INotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {TlsNotaryVerifierBase} from "../TlsNotaryVerifierBase.sol";
 
 contract Honk is IHonkVerifier {
     bool public answer = true;
@@ -392,5 +394,61 @@ contract GooglePlatformVerifierTest is Test {
         s.publicInputs = new bytes32[](55);
         vm.expectRevert(abi.encodeWithSelector(GooglePlatformVerifier.WrongPublicInputCount.selector, 56, 55));
         this.run(s);
+    }
+
+    function test_rejectsTheSameSubmissionOnAnotherChain() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        vm.chainId(block.chainid + 1);
+        vm.expectPartialRevert(GooglePlatformVerifier.DigestMismatch.selector);
+        this.run(s);
+    }
+
+    function test_rejectsAnExpiryWiderThanUint64() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.publicInputs[37] = bytes32(uint256(type(uint64).max) + 1);
+        vm.expectPartialRevert(GooglePlatformVerifier.ExpiryNotAUint64.selector);
+        this.run(s);
+    }
+
+    function test_rejectsADigestInputThatIsNotAByte() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.publicInputs[0] = bytes32(uint256(0x100) | uint256(s.publicInputs[0]));
+        vm.expectPartialRevert(GooglePlatformVerifier.PublicInputNotAByte.selector);
+        this.run(s);
+    }
+
+    function test_rejectsAnEmptySub() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.publicInputs[34] = bytes32(0);
+        vm.expectRevert(GooglePlatformVerifier.EmptyUserId.selector);
+        this.run(s);
+    }
+
+    function test_rejectsFiftySevenPublicInputs() public {
+        GooglePlatformVerifier.GoogleProof memory s = _payload();
+        s.publicInputs = new bytes32[](57);
+        vm.expectRevert(abi.encodeWithSelector(GooglePlatformVerifier.WrongPublicInputCount.selector, 56, 57));
+        this.run(s);
+    }
+
+    function test_onlyTheOwnerPointsAtJwksRoots() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        verifier.setJwksRoots(IJwksRoots(address(roots)));
+        vm.prank(OWNER);
+        vm.expectRevert(PlatformVerifierBase.ZeroAddress.selector);
+        verifier.setJwksRoots(IJwksRoots(address(0)));
+    }
+
+    /// @dev A TLSNotary-shaped payload at the Google verifier: word four of
+    ///      the TLS layout is `pkceNonce`, which Google's layout reads as the
+    ///      offset of `clientIdentifier`, so the decoder walks out of bounds
+    ///      and reverts with no data. No later check ever runs.
+    function test_aTlsPayloadRevertsWithNoData() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory x;
+        x.ceremonyVersion = 1;
+        x.pkceNonce = bytes32(uint256(1));
+        (bool ok, bytes memory ret) = address(verifier).call(abi.encodeCall(verifier.verify, (abi.encode(x))));
+        assertFalse(ok);
+        assertEq(ret.length, 0);
     }
 }

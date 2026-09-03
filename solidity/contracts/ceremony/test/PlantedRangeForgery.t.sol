@@ -224,7 +224,9 @@ contract PlantedRangeForgeryTest is Test {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _base();
         s.tokenSession = _perFieldToken();
         s.identitySession = _honestIdentity();
-        vm.expectRevert();
+        // The per-field runs leave the delimiters between them uncovered, so
+        // the tiling check refuses the request before any field is read.
+        vm.expectPartialRevert(CeremonyAttestation.CoverageGap.selector);
         this.run{value: quote}(s);
     }
 

@@ -10,6 +10,7 @@ import {CeremonyProofVerifier} from "../CeremonyProofVerifier.sol";
 import {ICeremony} from "../ICeremony.sol";
 import {IPlatformVerifier} from "../IPlatformVerifier.sol";
 import {StubPlatformVerifier} from "../../identity/test/StubPlatformVerifier.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @notice The Proof Verifier as dispatch: it routes, forwards value, and
 ///         forwards what comes back. It reads nothing in between.
@@ -133,7 +134,7 @@ contract CeremonyProofVerifierTest is Test {
     /// @dev The set decides which proof statements this chain accepts, so it is
     ///      authority rather than configuration (REQ-COMMON-05C).
     function test_onlyGovernanceMovesTheSupportedVersionSet() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         pv.setVerifier(PLATFORM_ID, 6, IPlatformVerifier(address(platform)));
     }
 
@@ -192,5 +193,11 @@ contract CeremonyProofVerifierTest is Test {
         vm.prank(OWNER);
         vm.expectRevert("renounce disabled");
         pv.renounceOwnership();
+    }
+
+    function test_setVerifierWithAnEoaReverts() public {
+        vm.prank(OWNER);
+        vm.expectRevert(); // high-level call to an address holding no code; no selector available
+        pv.setVerifier(CeremonyProfile.PLATFORM_X, 1, IPlatformVerifier(address(0xB0B)));
     }
 }

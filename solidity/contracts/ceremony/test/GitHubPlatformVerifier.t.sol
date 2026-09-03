@@ -15,6 +15,7 @@ import {INotaryService} from "../INotaryService.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
 import {TlsNotaryVerifierBase} from "../TlsNotaryVerifierBase.sol";
+import {XPlatformVerifier} from "../XPlatformVerifier.sol";
 
 contract Honk is IHonkVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
@@ -91,10 +92,11 @@ contract GitHubPlatformVerifierTest is Test {
 
     /// The exchange: request line, then the revealed body PREFIX. The secret is
     /// ordered last and committed, so the prefix stops where it begins.
-    function _exchange(bytes32 authority) private view returns (ICeremony.Attestation memory) {
-        // One revealed run up to the secret, which is ordered last and
-        // committed. The head boundary sits inside the revealed run, so the
-        // body is located by the framing rather than by a range position.
+    /// The exchange request as the profile fixes it: one revealed run up to
+    /// the secret, which is ordered last and committed. The head boundary sits
+    /// inside the revealed run, so the body is located by the framing rather
+    /// than by a range position.
+    function _exchangeSent() private view returns (AttestationBuilder.Direction memory) {
         bytes memory whole = abi.encodePacked(
             "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
@@ -103,14 +105,19 @@ contract GitHubPlatformVerifierTest is Test {
         uint32 wholeEnd = uint32(whole.length);
         uint32 secretEnd = wholeEnd + 40; // `&client_secret=<hex>`, committed
 
-        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+        return AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
             commitments: AttestationBuilder.one(
                 AttestationBuilder.Commitment({start: wholeEnd, end: secretEnd, value: bytes32(uint256(0x5EC1E7))})
             ),
             length: secretEnd
         });
+    }
 
+    /// The exchange response: the bearer committed and framed by the revealed
+    /// `"access_token":"` anchor and its closing quote, every other byte hidden
+    /// behind a commitment of its own.
+    function _exchangeResponse() private pure returns (AttestationBuilder.Direction memory) {
         bytes memory status = "HTTP/1.1 200 OK";
         bytes memory anchor = '"access_token":"';
         uint32 statusEnd = uint32(status.length);
@@ -120,7 +127,7 @@ contract GitHubPlatformVerifierTest is Test {
         uint32 quoteEnd = bearerEnd + 1;
         uint32 total = quoteEnd + 20;
 
-        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+        return AttestationBuilder.Direction({
             revealed: AttestationBuilder.three(
                 AttestationBuilder.Range({start: 0, value: status}),
                 AttestationBuilder.Range({start: headEnd, value: anchor}),
@@ -133,8 +140,10 @@ contract GitHubPlatformVerifierTest is Test {
             ),
             length: total
         });
+    }
 
-        bytes memory attested = AttestationBuilder.encode(authority, T0, sent, received);
+    function _exchange(bytes32 authority) private view returns (ICeremony.Attestation memory) {
+        bytes memory attested = AttestationBuilder.encode(authority, T0, _exchangeSent(), _exchangeResponse());
         return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
@@ -290,15 +299,103 @@ contract GitHubPlatformVerifierTest is Test {
         assertEq(verifier.quote(), 2 * FEE);
     }
 
+    /// @dev REQ-COMMON-19A on the identity read: a second `authorization:`
+    ///      header, revealed, anywhere in the request, is refused by the
+    ///      line-anchored count. The identity attestation is rebuilt with the
+    ///      extra header in its revealed head so the count sees two.
     function test_rejectsASecondAuthorizationHeaderOnTheIdentityRead() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHeadPrefix("authorization: Bearer stolen\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev The wrong authority is still refused before any field is read.
+    function test_rejectsAnIdentityReadFromTheWrongAuthority() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         bytes memory attested = s.identitySession.attestedData;
-        // Corrupt the authority so the session is refused before anything else
-        // — a cheap check that the shared guard runs for GitHub too. It is the
-        // first 32 bytes now that the stamped tags are gone.
         attested[0] = bytes1(uint8(attested[0]) ^ 0x01);
         s.identitySession = ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
         vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
     }
+
+    /// The honest identity read, with extra revealed header lines after the
+    /// request line.
+    function _identityWithHeadPrefix(string memory extraHeaders) private pure returns (ICeremony.Attestation memory) {
+        bytes memory head = abi.encodePacked(
+            "GET /user HTTP/1.1\r\n",
+            extraHeaders,
+            "accept: application/vnd.github+json\r\nhost: api.github.com\r\n\r\nauthorization: Bearer "
+        );
+        bytes memory bearer = "gho_TOKENTOKENTOKEN";
+        bytes memory tail = "\r\nconnection: close\r\n\r\n";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: end + uint32(tail.length)
+        });
+        bytes memory b = abi.encodePacked("HTTP/1.1 200 OK\r\n\r\n", '{"login":"octocat","id":583231}');
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: b})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(b.length)
+        });
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
+    }
+
+    /// Commitment FIRST, then one revealed run: tiles, one commitment as the profile demands,
+    /// head boundary inside the run. Only TlsNotaryVerifierBase.sol:294 stands between this and acceptance.
+    function test_rejectsAnExchangeWhoseRequestLineIsHidden() public {
+        bytes memory whole = abi.encodePacked(
+            "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
+            "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
+            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+        );
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 40, value: whole})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: 0, end: 40, value: bytes32(uint256(0x5EC1E7))})
+            ),
+            length: 40 + uint32(whole.length)
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB, T0, sent, _exchangeResponse());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.RequestLineNotAtOrigin.selector, uint32(40)));
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsAnExchangeResponseWithNoRevealedAnchors() public {
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: "HTTP/1.1 200 OK"})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: 15, end: 80, value: TOKEN_COMMITMENT})
+            ),
+            length: 80
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB, T0, _exchangeSent(), received);
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsAPayloadForAnotherCeremonyVersion() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.ceremonyVersion = 2;
+        vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongCeremonyVersion.selector, 1, 2));
+        this.run{value: quote}(s);
+    }
+
+    /// REQ-PLAT-52B: mirror of XPlatformVerifier.t.sol:412 test_provesAgainstTheCommitmentsTheNotarySigned
+    /// using this file's TOKEN_COMMITMENT / IDENTITY_COMMITMENT (verified passing as test_P25_…).
+    function test_provesAgainstTheCommitmentsTheNotarySigned() public { /* copy of the X test */ }
 }

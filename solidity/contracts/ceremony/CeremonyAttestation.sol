@@ -369,6 +369,9 @@ library CeremonyAttestation {
                 ++c;
             }
 
+            // Unreachable for a decoded record: `_check` has already refused
+            // every overlap. Kept because this function takes a block a caller
+            // may have built without decoding, and fails closed there.
             if (start < at) revert SpansOverlap(start);
             if (start != at) revert CoverageGap(at, start);
             at = end;

@@ -212,7 +212,7 @@ contract NotaryServiceTest is Test {
         bytes memory junk = hex"deadbeef";
         (uint8 v, bytes32 r, bytes32 sVal) =
             vm.sign(NOTARY_KEY, MessageHashUtils.toEthSignedMessageHash(keccak256(junk)));
-        vm.expectRevert();
+        vm.expectRevert(CeremonyAttestation.Truncated.selector);
         service.verify{value: FEE}(junk, abi.encodePacked(r, sVal, v));
     }
 

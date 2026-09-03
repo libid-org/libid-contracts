@@ -5,12 +5,25 @@ import {Test} from "forge-std/Test.sol";
 import {CeremonyFields} from "../CeremonyFields.sol";
 
 contract CeremonyFieldsTest is Test {
+    /// @dev The verifiers read through the `try*` readers and map every
+    ///      non-`One` outcome themselves; these wrappers give the tests the
+    ///      same one-result-or-revert shape over the same readers.
+    error Refused(CeremonyFields.Found found, string name);
+
     function jsonString(bytes calldata d, string calldata n) external pure returns (bytes memory) {
-        return CeremonyFields.jsonString(d, n);
+        (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonString(d, n);
+        if (found == CeremonyFields.Found.None) revert CeremonyFields.FieldNotFound(n);
+        if (found == CeremonyFields.Found.Several) revert CeremonyFields.AmbiguousField(n);
+        if (found != CeremonyFields.Found.One) revert Refused(found, n);
+        return v;
     }
 
     function jsonInteger(bytes calldata d, string calldata n) external pure returns (bytes memory) {
-        return CeremonyFields.jsonInteger(d, n);
+        (CeremonyFields.Found found, bytes memory v) = CeremonyFields.tryJsonInteger(d, n);
+        if (found == CeremonyFields.Found.None) revert CeremonyFields.FieldNotFound(n);
+        if (found == CeremonyFields.Found.Several) revert CeremonyFields.AmbiguousField(n);
+        if (found != CeremonyFields.Found.One) revert Refused(found, n);
+        return v;
     }
 
     function formField(bytes calldata d, string calldata n) external pure returns (bytes memory) {
@@ -52,7 +65,7 @@ contract CeremonyFieldsTest is Test {
     }
 
     function test_refusesAValueWithNoClosingQuote() public {
-        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.UnterminatedField.selector, "username"));
+        vm.expectRevert(abi.encodeWithSelector(Refused.selector, CeremonyFields.Found.Unterminated, "username"));
         this.jsonString(bytes('{"username":"alice'), "username");
     }
 
