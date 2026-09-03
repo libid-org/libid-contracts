@@ -2,6 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {HandleResolver, OffchainLookup} from "../HandleResolver.sol";
 import {IExtendedResolver} from "../IExtendedResolver.sol";
@@ -189,13 +191,14 @@ contract HandleResolverTest is Test {
     function test_onlyTheOwnerConfigures() public {
         string[] memory urls = new string[](1);
         urls[0] = "https://elsewhere/{sender}/{data}.json";
+        address mallory = makeAddr("mallory");
 
-        vm.prank(makeAddr("mallory"));
-        vm.expectRevert();
+        vm.prank(mallory);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, mallory));
         resolver.setUrls(urls);
 
-        vm.prank(makeAddr("mallory"));
-        vm.expectRevert();
+        vm.prank(mallory);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, mallory));
         resolver.setSigner(vm.addr(impostorKey), true);
     }
 
@@ -276,6 +279,8 @@ contract HandleResolverTest is Test {
         junk[3] = abi.encode(bytes("x"), uint64(block.timestamp + 300)); // signature missing
 
         for (uint256 i = 0; i < junk.length; i++) {
+            // `abi.decode` reverts with no data, so there is no selector to
+            // name here: the property is that nothing returns.
             vm.expectRevert();
             resolver.resolveWithProof(junk[i], request);
         }
@@ -304,7 +309,7 @@ contract HandleResolverTest is Test {
         bytes memory request = abi.encodeWithSelector(IExtendedResolver.resolve.selector, name, data);
         bytes memory response = abi.encode(abi.encode(address(0xBEEF)), uint64(block.timestamp + 300), new bytes(65));
 
-        vm.expectRevert();
+        vm.expectRevert(ECDSA.ECDSAInvalidSignature.selector);
         resolver.resolveWithProof(response, request);
     }
 
