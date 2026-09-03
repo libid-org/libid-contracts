@@ -6,7 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {CeremonyAuthorization} from "../CeremonyAuthorization.sol";
 import {CeremonyProfile} from "../CeremonyProfile.sol";
-import {GooglePlatformVerifier, IJwksRoots} from "../GooglePlatformVerifier.sol";
+import {GooglePlatformVerifier, IGoogleJwtRoots} from "../GooglePlatformVerifier.sol";
 import {ICeremony} from "../ICeremony.sol";
 import {INotaryService} from "../INotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
@@ -25,7 +25,7 @@ contract Honk is IHonkVerifier {
     }
 }
 
-contract Roots is IJwksRoots {
+contract Roots is IGoogleJwtRoots {
     mapping(bytes32 => uint256) public expiry;
 
     function trust(bytes32 h, uint256 until) external {
@@ -79,7 +79,7 @@ contract GooglePlatformVerifierTest is Test {
                             IHonkVerifier(address(honk)),
                             address(honk).codehash,
                             GOOGLE_ALLOWANCE,
-                            IJwksRoots(address(roots))
+                            IGoogleJwtRoots(address(roots))
                         )
                     )
                 )
@@ -225,7 +225,7 @@ contract GooglePlatformVerifierTest is Test {
                     IHonkVerifier(address(honk)),
                     address(honk).codehash,
                     GOOGLE_ALLOWANCE,
-                    IJwksRoots(address(roots))
+                    IGoogleJwtRoots(address(roots))
                 )
             )
         );
@@ -348,7 +348,7 @@ contract GooglePlatformVerifierTest is Test {
     function test_rejectsAnUntrustedModulus() public {
         Roots empty = new Roots();
         vm.prank(OWNER);
-        verifier.setJwksRoots(IJwksRoots(address(empty)));
+        verifier.setJwtRoots(IGoogleJwtRoots(address(empty)));
         GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectPartialRevert(GooglePlatformVerifier.UntrustedModulus.selector);
         this.run(s);
@@ -360,7 +360,7 @@ contract GooglePlatformVerifierTest is Test {
         Roots lapsed = new Roots();
         lapsed.trust(_modulusHash(), T0);
         vm.prank(OWNER);
-        verifier.setJwksRoots(IJwksRoots(address(lapsed)));
+        verifier.setJwtRoots(IGoogleJwtRoots(address(lapsed)));
         GooglePlatformVerifier.GoogleProof memory s = _payload();
         vm.expectPartialRevert(GooglePlatformVerifier.UntrustedModulus.selector);
         this.run(s);
@@ -431,12 +431,12 @@ contract GooglePlatformVerifierTest is Test {
         this.run(s);
     }
 
-    function test_onlyTheOwnerPointsAtJwksRoots() public {
+    function test_onlyTheOwnerPointsAtJwtRoots() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
-        verifier.setJwksRoots(IJwksRoots(address(roots)));
+        verifier.setJwtRoots(IGoogleJwtRoots(address(roots)));
         vm.prank(OWNER);
         vm.expectRevert(PlatformVerifierBase.ZeroAddress.selector);
-        verifier.setJwksRoots(IJwksRoots(address(0)));
+        verifier.setJwtRoots(IGoogleJwtRoots(address(0)));
     }
 
     /// @dev A TLSNotary-shaped payload at the Google verifier: word four of

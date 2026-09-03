@@ -1,7 +1,7 @@
 import { decodeFunctionData } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { identityJwksRootsAbi } from './abis/identityJwksRoots.js'
+import { googleJwtRootsAbi } from './abis/googleJwtRoots.js'
 import { identityNamesAbi } from './abis/identityNames.js'
 import { calls } from './index.js'
 
@@ -37,11 +37,11 @@ describe('generated call builders', () => {
   it('takes value before the arguments on a payable function', () => {
     // A rotation pays the Notary Fee, so the value is the part a caller must
     // not be able to forget: it comes before the attested bytes and the proof.
-    const call = calls.identityJwksRoots.rotate(ROOTS, 7n, ATTESTED, PROOF)
+    const call = calls.googleJwtRoots.rotate(ROOTS, 7n, ATTESTED, PROOF)
 
     expect(call.value).toBe(7n)
     expect(call.to).toBe(ROOTS)
-    expect(decodeFunctionData({ abi: identityJwksRootsAbi, data: call.data })).toEqual({
+    expect(decodeFunctionData({ abi: googleJwtRootsAbi, data: call.data })).toEqual({
       functionName: 'rotate',
       args: [ATTESTED, PROOF],
     })

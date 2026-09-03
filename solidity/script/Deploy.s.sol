@@ -9,14 +9,14 @@ import {INotaryService} from "../contracts/ceremony/INotaryService.sol";
 import {CeremonyProofVerifier} from "../contracts/ceremony/CeremonyProofVerifier.sol";
 import {IProofVerifier} from "../contracts/ceremony/IProofVerifier.sol";
 import {HandleVectors} from "../contracts/identity/HandleVectors.sol";
-import {IdentityJwksRoots} from "../contracts/identity/IdentityJwksRoots.sol";
+import {GoogleJwtRoots} from "../contracts/ceremony/GoogleJwtRoots.sol";
 
 /// @notice Deploy the identity stack to any EVM chain.
 ///
 /// Four UUPS proxies, in dependency order: the Notary Service every notarized
 /// session is verified through, the Proof Verifier the naming system
 /// dispatches claims through, the naming system itself with a keyspace per
-/// platform, and the Google JWKS root list that pays the Notary Service for
+/// platform, and the Google JWT root list that pays the Notary Service for
 /// each rotation. No Platform Verifier is registered here -- that needs the
 /// ceremony circuit artifacts, which arrive with their own release.
 ///
@@ -83,16 +83,16 @@ contract Deploy is Script {
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_GITHUB);
         _wireIdentityPlatform(names, HandleVectors.PLATFORM_GOOGLE);
 
-        // 4. The JWKS root list is the naming system's own. Google's Platform
-        //    Verifier reads the trusted moduli through it, and nothing is
-        //    trusted until a notarized reading of Google's JWKS lands --
+        // 4. The Google JWT root list, beside the Platform Verifier it serves.
+        //    That verifier reads the trusted moduli through it, and nothing
+        //    is trusted until a notarized reading of Google's JWKS lands --
         //    verified through the Notary Service above, like every other
         //    notarized session, and paying the same fee.
-        IdentityJwksRoots rootsImpl = new IdentityJwksRoots();
-        address jwksRootsAddr = address(
+        GoogleJwtRoots rootsImpl = new GoogleJwtRoots();
+        address jwtRootsAddr = address(
             new ERC1967Proxy(
                 address(rootsImpl),
-                abi.encodeCall(IdentityJwksRoots.initialize, (deployer, INotaryService(notaryServiceAddr)))
+                abi.encodeCall(GoogleJwtRoots.initialize, (deployer, INotaryService(notaryServiceAddr)))
             )
         );
 
@@ -103,7 +103,7 @@ contract Deploy is Script {
         console.log("NOTARY_SERVICE_ADDRESS= ", notaryServiceAddr);
         console.log("CEREMONY_PROOF_VERIFIER_ADDRESS= ", proofVerifierAddr);
         console.log("IDENTITY_NAMES_ADDRESS= ", identityNamesAddr);
-        console.log("IDENTITY_JWKS_ROOTS_ADDRESS= ", jwksRootsAddr);
+        console.log("GOOGLE_JWT_ROOTS_ADDRESS= ", jwtRootsAddr);
         console.log("NOTE: no Platform Verifier is registered yet. Add one with");
         console.log("      CeremonyProofVerifier.setVerifier once the ceremony");
         console.log("      circuit artifacts are released. Until then a platform");
@@ -111,7 +111,7 @@ contract Deploy is Script {
         // Nothing is trusted until a notarized reading of Google's JWKS lands.
         // Until then every Google claim reverts `UntrustedModulus`, which reads
         // as a bad proof rather than an unseeded list.
-        console.log("NOTE: point a JWKS rotation listener at IDENTITY_JWKS_ROOTS_ADDRESS");
+        console.log("NOTE: point a JWKS rotation listener at GOOGLE_JWT_ROOTS_ADDRESS");
         console.log("      before Google names work. The trust list starts empty.");
     }
 

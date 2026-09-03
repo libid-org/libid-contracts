@@ -2,9 +2,9 @@
 
 Smart contracts for libID, laid out per chain. `solidity/` is a self-contained
 Foundry project holding the EVM contracts: the ceremony verification path
-(Notary Service, Proof Verifier, Platform Verifiers), the identity naming
-system with its Google JWKS root list, and the deterministic deployment
-factory. `rust/` and `ts/` hold the ABI wrapper packages; room is reserved
+(Notary Service, Proof Verifier, Platform Verifiers, and the Google JWT root
+list the Google verifier reads), the identity naming system, and the
+deterministic deployment factory. `rust/` and `ts/` hold the ABI wrapper packages; room is reserved
 for `solana/` and other networks.
 
 ## Layout
@@ -12,8 +12,9 @@ for `solana/` and other networks.
 ```
 solidity/            # Foundry project root
   contracts/
-    ceremony/        # NotaryService, CeremonyProofVerifier, Platform Verifiers
-    identity/        # IdentityNames, IdentityJwksRoots, handle normalization
+    ceremony/        # NotaryService, CeremonyProofVerifier, Platform Verifiers,
+                     # GoogleJwtRoots
+    identity/        # IdentityNames, handle normalization
     factory/         # LibidFactory: deterministic CREATE3 deployment
     WTIA9.sol        # wrapped TIA
   script/Deploy.s.sol

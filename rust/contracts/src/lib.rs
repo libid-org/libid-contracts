@@ -5,10 +5,10 @@
 //!
 //! - [`bindings`] — hand-written `alloy::sol!` interfaces for every contract a
 //!   consumer talks to: the ceremony verification path (`NotaryService`,
-//!   `CeremonyProofVerifier`), the naming system (`IdentityNames`) with its
-//!   Google JWKS trust list (`IdentityJwksRoots`), and the deterministic
-//!   factory. Kept in lockstep with the Solidity sources in
-//!   `solidity/contracts`.
+//!   `CeremonyProofVerifier`, and `GoogleJwtRoots`, the Google signing keys
+//!   the `google/v1` verifier trusts), the naming system (`IdentityNames`),
+//!   and the deterministic factory. Kept in lockstep with the Solidity
+//!   sources in `solidity/contracts`.
 //! - [`artifacts`] — the compiled creation bytecode, link references, and
 //!   method identifiers of every deployable contract, embedded at compile time
 //!   ([`Artifacts::embedded`]) so deployment needs no filesystem at runtime. A

@@ -17,12 +17,10 @@ use libid_contracts::{
     bindings::{
         ceremony::{
             CeremonyProofVerifier,
+            GoogleJwtRoots,
             NotaryService,
         },
-        identity::{
-            IdentityJwksRoots,
-            IdentityNames,
-        },
+        identity::IdentityNames,
     },
     deploy::{
         deploy_behind_proxy,
@@ -42,8 +40,8 @@ async fn default_signer(provider: &impl Provider) -> Address {
 
 /// (a) The identity stack in the order `script/Deploy.s.sol` uses: the
 /// Notary Service first, then the Proof Verifier, the naming system given a
-/// keyspace and pointed at the Proof Verifier, and the JWKS root list pointed
-/// at the Notary Service — every one behind an ERC1967 proxy. Then the views
+/// keyspace and pointed at the Proof Verifier, and the Google JWT root list
+/// pointed at the Notary Service — every one behind an ERC1967 proxy. Then the views
 /// that prove the wiring took.
 #[tokio::test]
 async fn deploys_the_identity_stack_behind_proxies() {
@@ -90,8 +88,8 @@ async fn deploys_the_identity_stack_behind_proxies() {
     let roots_proxy = deploy_behind_proxy(
         &provider,
         &artifacts,
-        "IdentityJwksRoots",
-        &IdentityJwksRoots::initializeCall {
+        "GoogleJwtRoots",
+        &GoogleJwtRoots::initializeCall {
             owner_: deployer,
             notary_: notary_proxy,
         },
@@ -157,7 +155,7 @@ async fn deploys_the_identity_stack_behind_proxies() {
 
     // The root list points at the Notary Service, quotes its fee, and starts
     // empty — so it wants a rotation before any Google name can bind.
-    let roots = IdentityJwksRoots::new(roots_proxy, &provider);
+    let roots = GoogleJwtRoots::new(roots_proxy, &provider);
     assert_eq!(roots.notaryService().call().await.unwrap(), notary_proxy);
     assert_eq!(roots.quoteRotation().call().await.unwrap(), fee);
     assert!(roots.needsRotation().call().await.unwrap());

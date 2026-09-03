@@ -7,8 +7,9 @@ import {INotaryService} from "./INotaryService.sol";
 import {IPlatformVerifier} from "./IPlatformVerifier.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "./PlatformVerifierBase.sol";
 
-/// @dev Where the deployment keeps the Google signing keys it trusts.
-interface IJwksRoots {
+/// @dev Where the deployment keeps the Google signing keys it trusts:
+///      `GoogleJwtRoots`, kept beside this verifier.
+interface IGoogleJwtRoots {
     function trustedHashExpiresAt(bytes32 modulusHash) external view returns (uint256);
 }
 
@@ -84,7 +85,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
 
     /// @custom:storage-location erc7201:libid.storage.GooglePlatformVerifier
     struct GoogleStorage {
-        IJwksRoots jwksRoots;
+        IGoogleJwtRoots jwtRoots;
     }
 
     // keccak256(abi.encode(uint256(keccak256("libid.storage.GooglePlatformVerifier")) - 1)) & ~bytes32(uint256(0xff))
@@ -96,7 +97,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         }
     }
 
-    event JwksRootsChanged(address roots);
+    event JwtRootsChanged(address roots);
 
     error WrongPublicInputCount(uint256 expected, uint256 provided);
     error DigestMismatch(bytes32 proved, bytes32 recomputed);
@@ -130,7 +131,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         IHonkVerifier honkVerifier_,
         bytes32 honkVerifierCodehash_,
         uint64 futureObservationAllowance_,
-        IJwksRoots jwksRoots_
+        IGoogleJwtRoots jwtRoots_
     ) external initializer {
         // No attestation, so no lifetime and no attestation skew: the signed
         // `exp` is the whole validity ceiling. The allowance is real though --
@@ -140,23 +141,23 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         __PlatformVerifierBase_init(
             owner_, notary_, honkVerifier_, honkVerifierCodehash_, 0, 0, futureObservationAllowance_
         );
-        _setJwksRoots(jwksRoots_);
+        _setJwtRoots(jwtRoots_);
     }
 
-    function jwksRoots() external view returns (address) {
-        return address(_g().jwksRoots);
+    function jwtRoots() external view returns (address) {
+        return address(_g().jwtRoots);
     }
 
     /// @dev Google rotates signing keys weekly, and every ceremony fails closed
     ///      while an active modulus is untrusted (REQ-PLAT-24).
-    function setJwksRoots(IJwksRoots roots) external onlyOwner {
-        _setJwksRoots(roots);
+    function setJwtRoots(IGoogleJwtRoots roots) external onlyOwner {
+        _setJwtRoots(roots);
     }
 
-    function _setJwksRoots(IJwksRoots roots) private {
+    function _setJwtRoots(IGoogleJwtRoots roots) private {
         if (address(roots) == address(0)) revert ZeroAddress();
-        _g().jwksRoots = roots;
-        emit JwksRootsChanged(address(roots));
+        _g().jwtRoots = roots;
+        emit JwtRootsChanged(address(roots));
     }
 
     function _platform() internal pure override returns (bytes32) {
@@ -314,7 +315,7 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
             }
         }
         bytes32 modulusHash = keccak256(packed);
-        uint256 expiresAt = _g().jwksRoots.trustedHashExpiresAt(modulusHash);
+        uint256 expiresAt = _g().jwtRoots.trustedHashExpiresAt(modulusHash);
         if (expiresAt == 0 || block.timestamp >= expiresAt) revert UntrustedModulus(modulusHash);
     }
 }

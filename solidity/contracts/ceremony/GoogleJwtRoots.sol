@@ -5,15 +5,16 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
-import {CeremonyAttestation} from "../ceremony/CeremonyAttestation.sol";
-import {INotaryService} from "../ceremony/INotaryService.sol";
+import {CeremonyAttestation} from "./CeremonyAttestation.sol";
+import {INotaryService} from "./INotaryService.sol";
 
-/// @title IdentityJwksRoots - which Google signing keys the naming system
-///        trusts, and until when.
+/// @title GoogleJwtRoots - the signing keys the `google/v1` profile trusts,
+///        and until when.
 ///
 /// @notice Google rotates the keys it signs id_tokens with. This contract is
-///         where the naming system learns the current ones, from a notarized
-///         reading of Google's published JWKS.
+///         where the Google Platform Verifier learns the current ones, from a
+///         notarized reading of Google's published JWKS: a JWT verifies only
+///         while the modulus that signed it is listed here and unexpired.
 ///
 /// @dev The reading is an ordinary notarized session -- the section 9.1
 ///      record every Platform Verifier consumes, authenticated by the same
@@ -49,11 +50,11 @@ import {INotaryService} from "../ceremony/INotaryService.sol";
 ///      stamp, verifiers check the stamp at use-site, and an expired key stops
 ///      being trusted with no transaction from anyone. The owner's only lever
 ///      over the key list is `untrustModulus`, which can only REMOVE trust.
-contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
+contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable {
     // ─── State ──────────────────────────────────────────────────────
 
-    /// @custom:storage-location erc7201:libid.storage.IdentityJwksRoots
-    struct IdentityJwksRootsStorage {
+    /// @custom:storage-location erc7201:libid.storage.GoogleJwtRoots
+    struct GoogleJwtRootsStorage {
         /// Authenticates a reading and charges for it.
         INotaryService notary;
         /// kid keccak -> the limb-keccak the circuit produces.
@@ -80,13 +81,13 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         uint256 freshestObservedAt;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("libid.storage.IdentityJwksRoots")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant IDENTITY_JWKS_ROOTS_STORAGE =
-        0x1aceb787a5cb65251c62e0afbe6fbce480e0d1c9636ff7b90cdca2969527ef00;
+    // keccak256(abi.encode(uint256(keccak256("libid.storage.GoogleJwtRoots")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant GOOGLE_JWT_ROOTS_STORAGE =
+        0x7f78ff13201a03086d4b08e3085224c34a9fc247d0f67d11acd0db52976eb300;
 
-    function _s() private pure returns (IdentityJwksRootsStorage storage $) {
+    function _s() private pure returns (GoogleJwtRootsStorage storage $) {
         assembly {
-            $.slot := IDENTITY_JWKS_ROOTS_STORAGE
+            $.slot := GOOGLE_JWT_ROOTS_STORAGE
         }
     }
 
@@ -252,7 +253,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     /// @param attestedData The exact bytes of ceremony-common section 9.1.
     /// @param proof        The notary's authentication of them, opaque here.
     function rotate(bytes calldata attestedData, bytes calldata proof) external payable {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
 
         // Exact value, so there is no refund path to get wrong and no value
         // can be captured in transit.
@@ -348,7 +349,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     ///         included until someone prunes. One call tells a keeper the whole
     ///         state of the list.
     function currentRoots() external view returns (RootInfo[] memory infos) {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
         uint256 n = $.trackedKids.length;
         infos = new RootInfo[](n);
         for (uint256 i = 0; i < n; ++i) {
@@ -366,7 +367,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     ///         the single bit a keeper polls to decide whether to fetch a fresh
     ///         reading. True from deployment until the first rotation lands.
     function needsRotation() external view returns (bool) {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
         uint256 horizon = block.timestamp + RENEWAL_MARGIN;
         uint256 n = $.trackedKids.length;
         for (uint256 i = 0; i < n; ++i) {
@@ -659,7 +660,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     }
 
     function _processClaim(bytes memory kid, bytes32 modulusHash, uint256 expiry, uint256 provenAt) private {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
         bytes32 kidHash = keccak256(kid);
         // Ignore a claim proved no later than the one already applied -- the
         // monotonic rule that makes replay harmless. Rotation is open and a
@@ -674,7 +675,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
         // re-stamps nothing and emits nothing, and a second reading dated the
         // same second cannot swap the kid's key and retire the one Google
         // still signs with. That is the rule for equal evidence everywhere in
-        // the naming system (REQ-COMMON-25A).
+        // the protocol (REQ-COMMON-25A).
         if (provenAt <= $.rotatedAtKid[kidHash]) return;
         bytes32 previous = $.modulusOfKid[kidHash];
         $.rotatedAtKid[kidHash] = provenAt;
@@ -707,7 +708,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     /// cannot invent one), and the set is capped -- when full, expired entries
     /// are pruned to make room, and only a set full of LIVE keys refuses.
     function _trackKid(bytes32 kidHash) private {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
         if ($.trackedKidIndex[kidHash] != 0) return;
         if ($.trackedKids.length >= MAX_TRACKED_KIDS) {
             _pruneExpired();
@@ -721,7 +722,7 @@ contract IdentityJwksRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgrad
     /// the monotonic floor that keeps a replayed old reading from resurrecting
     /// the entry the prune just removed.
     function _pruneExpired() private {
-        IdentityJwksRootsStorage storage $ = _s();
+        GoogleJwtRootsStorage storage $ = _s();
         uint256 i = $.trackedKids.length;
         while (i > 0) {
             i--;

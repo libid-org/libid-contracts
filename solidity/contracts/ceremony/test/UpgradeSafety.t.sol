@@ -10,13 +10,13 @@ import {CeremonyProofVerifier} from "../CeremonyProofVerifier.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {XPlatformVerifier} from "../XPlatformVerifier.sol";
 import {GitHubPlatformVerifier} from "../GitHubPlatformVerifier.sol";
-import {GooglePlatformVerifier, IJwksRoots} from "../GooglePlatformVerifier.sol";
+import {GooglePlatformVerifier, IGoogleJwtRoots} from "../GooglePlatformVerifier.sol";
 import {INotaryService} from "../INotaryService.sol";
 import {IHonkVerifier} from "../PlatformVerifierBase.sol";
 import {IPlatformVerifier} from "../IPlatformVerifier.sol";
 import {IProofVerifier} from "../IProofVerifier.sol";
 import {IdentityNames} from "../../identity/IdentityNames.sol";
-import {IdentityJwksRoots} from "../../identity/IdentityJwksRoots.sol";
+import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 import {HandleVectors} from "../../identity/HandleVectors.sol";
 import {HandleNormalizer} from "../../identity/HandleNormalizer.sol";
 import {IdentityNodes} from "../../identity/IdentityNodes.sol";
@@ -29,7 +29,7 @@ contract RHonk is IHonkVerifier {
     }
 }
 
-contract RRoots is IJwksRoots {
+contract RRoots is IGoogleJwtRoots {
     function trustedHashExpiresAt(bytes32) external pure returns (uint256) {
         return 0;
     }
@@ -67,7 +67,7 @@ contract UpgradeSafetyTest is Test {
         );
         assertEq(_slot("libid.storage.IdentityNames"), NAMES_ROOT);
         assertEq(
-            _slot("libid.storage.IdentityJwksRoots"), 0x1aceb787a5cb65251c62e0afbe6fbce480e0d1c9636ff7b90cdca2969527ef00
+            _slot("libid.storage.GoogleJwtRoots"), 0x7f78ff13201a03086d4b08e3085224c34a9fc247d0f67d11acd0db52976eb300
         );
     }
 
@@ -234,7 +234,7 @@ contract UpgradeSafetyTest is Test {
         vm.prank(OWNER);
         v.upgradeToAndCall(address(impl2), "");
         assertEq(_implOf(address(v)), address(impl2));
-        assertEq(v.jwksRoots(), address(roots));
+        assertEq(v.jwtRoots(), address(roots));
         assertEq(v.honkVerifier(), address(honk));
         assertEq(v.notaryService(), address(0));
         (,, uint64 c) = v.protocolParameters();
@@ -242,15 +242,15 @@ contract UpgradeSafetyTest is Test {
         assertEq(v.owner(), OWNER);
     }
 
-    // ─── IdentityJwksRoots ──────────────────────────────────────────
+    // ─── GoogleJwtRoots ──────────────────────────────────────────
 
-    function test_upgrade_IdentityJwksRoots() public {
+    function test_upgrade_GoogleJwtRoots() public {
         INotaryService ns = INotaryService(address(_notaryService()));
-        IdentityJwksRoots impl = new IdentityJwksRoots();
+        GoogleJwtRoots impl = new GoogleJwtRoots();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(OWNER, ns);
-        IdentityJwksRoots r = IdentityJwksRoots(
-            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, ns))))
+        GoogleJwtRoots r = GoogleJwtRoots(
+            address(new ERC1967Proxy(address(impl), abi.encodeCall(GoogleJwtRoots.initialize, (OWNER, ns))))
         );
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         r.initialize(OWNER, ns);
@@ -272,7 +272,7 @@ contract UpgradeSafetyTest is Test {
         uint256 stamp = r.rotatedAtKid(kidHash);
         uint256 expiry = r.expiresAtKid(kidHash);
 
-        IdentityJwksRoots impl2 = new IdentityJwksRoots();
+        GoogleJwtRoots impl2 = new GoogleJwtRoots();
         _expectNotOwner();
         r.upgradeToAndCall(address(impl2), "");
         vm.prank(OWNER);

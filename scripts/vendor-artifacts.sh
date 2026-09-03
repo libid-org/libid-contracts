@@ -32,9 +32,9 @@ ARTIFACTS=(
     "NotaryService:NotaryService"
     "CeremonyProofVerifier:CeremonyProofVerifier"
     "ERC1967Proxy:ERC1967Proxy"
+    "GoogleJwtRoots:GoogleJwtRoots"
     # identity
     "IdentityNames:IdentityNames"
-    "IdentityJwksRoots:IdentityJwksRoots"
     # factory
     "LibidFactory:LibidFactory"
     "WTIA9:WTIA9"

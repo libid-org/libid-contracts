@@ -5,13 +5,13 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import {AttestationBuilder} from "../../ceremony/test/AttestationBuilder.sol";
-import {CeremonyAttestation} from "../../ceremony/CeremonyAttestation.sol";
-import {INotaryService} from "../../ceremony/INotaryService.sol";
-import {NotaryService} from "../../ceremony/NotaryService.sol";
-import {IdentityJwksRoots} from "../IdentityJwksRoots.sol";
+import {AttestationBuilder} from "./AttestationBuilder.sol";
+import {CeremonyAttestation} from "../CeremonyAttestation.sol";
+import {INotaryService} from "../INotaryService.sol";
+import {NotaryService} from "../NotaryService.sol";
+import {GoogleJwtRoots} from "../GoogleJwtRoots.sol";
 
-/// The naming system's Google trust list, fed by a notarized reading of
+/// The `google/v1` profile's trust list, fed by a notarized reading of
 /// Google's JWKS endpoint.
 ///
 /// The reading is an ordinary section 9.1 session: built with the same
@@ -20,8 +20,8 @@ import {IdentityJwksRoots} from "../IdentityJwksRoots.sol";
 /// real fee. Nothing here mocks the thing under test. Google's real body rides
 /// along as a fixture, so the parser is tested against the document it will
 /// read rather than a shape a test author remembered.
-contract IdentityJwksRootsTest is Test {
-    IdentityJwksRoots roots;
+contract GoogleJwtRootsTest is Test {
+    GoogleJwtRoots roots;
     NotaryService notary;
 
     address constant OWNER = address(0xA11CE);
@@ -33,7 +33,7 @@ contract IdentityJwksRootsTest is Test {
     bytes32 constant AUTHORITY = keccak256("www.googleapis.com");
 
     /// Google's real body, fetched 2026-09-03: pretty-printed, two keys.
-    string constant GOOGLE_JWKS = "contracts/identity/test/fixtures/google-jwks.json";
+    string constant GOOGLE_JWKS = "contracts/ceremony/test/fixtures/google-jwks.json";
     bytes32 constant GOOGLE_KID_1 = keccak256("943a3a5d7d919625a454e489b75c29adab57acba");
     bytes32 constant GOOGLE_KID_2 = keccak256("f10f87405a979c1df36df26606734f33cd85c271");
 
@@ -68,10 +68,10 @@ contract IdentityJwksRootsTest is Test {
         vm.deal(keeper, 1 ether);
     }
 
-    function _deployRoots(INotaryService service) private returns (IdentityJwksRoots) {
-        IdentityJwksRoots impl = new IdentityJwksRoots();
-        return IdentityJwksRoots(
-            address(new ERC1967Proxy(address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, service))))
+    function _deployRoots(INotaryService service) private returns (GoogleJwtRoots) {
+        GoogleJwtRoots impl = new GoogleJwtRoots();
+        return GoogleJwtRoots(
+            address(new ERC1967Proxy(address(impl), abi.encodeCall(GoogleJwtRoots.initialize, (OWNER, service))))
         );
     }
 
@@ -392,7 +392,7 @@ contract IdentityJwksRootsTest is Test {
 
         vm.warp(block.timestamp + 1 minutes);
         vm.expectEmit(true, false, false, true);
-        emit IdentityJwksRoots.ModulusUntrusted(first);
+        emit GoogleJwtRoots.ModulusUntrusted(first);
         bytes32 second = _installKid("kid-1", "modulus-two");
 
         assertGt(roots.trustedHashExpiresAt(second), 0, "second key trusted");
@@ -407,7 +407,7 @@ contract IdentityJwksRootsTest is Test {
 
         vm.prank(OWNER);
         vm.expectEmit(true, false, false, true);
-        emit IdentityJwksRoots.ModulusUntrusted(modulusHash);
+        emit GoogleJwtRoots.ModulusUntrusted(modulusHash);
         roots.untrustModulus(modulusHash);
 
         assertEq(roots.trustedHashExpiresAt(modulusHash), 0, "no longer trusted");
@@ -433,7 +433,7 @@ contract IdentityJwksRootsTest is Test {
         vm.warp(expiry); // the stamp is spent; use-site checks already refuse it
 
         vm.expectEmit(true, false, false, true);
-        emit IdentityJwksRoots.RootPruned(kidHash, modulusHash);
+        emit GoogleJwtRoots.RootPruned(kidHash, modulusHash);
         vm.prank(keeper);
         roots.prune();
 
@@ -468,7 +468,7 @@ contract IdentityJwksRootsTest is Test {
         assertEq(roots.currentRoots().length, max, "set should sit at the cap");
 
         // A brand-new kid while every slot holds a live key: refused.
-        _refuses(_reading(_oneKey("kid-overflow", "overflow")), IdentityJwksRoots.TooManyKids.selector);
+        _refuses(_reading(_oneKey("kid-overflow", "overflow")), GoogleJwtRoots.TooManyKids.selector);
 
         // Once the old stamps are spent, the same insert prunes its own room.
         vm.warp(block.timestamp + roots.DEFAULT_MODULUS_TTL() + 1);
@@ -485,7 +485,7 @@ contract IdentityJwksRootsTest is Test {
         uint64 provenAt = _now() - 5 minutes;
         _rotate(_readingAt(_manyKeys(3), provenAt));
 
-        IdentityJwksRoots.RootInfo[] memory infos = roots.currentRoots();
+        GoogleJwtRoots.RootInfo[] memory infos = roots.currentRoots();
         assertEq(infos.length, 3, "every key should be listed");
         for (uint256 i = 0; i < infos.length; ++i) {
             assertEq(infos[i].kidHash, keccak256(bytes(string.concat("kid-", vm.toString(i)))));
@@ -551,7 +551,7 @@ contract IdentityJwksRootsTest is Test {
 
         vm.prank(OWNER);
         vm.expectEmit(false, false, false, true);
-        emit IdentityJwksRoots.NotaryServiceChanged(address(other));
+        emit GoogleJwtRoots.NotaryServiceChanged(address(other));
         roots.setNotaryService(INotaryService(address(other)));
 
         assertEq(roots.notaryService(), address(other));
@@ -577,18 +577,16 @@ contract IdentityJwksRootsTest is Test {
 
     function test_aZeroNotaryServiceIsRefused() public {
         vm.prank(OWNER);
-        vm.expectRevert(IdentityJwksRoots.ZeroAddress.selector);
+        vm.expectRevert(GoogleJwtRoots.ZeroAddress.selector);
         roots.setNotaryService(INotaryService(address(0)));
 
-        IdentityJwksRoots impl = new IdentityJwksRoots();
-        vm.expectRevert(IdentityJwksRoots.ZeroAddress.selector);
-        new ERC1967Proxy(
-            address(impl), abi.encodeCall(IdentityJwksRoots.initialize, (OWNER, INotaryService(address(0))))
-        );
+        GoogleJwtRoots impl = new GoogleJwtRoots();
+        vm.expectRevert(GoogleJwtRoots.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), abi.encodeCall(GoogleJwtRoots.initialize, (OWNER, INotaryService(address(0)))));
     }
 
     /// Renouncing would freeze the list while Google's keys keep expiring, so
-    /// the naming system would stop accepting Google proofs with no way back.
+    /// the Google verifier would stop accepting proofs with no way back.
     function test_renouncingIsDisabled() public {
         vm.prank(OWNER);
         vm.expectRevert(bytes("renounce disabled"));
@@ -603,13 +601,13 @@ contract IdentityJwksRootsTest is Test {
         bytes memory attested = _reading(_oneKey("kid-1", "one"));
         bytes memory sig = _sign(attested);
 
-        vm.expectRevert(abi.encodeWithSelector(IdentityJwksRoots.WrongValue.selector, FEE, FEE - 1));
+        vm.expectRevert(abi.encodeWithSelector(GoogleJwtRoots.WrongValue.selector, FEE, FEE - 1));
         roots.rotate{value: FEE - 1}(attested, sig);
 
-        vm.expectRevert(abi.encodeWithSelector(IdentityJwksRoots.WrongValue.selector, FEE, FEE + 1));
+        vm.expectRevert(abi.encodeWithSelector(GoogleJwtRoots.WrongValue.selector, FEE, FEE + 1));
         roots.rotate{value: FEE + 1}(attested, sig);
 
-        vm.expectRevert(abi.encodeWithSelector(IdentityJwksRoots.WrongValue.selector, FEE, 0));
+        vm.expectRevert(abi.encodeWithSelector(GoogleJwtRoots.WrongValue.selector, FEE, 0));
         roots.rotate(attested, sig);
     }
 
@@ -660,12 +658,12 @@ contract IdentityJwksRootsTest is Test {
         bytes32 other = keccak256("storage.googleapis.com");
         bytes memory attested =
             AttestationBuilder.encode(other, _now(), _whole(REQUEST), _whole(_contentLength(_oneKey("kid-1", "one"))));
-        _refuses(attested, abi.encodeWithSelector(IdentityJwksRoots.WrongAuthority.selector, AUTHORITY, other));
+        _refuses(attested, abi.encodeWithSelector(GoogleJwtRoots.WrongAuthority.selector, AUTHORITY, other));
     }
 
     function test_refusesAReadingFromTheFuture() public {
         uint64 ahead = _now() + uint64(roots.CLOCK_SKEW_GRACE()) + 1;
-        _refuses(_readingAt(_oneKey("kid-1", "one"), ahead), IdentityJwksRoots.FutureProof.selector);
+        _refuses(_readingAt(_oneKey("kid-1", "one"), ahead), GoogleJwtRoots.FutureProof.selector);
         // And accepts one exactly at the grace, which is the boundary.
         _rotate(_readingAt(_oneKey("kid-1", "one"), ahead - 1));
     }
@@ -676,7 +674,7 @@ contract IdentityJwksRootsTest is Test {
         uint64 provenAt = _now();
         bytes memory attested = _readingAt(_oneKey("kid-1", "one"), provenAt);
         vm.warp(provenAt + roots.FRESHNESS_WINDOW() + 1);
-        _refuses(attested, IdentityJwksRoots.StaleProof.selector);
+        _refuses(attested, GoogleJwtRoots.StaleProof.selector);
     }
 
     /// Both directions must tile the signed length. A gap is where a prover
@@ -718,7 +716,7 @@ contract IdentityJwksRootsTest is Test {
         });
         bytes memory attested =
             AttestationBuilder.encode(AUTHORITY, _now(), sent, _whole(_contentLength(_oneKey("kid-1", "one"))));
-        _refuses(attested, IdentityJwksRoots.HiddenBytes.selector);
+        _refuses(attested, GoogleJwtRoots.HiddenBytes.selector);
     }
 
     function test_refusesAHiddenByteInTheResponse() public {
@@ -732,7 +730,7 @@ contract IdentityJwksRootsTest is Test {
             length: len + 4
         });
         bytes memory attested = AttestationBuilder.encode(AUTHORITY, _now(), _whole(REQUEST), received);
-        _refuses(attested, IdentityJwksRoots.HiddenBytes.selector);
+        _refuses(attested, GoogleJwtRoots.HiddenBytes.selector);
     }
 
     /// An empty direction passes coverage against a zero signed length; it is
@@ -740,12 +738,12 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesAnEmptyRequest() public {
         bytes memory attested =
             AttestationBuilder.encode(AUTHORITY, _now(), _empty(), _whole(_contentLength(_oneKey("kid-1", "one"))));
-        _refuses(attested, abi.encodeWithSelector(IdentityJwksRoots.RequestLineNotAtOrigin.selector, type(uint32).max));
+        _refuses(attested, abi.encodeWithSelector(GoogleJwtRoots.RequestLineNotAtOrigin.selector, type(uint32).max));
     }
 
     function test_refusesAnEmptyResponse() public {
         bytes memory attested = AttestationBuilder.encode(AUTHORITY, _now(), _whole(REQUEST), _empty());
-        _refuses(attested, abi.encodeWithSelector(IdentityJwksRoots.RequestLineNotAtOrigin.selector, type(uint32).max));
+        _refuses(attested, abi.encodeWithSelector(GoogleJwtRoots.RequestLineNotAtOrigin.selector, type(uint32).max));
     }
 
     // ─── What it refuses: the request ───────────────────────────────
@@ -757,14 +755,14 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesAPostRequestLine() public {
         bytes memory request =
             abi.encodePacked("POST /oauth2/v3/certs HTTP/1.1\r\n", _slice(REQUEST, 31, REQUEST.length));
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongRequestLine.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongRequestLine.selector);
     }
 
     /// The path separates the key set from everything else the host serves.
     function test_refusesAnotherPath() public {
         bytes memory request =
             abi.encodePacked("GET /oauth2/v3/certs2 HTTP/1.1\r\n", _slice(REQUEST, 31, REQUEST.length));
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongRequestLine.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongRequestLine.selector);
     }
 
     /// Only the origin-form line, like every other verifier.
@@ -772,7 +770,7 @@ contract IdentityJwksRootsTest is Test {
         bytes memory request = abi.encodePacked(
             "GET https://www.googleapis.com/oauth2/v3/certs HTTP/1.1\r\n", _slice(REQUEST, 31, REQUEST.length)
         );
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongRequestLine.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongRequestLine.selector);
     }
 
     /// googleapis.com answers for many hosts under one certificate. With two
@@ -784,7 +782,7 @@ contract IdentityJwksRootsTest is Test {
             "host: storage.googleapis.com\r\n",
             "connection: close\r\n\r\n"
         );
-        _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 2));
+        _refuses(_withRequest(request), abi.encodeWithSelector(GoogleJwtRoots.NotOneHostHeader.selector, 2));
     }
 
     /// Field names are case-insensitive and the colon admits whitespace, so
@@ -796,7 +794,7 @@ contract IdentityJwksRootsTest is Test {
             "HOST\t : storage.googleapis.com\r\n",
             "connection: close\r\n\r\n"
         );
-        _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 2));
+        _refuses(_withRequest(request), abi.encodeWithSelector(GoogleJwtRoots.NotOneHostHeader.selector, 2));
     }
 
     /// The notary vouches for the bytes, not their HTTP shape. Google's front
@@ -841,18 +839,18 @@ contract IdentityJwksRootsTest is Test {
         bytes memory request = abi.encodePacked(
             "GET /oauth2/v3/certs HTTP/1.1\r\n", "connection: close\r\n\r\n", "host: www.googleapis.com\r\n"
         );
-        _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 0));
+        _refuses(_withRequest(request), abi.encodeWithSelector(GoogleJwtRoots.NotOneHostHeader.selector, 0));
     }
 
     /// A head that never ends has no head to count in.
     function test_refusesARequestWhoseHeadNeverEnds() public {
         bytes memory request = "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.com\r\n";
-        _refuses(_withRequest(request), IdentityJwksRoots.NoHeadBoundary.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.NoHeadBoundary.selector);
     }
 
     function test_refusesARequestWithoutAHostHeader() public {
         bytes memory request = "GET /oauth2/v3/certs HTTP/1.1\r\nconnection: close\r\n\r\n";
-        _refuses(_withRequest(request), abi.encodeWithSelector(IdentityJwksRoots.NotOneHostHeader.selector, 0));
+        _refuses(_withRequest(request), abi.encodeWithSelector(GoogleJwtRoots.NotOneHostHeader.selector, 0));
     }
 
     /// The TLS authority is the certificate's name; the `Host` header is
@@ -860,7 +858,7 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesAnotherGoogleHost() public {
         bytes memory request =
             "GET /oauth2/v3/certs HTTP/1.1\r\nhost: storage.googleapis.com\r\nconnection: close\r\n\r\n";
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongHost.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongHost.selector);
     }
 
     /// A host that is a prefix of the right one, or the right one followed by
@@ -868,9 +866,9 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesAHostThatMerelyContainsTheRightOne() public {
         bytes memory request =
             "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.com.evil\r\nconnection: close\r\n\r\n";
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongHost.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongHost.selector);
         request = "GET /oauth2/v3/certs HTTP/1.1\r\nhost: www.googleapis.co\r\nconnection: close\r\n\r\n";
-        _refuses(_withRequest(request), IdentityJwksRoots.WrongHost.selector);
+        _refuses(_withRequest(request), GoogleJwtRoots.WrongHost.selector);
     }
 
     // ─── What it refuses: the response ──────────────────────────────
@@ -884,12 +882,12 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesARedirect() public {
         bytes memory response =
             abi.encodePacked("HTTP/1.1 302 Found\r\nlocation: /elsewhere\r\ncontent-length: 0\r\n\r\n");
-        _refuses(_withResponse(response), IdentityJwksRoots.WrongStatusLine.selector);
+        _refuses(_withResponse(response), GoogleJwtRoots.WrongStatusLine.selector);
     }
 
     function test_refusesAResponseWithoutAHeadBoundary() public {
         bytes memory response = abi.encodePacked(STATUS_OK, CONTENT_TYPE, "content-length: 2\r\n", "{}");
-        _refuses(_withResponse(response), IdentityJwksRoots.NoHeadBoundary.selector);
+        _refuses(_withResponse(response), GoogleJwtRoots.NoHeadBoundary.selector);
     }
 
     /// Every deviation from strict chunked framing is one error: a size that
@@ -903,41 +901,38 @@ contract IdentityJwksRootsTest is Test {
         // A size that is not hex.
         _refuses(
             _withResponse(abi.encodePacked(head, "zz\r\n", body, "\r\n0\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // A chunk extension.
         _refuses(
             _withResponse(abi.encodePacked(head, _hex(body.length), ";ext=1\r\n", body, "\r\n0\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // No terminating zero chunk.
-        _refuses(
-            _withResponse(abi.encodePacked(head, sizeLine, body, "\r\n")), IdentityJwksRoots.BadChunkFraming.selector
-        );
+        _refuses(_withResponse(abi.encodePacked(head, sizeLine, body, "\r\n")), GoogleJwtRoots.BadChunkFraming.selector);
         // Trailers after the zero chunk.
         _refuses(
             _withResponse(abi.encodePacked(head, sizeLine, body, "\r\n0\r\nx-trailer: 1\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // Nine hex digits.
         _refuses(
             _withResponse(abi.encodePacked(head, "000000001\r\n", body, "\r\n0\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // Chunk data not followed by CRLF.
         _refuses(
-            _withResponse(abi.encodePacked(head, sizeLine, body, "0\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            _withResponse(abi.encodePacked(head, sizeLine, body, "0\r\n\r\n")), GoogleJwtRoots.BadChunkFraming.selector
         );
         // A size past the end of the body.
         _refuses(
             _withResponse(abi.encodePacked(head, "ffff\r\n", body, "\r\n0\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // Bytes after the final CRLF.
         _refuses(
             _withResponse(abi.encodePacked(head, sizeLine, body, "\r\n0\r\n\r\n\r\n")),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
         // And the strict form of the same body is accepted.
         _rotate(_withResponse(abi.encodePacked(head, sizeLine, body, "\r\n0\r\n\r\n")));
@@ -950,14 +945,14 @@ contract IdentityJwksRootsTest is Test {
         );
         _refuses(
             _withResponse(response),
-            abi.encodeWithSelector(IdentityJwksRoots.ContentLengthMismatch.selector, body.length + 1, body.length)
+            abi.encodeWithSelector(GoogleJwtRoots.ContentLengthMismatch.selector, body.length + 1, body.length)
         );
 
         // A value that is not a decimal declares no length any body matches.
         response = abi.encodePacked(STATUS_OK, CONTENT_TYPE, "content-length: 4x\r\n\r\n", body);
         _refuses(
             _withResponse(response),
-            abi.encodeWithSelector(IdentityJwksRoots.ContentLengthMismatch.selector, 4, body.length)
+            abi.encodeWithSelector(GoogleJwtRoots.ContentLengthMismatch.selector, 4, body.length)
         );
     }
 
@@ -978,12 +973,12 @@ contract IdentityJwksRootsTest is Test {
     function test_refusesABodyWithoutKeys() public {
         _refuses(
             _withBody(abi.encodePacked('{"kyes":[', _jwk("kid-1", _modulus("one")), "]}")),
-            abi.encodeWithSelector(IdentityJwksRoots.MissingMember.selector, "keys")
+            abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "keys")
         );
         // Present, but not an array.
         _refuses(
             _withBody(abi.encodePacked('{"keys":', _jwk("kid-1", _modulus("one")), "}")),
-            abi.encodeWithSelector(IdentityJwksRoots.MissingMember.selector, "keys")
+            abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "keys")
         );
     }
 
@@ -993,45 +988,45 @@ contract IdentityJwksRootsTest is Test {
         bytes memory body = abi.encodePacked(
             '{"keys":[', _jwk("kid-1", _modulus("one")), '],"keys":[', _jwk("kid-2", _modulus("two")), "]}"
         );
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.AmbiguousMember.selector, "keys"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.AmbiguousMember.selector, "keys"));
     }
 
     function test_refusesAKeyWithoutAModulus() public {
         bytes memory body = _body('{"kty":"RSA","kid":"kid-1","e":"AQAB"}');
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.MissingMember.selector, "n"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "n"));
     }
 
     function test_refusesAKeyWithoutAKid() public {
         bytes memory body = _body(abi.encodePacked('{"kty":"RSA","n":"', _modulus("one"), '","e":"AQAB"}'));
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.MissingMember.selector, "kid"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.MissingMember.selector, "kid"));
     }
 
     /// Two `kid` members in one object: a duplicate leaves the value
     /// undefined, and different parsers pick different ones.
     function test_refusesADuplicateKidMember() public {
         bytes memory body = _body(abi.encodePacked('{"kid":"kid-1","kid":"kid-2","n":"', _modulus("one"), '"}'));
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.AmbiguousMember.selector, "kid"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.AmbiguousMember.selector, "kid"));
     }
 
     function test_refusesAnUnterminatedKid() public {
         bytes memory body = _body(abi.encodePacked('{"n":"', _modulus("one"), '","kid":"kid-1}'));
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.UnterminatedMember.selector, "kid"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.UnterminatedMember.selector, "kid"));
     }
 
     function test_refusesAnUnterminatedKeysArray() public {
         _refuses(
             _withBody(abi.encodePacked('{"keys":[', _jwk("kid-1", _modulus("one")))),
-            abi.encodeWithSelector(IdentityJwksRoots.UnterminatedMember.selector, "keys")
+            abi.encodeWithSelector(GoogleJwtRoots.UnterminatedMember.selector, "keys")
         );
         // An element that is not an object.
         _refuses(
             _withBody(abi.encodePacked('{"keys":[', _jwk("kid-1", _modulus("one")), ',"x"]}')),
-            abi.encodeWithSelector(IdentityJwksRoots.UnterminatedMember.selector, "keys")
+            abi.encodeWithSelector(GoogleJwtRoots.UnterminatedMember.selector, "keys")
         );
         // An object with no closing brace.
         _refuses(
             _withBody(abi.encodePacked('{"keys":[{"kid":"kid-1","n":"', _modulus("one"), '"')),
-            abi.encodeWithSelector(IdentityJwksRoots.UnterminatedMember.selector, "keys")
+            abi.encodeWithSelector(GoogleJwtRoots.UnterminatedMember.selector, "keys")
         );
     }
 
@@ -1040,27 +1035,27 @@ contract IdentityJwksRootsTest is Test {
     /// carry.
     function test_refusesAnEscapedValue() public {
         bytes memory body = _body(abi.encodePacked('{"kid":"kid\\"1","n":"', _modulus("one"), '"}'));
-        _refuses(_withBody(body), abi.encodeWithSelector(IdentityJwksRoots.EscapedValue.selector, "kid"));
+        _refuses(_withBody(body), abi.encodeWithSelector(GoogleJwtRoots.EscapedValue.selector, "kid"));
     }
 
     function test_refusesANestedObject() public {
         bytes memory body = _body(abi.encodePacked('{"kid":"kid-1","x5c":["MIIC"],"n":"', _modulus("one"), '"}'));
-        _refuses(_withBody(body), IdentityJwksRoots.UnexpectedNesting.selector);
+        _refuses(_withBody(body), GoogleJwtRoots.UnexpectedNesting.selector);
         body = _body(abi.encodePacked('{"kid":"kid-1","inner":{},"n":"', _modulus("one"), '"}'));
-        _refuses(_withBody(body), IdentityJwksRoots.UnexpectedNesting.selector);
+        _refuses(_withBody(body), GoogleJwtRoots.UnexpectedNesting.selector);
     }
 
     /// The cap on tracked kids is also the cap on keys in one reading.
     function test_refusesSeventeenKeys() public {
-        _refuses(_withBody(_manyKeys(17)), IdentityJwksRoots.TooManyKids.selector);
+        _refuses(_withBody(_manyKeys(17)), GoogleJwtRoots.TooManyKids.selector);
     }
 
     function test_refusesTrailingBytes() public {
         bytes memory body = _oneKey("kid-1", "one");
-        _refuses(_withBody(abi.encodePacked(body, "x")), IdentityJwksRoots.TrailingBytes.selector);
-        _refuses(_withBody(abi.encodePacked(body, "{}")), IdentityJwksRoots.TrailingBytes.selector);
+        _refuses(_withBody(abi.encodePacked(body, "x")), GoogleJwtRoots.TrailingBytes.selector);
+        _refuses(_withBody(abi.encodePacked(body, "{}")), GoogleJwtRoots.TrailingBytes.selector);
         // No closing brace at all.
-        _refuses(_withBody(_slice(body, 0, body.length - 1)), IdentityJwksRoots.TrailingBytes.selector);
+        _refuses(_withBody(_slice(body, 0, body.length - 1)), GoogleJwtRoots.TrailingBytes.selector);
         // But whitespace after it is what Google sends.
         _rotate(_withBody(abi.encodePacked(body, "\n")));
     }
@@ -1068,24 +1063,24 @@ contract IdentityJwksRootsTest is Test {
     /// The circuit takes a 2048-bit modulus and nothing else.
     function test_refusesAShortModulus() public {
         bytes memory body = _body(_jwk("kid-1", string(_b64url(_bytes("short", 255)))));
-        _refuses(_withBody(body), IdentityJwksRoots.InvalidModulusLength.selector);
+        _refuses(_withBody(body), GoogleJwtRoots.InvalidModulusLength.selector);
     }
 
     function test_refusesANonBase64urlCharacter() public {
         bytes memory body = _body(_jwk("kid-1", "AAA+"));
-        _refuses(_withBody(body), IdentityJwksRoots.InvalidB64Char.selector);
+        _refuses(_withBody(body), GoogleJwtRoots.InvalidB64Char.selector);
     }
 
     function test_refusesAnImpossibleBase64Length() public {
         bytes memory body = _body(_jwk("kid-1", "AAAAA"));
-        _refuses(_withBody(body), IdentityJwksRoots.InvalidB64Length.selector);
+        _refuses(_withBody(body), GoogleJwtRoots.InvalidB64Length.selector);
     }
 
     /// A reading with no keys says nothing about what Google publishes. It
     /// would pay the fee, move `freshestObservedAt` and emit nothing.
     function test_refusesAnEmptyKeySet() public {
-        _refuses(_withBody('{"keys":[]}'), IdentityJwksRoots.EmptyKeySet.selector);
-        _refuses(_withBody('{"keys": [ ]}'), IdentityJwksRoots.EmptyKeySet.selector);
+        _refuses(_withBody('{"keys":[]}'), GoogleJwtRoots.EmptyKeySet.selector);
+        _refuses(_withBody('{"keys": [ ]}'), GoogleJwtRoots.EmptyKeySet.selector);
     }
 
     /// Two readings dated the same second cannot disagree about a kid: the
@@ -1114,7 +1109,7 @@ contract IdentityJwksRootsTest is Test {
         bytes memory length = abi.encodePacked("content-length: ", vm.toString(body.length), "\r\n");
         _refuses(
             _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, length, length, "\r\n", body)),
-            abi.encodeWithSelector(IdentityJwksRoots.DuplicateFramingHeader.selector, "content-length", 2)
+            abi.encodeWithSelector(GoogleJwtRoots.DuplicateFramingHeader.selector, "content-length", 2)
         );
         bytes memory chunked = "transfer-encoding: chunked\r\n";
         _refuses(
@@ -1123,16 +1118,16 @@ contract IdentityJwksRootsTest is Test {
                     STATUS_OK, CONTENT_TYPE, chunked, "Transfer-Encoding: identity\r\n", "\r\n", _chunks(body, 64)
                 )
             ),
-            abi.encodeWithSelector(IdentityJwksRoots.DuplicateFramingHeader.selector, "transfer-encoding", 2)
+            abi.encodeWithSelector(GoogleJwtRoots.DuplicateFramingHeader.selector, "transfer-encoding", 2)
         );
         _refuses(
             _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, chunked, length, "\r\n", _chunks(body, 64))),
-            IdentityJwksRoots.ConflictingFraming.selector
+            GoogleJwtRoots.ConflictingFraming.selector
         );
         // A coding other than chunked frames a body this contract cannot locate.
         _refuses(
             _withResponse(abi.encodePacked(STATUS_OK, CONTENT_TYPE, "transfer-encoding: gzip\r\n", "\r\n", body)),
-            IdentityJwksRoots.BadChunkFraming.selector
+            GoogleJwtRoots.BadChunkFraming.selector
         );
     }
 

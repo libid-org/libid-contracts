@@ -22,7 +22,7 @@ pnpm add @libid/contracts viem
 
 ```ts
 import { createPublicClient, http } from 'viem'
-import { identityJwksRootsAbi, identityNamesAbi } from '@libid/contracts/abis'
+import { googleJwtRootsAbi, identityNamesAbi } from '@libid/contracts/abis'
 
 const client = createPublicClient({ transport: http(RPC_URL) })
 
@@ -35,8 +35,8 @@ const owner = await client.readContract({
 })
 
 const roots = await client.readContract({
-  address: IDENTITY_JWKS_ROOTS,
-  abi: identityJwksRootsAbi,
+  address: GOOGLE_JWT_ROOTS,
+  abi: googleJwtRootsAbi,
   functionName: 'currentRoots',
 })
 ```
@@ -63,7 +63,7 @@ before their arguments and set it on the returned call:
 
 ```ts
 // A JWKS rotation pays the Notary Fee: read it with `quoteRotation` first.
-const rotate = calls.identityJwksRoots.rotate(roots, fee, attestedData, proof)
+const rotate = calls.googleJwtRoots.rotate(roots, fee, attestedData, proof)
 // { to: `0x…`, value: fee, data: `0x…` }
 ```
 

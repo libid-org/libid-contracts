@@ -2,9 +2,9 @@
 
 Typed [alloy](https://github.com/alloy-rs/alloy) bindings, embedded forge
 artifacts, and deploy/upgrade helpers for the libid identity stack: the
-ceremony verification path (`NotaryService`, `CeremonyProofVerifier`), the
-naming system (`IdentityNames`) with its Google JWKS trust list
-(`IdentityJwksRoots`), and the deterministic deployment factory
+ceremony verification path (`NotaryService`, `CeremonyProofVerifier`, and
+`GoogleJwtRoots`, the signing keys the `google/v1` verifier trusts), the
+naming system (`IdentityNames`), and the deterministic deployment factory
 (`LibidFactory`).
 
 The compiled artifacts are vendored into the crate, so a consumer can deploy
@@ -17,12 +17,12 @@ until it exists `cargo build` fails at macro expansion. Signing stays on the
 consumer's side: every helper is generic over an alloy `Provider` you have
 already wired with a wallet.
 
-## Example: deploy the Notary Service and the JWKS root list
+## Example: deploy the Notary Service and the Google JWT root list
 
 ```rust,no_run
 use alloy::{primitives::{Address, U256}, providers::ProviderBuilder};
 use libid_contracts::{
-    bindings::{ceremony::NotaryService, identity::IdentityJwksRoots},
+    bindings::ceremony::{GoogleJwtRoots, NotaryService},
     deploy::deploy_behind_proxy,
     Artifacts,
 };
@@ -51,13 +51,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    // The JWKS root list pays that fee on every rotation. It starts empty:
+    // The Google JWT root list pays that fee on every rotation. It starts empty:
     // a keeper submits a notarized reading of Google's JWKS to seed it.
     let roots = deploy_behind_proxy(
         &provider,
         &artifacts,
-        "IdentityJwksRoots",
-        &IdentityJwksRoots::initializeCall {
+        "GoogleJwtRoots",
+        &GoogleJwtRoots::initializeCall {
             owner_: owner,
             notary_: notary,
         },
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    let fee = IdentityJwksRoots::new(roots, &provider)
+    let fee = GoogleJwtRoots::new(roots, &provider)
         .quoteRotation()
         .call()
         .await?;
