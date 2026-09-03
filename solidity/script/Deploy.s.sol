@@ -111,7 +111,7 @@ contract Deploy is Script {
         // Nothing is trusted until a notarized reading of Google's JWKS lands.
         // Until then every Google claim reverts `UntrustedModulus`, which reads
         // as a bad proof rather than an unseeded list.
-        console.log("NOTE: point a JWKS rotation listener at GOOGLE_JWT_ROOTS_ADDRESS");
+        console.log("NOTE: point the keeper at GOOGLE_JWT_ROOTS_ADDRESS");
         console.log("      before Google names work. The trust list starts empty.");
     }
 

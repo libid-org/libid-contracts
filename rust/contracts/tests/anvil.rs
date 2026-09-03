@@ -368,11 +368,15 @@ async fn bootstraps_the_deterministic_factory_and_deploys_through_it() {
     creation_code
         .extend_from_slice(&(notary_impl, Bytes::from(init_data)).abi_encode_params());
 
-    let predicted = predict_address(factory, "libid.notary");
-    let deployed =
-        factory_deploy(&provider, factory, "libid.notary", creation_code.into())
-            .await
-            .unwrap();
+    let predicted = predict_address(factory, "libid.NotaryService");
+    let deployed = factory_deploy(
+        &provider,
+        factory,
+        "libid.NotaryService",
+        creation_code.into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(deployed, predicted);
 
     let notary = NotaryService::new(deployed, &provider);

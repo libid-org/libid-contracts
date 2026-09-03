@@ -1,8 +1,8 @@
 # @libid/contracts
 
 Typed, viem-ready ABIs for every libid contract, a call builder for every
-state-changing function, and the identity helper layer: handle normalization,
-proof encoding for `bind`, and name resolution.
+state-changing function, and the identity helper layer: handle normalization
+and name resolution.
 
 Both `src/abis/` and `src/calls/` are generated from the forge artifacts
 (`solidity/out`) by `scripts/codegen.mjs`, and neither is committed — CI
@@ -93,17 +93,24 @@ const { wallet, idAgrees } = await resolvePair(reader, x, 'alice', '42')
 const name = await primaryName(reader, wallet!, x)
 ```
 
-## Binding a name
+## Claiming a name
 
-`bindCall` builds calldata and nothing more — an EOA sends it directly, a
-smart account wraps it in its own execute:
+A claim is one of the generated builders: the platform, this chain's verifier
+version for it, the opaque payload the ceremony produced, and whether to
+publish the name. The value is what `quoteClaim` returns for the same pair.
+An EOA sends it directly, a smart account wraps it in its own execute:
 
 ```ts
-import { bindCall, encodeGitHubProof, platformId, PLATFORM_GITHUB_DOMAIN } from '@libid/contracts/identity'
+import { calls } from '@libid/contracts/calls'
 
-const proof = encodeGitHubProof(gitHubProof) // from the notarization flow
-const call = bindCall(IDENTITY_NAMES, platformId(PLATFORM_GITHUB_DOMAIN), proof, true)
-// call = { to, data } — sign and send from the address the proof names.
+const fee = await client.readContract({
+  address: IDENTITY_NAMES,
+  abi: identityNamesAbi,
+  functionName: 'quoteClaim',
+  args: [platformId(PLATFORM_GITHUB_DOMAIN), 1],
+})
+const call = calls.identityNames.claim(IDENTITY_NAMES, fee, platformId(PLATFORM_GITHUB_DOMAIN), 1, payload, true)
+// call = { to, value, data } — sign and send from the address the payload names.
 ```
 
 ## Normalizing a handle locally

@@ -76,7 +76,8 @@ import {INotaryService} from "./INotaryService.sol";
 ///
 ///      **Why a contract of its own.** A verifier should verify. Rotation is a
 ///      separate concern with a separate caller set and a separate key list,
-///      and a second OIDC provider would want the same list.
+///      and a second OIDC provider would want a list of its own, of this
+///      shape, pinned to its own host.
 ///
 ///      **The trust model, in one line: the notary attests the reading, time
 ///      does the expiry, and nobody owns rotation.** Verifiers check the stamp

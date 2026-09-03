@@ -61,8 +61,10 @@ python3 scripts/regen-identity-handles.py          # rewrite generated outputs
 python3 scripts/regen-identity-handles.py --check  # verify nothing drifted
 ```
 
-Today this generates `solidity/contracts/identity/HandleVectors.sol`; the Rust
-and TypeScript outputs activate once those packages exist in this repo.
+This generates `solidity/contracts/identity/HandleVectors.sol`,
+`rust/identity/src/handle_vectors.rs` and
+`ts/packages/contracts/src/identity/handleVectors.ts`; CI's handle-tables job
+fails when any of them drifts from `handles.json`.
 
 ## Releasing
 
