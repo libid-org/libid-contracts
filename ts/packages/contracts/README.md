@@ -1,8 +1,9 @@
 # @libid/contracts
 
-Typed, viem-ready ABIs for every libid contract, a call builder for every
-state-changing function, and the identity helper layer: handle normalization,
-proof encoding for `bind`, and name resolution.
+Typed, viem-ready ABIs for the libid identity stack (NotaryService,
+CeremonyProofVerifier, GoogleJwtRoots, IdentityNames, LibidFactory, WTIA9), a
+call builder for every state-changing function, and the identity helper layer:
+handle normalization and name resolution.
 
 Both `src/abis/` and `src/calls/` are generated from the forge artifacts
 (`solidity/out`) by `scripts/codegen.mjs`, and neither is committed — CI
@@ -22,22 +23,23 @@ pnpm add @libid/contracts viem
 
 ```ts
 import { createPublicClient, http } from 'viem'
-import { registryAbi, bankAbi } from '@libid/contracts/abis'
+import { googleJwtRootsAbi, identityNamesAbi } from '@libid/contracts/abis'
 
 const client = createPublicClient({ transport: http(RPC_URL) })
 
 // Fully typed: viem infers the argument and return types from the ABI.
-const wallet = await client.readContract({
-  address: REGISTRY,
-  abi: registryAbi,
-  functionName: 'walletOf',
-  args: ['github', '583231'],
+const owner = await client.readContract({
+  address: IDENTITY_NAMES,
+  abi: identityNamesAbi,
+  functionName: 'resolveHandle',
+  args: [platformId, 'alice'],
 })
 
-const tokens = await client.readContract({
-  address: BANK,
-  abi: bankAbi,
-  functionName: 'getRegisteredTokens',
+// The two generations of Google's key set the list holds.
+const [current, previous] = await client.readContract({
+  address: GOOGLE_JWT_ROOTS,
+  abi: googleJwtRootsAbi,
+  functionName: 'currentKeys',
 })
 ```
 
@@ -62,8 +64,9 @@ to compile rather than reverting on chain. Payable functions take `value`
 before their arguments and set it on the returned call:
 
 ```ts
-const deposit = calls.bank.deposit(bank, 1_000n, 'x', 'alice', 'TIA', token, amount)
-// { to: `0x…`, value: 1000n, data: `0x…` }
+// A JWKS rotation pays the Notary Fee: read it with `quoteRotation` first.
+const rotate = calls.googleJwtRoots.rotate(roots, fee, attestedData, proof)
+// { to: `0x…`, value: fee, data: `0x…` }
 ```
 
 ## Resolving a name
@@ -91,17 +94,24 @@ const { wallet, idAgrees } = await resolvePair(reader, x, 'alice', '42')
 const name = await primaryName(reader, wallet!, x)
 ```
 
-## Binding a name
+## Claiming a name
 
-`bindCall` builds calldata and nothing more — an EOA sends it directly, a
-smart account wraps it in its own execute:
+A claim is one of the generated builders: the platform, this chain's verifier
+version for it, the opaque payload the ceremony produced, and whether to
+publish the name. The value is what `quoteClaim` returns for the same pair.
+An EOA sends it directly, a smart account wraps it in its own execute:
 
 ```ts
-import { bindCall, encodeGitHubProof, platformId, PLATFORM_GITHUB_DOMAIN } from '@libid/contracts/identity'
+import { calls } from '@libid/contracts/calls'
 
-const proof = encodeGitHubProof(gitHubProof) // from the notarization flow
-const call = bindCall(IDENTITY_NAMES, platformId(PLATFORM_GITHUB_DOMAIN), proof, true)
-// call = { to, data } — sign and send from the address the proof names.
+const fee = await client.readContract({
+  address: IDENTITY_NAMES,
+  abi: identityNamesAbi,
+  functionName: 'quoteClaim',
+  args: [platformId(PLATFORM_GITHUB_DOMAIN), 1],
+})
+const call = calls.identityNames.claim(IDENTITY_NAMES, fee, platformId(PLATFORM_GITHUB_DOMAIN), 1, payload, true)
+// call = { to, value, data } — sign and send from the address the payload names.
 ```
 
 ## Normalizing a handle locally

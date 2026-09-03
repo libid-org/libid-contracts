@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-import {Notary} from "../../notary/Notary.sol";
+import {NotaryService} from "../../ceremony/NotaryService.sol";
 import {Create3} from "../Create3.sol";
 import {LibidFactory} from "../LibidFactory.sol";
 import {Ping, Pong} from "./Create3.t.sol";
@@ -96,7 +96,7 @@ contract LibidFactoryTest is Test {
     }
 
     function test_predict_matchesActualForSeveralNames() public {
-        string[3] memory names = ["libid.notary", "libid.registry", "libid.bank"];
+        string[3] memory names = ["libid.NotaryService", "libid.IdentityNames", "libid.GoogleJwtRoots"];
         for (uint256 i = 0; i < names.length; i++) {
             address predicted = factory.predict(names[i]);
             vm.prank(owner);
@@ -117,28 +117,30 @@ contract LibidFactoryTest is Test {
     /// The intended use: deploy an ERC1967 PROXY through the factory
     /// (creationCode = proxy creation code ++ abi.encode(impl, initData));
     /// the proxied contract works and lives at the name's address.
-    function test_deploy_notaryProxyThroughFactory() public {
+    function test_deploy_notaryServiceProxyThroughFactory() public {
         address signer = makeAddr("notarySigner");
-        Notary notaryImpl = new Notary();
+        NotaryService notaryImpl = new NotaryService();
         bytes memory creationCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
-            abi.encode(address(notaryImpl), abi.encodeCall(Notary.initialize, (owner, signer)))
+            abi.encode(address(notaryImpl), abi.encodeCall(NotaryService.initialize, (owner, signer, 7)))
         );
 
-        address predicted = factory.predict("libid.notary");
+        address predicted = factory.predict("libid.NotaryService");
         vm.prank(owner);
-        address deployed = factory.deploy("libid.notary", creationCode);
+        address deployed = factory.deploy("libid.NotaryService", creationCode);
         assertEq(deployed, predicted);
 
-        Notary notary = Notary(deployed);
+        NotaryService notary = NotaryService(deployed);
         assertEq(notary.owner(), owner);
-        assertEq(notary.notary(), signer);
+        assertTrue(notary.isTrustedNotary(signer));
+        assertEq(notary.fee(), 7);
 
         // …and it upgrades in place like any other proxy in the stack.
-        Notary newImpl = new Notary();
+        NotaryService newImpl = new NotaryService();
         vm.prank(owner);
         notary.upgradeToAndCall(address(newImpl), "");
-        assertEq(notary.notary(), signer);
+        assertTrue(notary.isTrustedNotary(signer));
+        assertEq(notary.fee(), 7);
     }
 
     // ─── UUPS upgrade of the factory itself ─────────────────────────

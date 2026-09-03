@@ -8,8 +8,7 @@ it, then run this script. Up to three files are written and never drift apart:
     rust/identity/src/handle_vectors.rs                    # Rust constants + vectors
     ts/packages/contracts/src/identity/handleVectors.ts    # TypeScript constants + vectors
 
-The Rust package does not exist in this repo yet; an output is skipped with a
-note until its target directory appears. The normalizer
+An output is skipped with a note until its target directory appears. The normalizer
 itself is hand written in each language. Only the constants and the vectors
 come from here. That is the point: several implementations, one vector table,
 so a difference between them fails a test instead of writing a different key
@@ -34,8 +33,8 @@ SOURCE = SOLIDITY_ROOT / "contracts" / "identity" / "handles.json"
 
 SOL_OUT = SOLIDITY_ROOT / "contracts" / "identity" / "HandleVectors.sol"
 # An output is skipped (with a note) while its parent directory is absent, so
-# `--check` holds only the outputs that exist to account. The TypeScript
-# package is live; the Rust one is not in this repo yet.
+# `--check` holds only the outputs that exist to account. Both the Rust and
+# the TypeScript packages are live today.
 RUST_OUT = REPO_ROOT / "rust" / "identity" / "src" / "handle_vectors.rs"
 TS_OUT = REPO_ROOT / "ts" / "packages" / "contracts" / "src" / "identity" / "handleVectors.ts"
 
@@ -486,8 +485,7 @@ def main() -> int:
     outputs = []
     skipped = []
     outputs.append((SOL_OUT, sol_formatted(gen_sol(spec))))
-    # Emit an output only once its package directory exists. TS does; the Rust
-    # package is not in this repo yet.
+    # Emit an output only once its package directory exists (both do today).
     for path, gen in ((RUST_OUT, gen_rust), (TS_OUT, gen_ts)):
         if path.parent.exists():
             outputs.append((path, gen(spec)))

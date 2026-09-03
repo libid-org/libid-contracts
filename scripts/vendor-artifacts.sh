@@ -5,8 +5,9 @@
 # the artifact JSONs the crate needs from solidity/out into
 # rust/contracts/artifacts/<File>.sol/<Name>.json, pruned to the fields the
 # crate reads: bytecode.object, bytecode.linkReferences, methodIdentifiers.
-# Libraries referenced through linkReferences (e.g. ZKTranscriptLib for the
-# Honk verifiers) are followed transitively and vendored too.
+# Libraries referenced through linkReferences are followed transitively and
+# vendored too (none of the covered contracts links one today; the Honk
+# verifiers the ceremony circuits will bring do).
 #
 # The result is NOT committed: rust/contracts/artifacts is gitignored and
 # regenerated on demand. Run this before any cargo command in rust/ — the
@@ -27,35 +28,16 @@ DEST="$REPO_ROOT/rust/contracts/artifacts"
 # "<File>:<Contract>" — the artifact lives at out/<File>.sol/<Contract>.json.
 # Keep in sync with the covered-contract list in rust/contracts/src/artifacts.rs.
 ARTIFACTS=(
-    # login
-    "Registry:Registry"
-    "Notary:Notary"
-    "WalletFactory:WalletFactory"
-    "WebWallet:WebWallet"
+    # ceremony
+    "NotaryService:NotaryService"
+    "CeremonyProofVerifier:CeremonyProofVerifier"
     "ERC1967Proxy:ERC1967Proxy"
-    "XZkVerifier:XZkVerifier"
-    "XHonkVerifier:XHonkVerifier"
-    # oidc (the Google OIDC circuit verifier is generated into Verifier.sol
-    # under the contract name HonkVerifier)
-    "Verifier:HonkVerifier"
-    "GoogleOidcVerifier:GoogleOidcVerifier"
-    # transfer (bank diamond)
-    "Diamond:Diamond"
-    "DiamondCutFacet:DiamondCutFacet"
-    "DiamondLoupeFacet:DiamondLoupeFacet"
-    "OwnershipFacet:OwnershipFacet"
-    "AdminFacet:AdminFacet"
-    "VaultFacet:VaultFacet"
-    "TransferFacet:TransferFacet"
-    "BankInit:BankInit"
-    "IBank:IBank"
-    "MockERC20:MockERC20"
-    "WTIA9:WTIA9"
+    "GoogleJwtRoots:GoogleJwtRoots"
     # identity
     "IdentityNames:IdentityNames"
-    "IdentityJwksRoots:IdentityJwksRoots"
     # factory
     "LibidFactory:LibidFactory"
+    "WTIA9:WTIA9"
 )
 
 if [[ $# -gt 0 ]]; then

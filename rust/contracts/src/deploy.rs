@@ -226,10 +226,13 @@ pub async fn upgrade_uups<P: Provider>(
 }
 
 /// Load a contract's creation bytecode, deploying and linking any external
-/// libraries it references (the bb-generated UltraHonk verifiers link
-/// `ZKTranscriptLib`). Mirrors what `forge` does automatically. For artifacts
-/// with no `linkReferences` this behaves like [`Artifacts::bytecode_named`]
-/// and sends nothing.
+/// libraries it references. Mirrors what `forge` does automatically. For
+/// artifacts with no `linkReferences` this behaves like
+/// [`Artifacts::bytecode_named`] and sends nothing.
+///
+/// Kept although nothing covered today links a library: the bb-generated
+/// UltraHonk verifiers link `ZKTranscriptLib`, and the ones the ceremony
+/// circuits release will deploy through this path when they land.
 pub async fn load_linked_bytecode<P: Provider>(
     provider: &P,
     artifacts: &Artifacts,

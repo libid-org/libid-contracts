@@ -490,9 +490,9 @@ contract IdentityNamesTest is Test {
         names.resolveHandle(unknown, "alice");
     }
 
-    /// `bind` keeps reverting. A handle that arrives inside a proof and does
+    /// `claim` keeps reverting. A handle that arrives inside a proof and does
     /// not normalize is a broken proof, and failing loudly is right.
-    function test_bindStillRefusesAHandleThatDoesNotNormalize() public {
+    function test_claimStillRefusesAHandleThatDoesNotNormalize() public {
         _stage("123", "ali ce", alice, 100);
         vm.prank(alice);
         vm.expectRevert(HandleNormalizer.BadCharacter.selector);

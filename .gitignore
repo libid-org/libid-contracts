@@ -4,8 +4,6 @@ solidity/broadcast/
 ts/node_modules/
 ts/packages/*/node_modules/
 ts/packages/*/dist/
-solidity/.circuits-check/
-circuits-release/
 
 # Generated from `forge build`, never committed. Both are packaged into their
 # published artefact (the crate embeds artifacts/ via include_dir!, the npm

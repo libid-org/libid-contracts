@@ -1,8 +1,8 @@
 /// Reading names from the chain.
 ///
-/// Everything here is a view call. Binding a name needs a proof and a wallet;
-/// reading one needs neither, which is the point — any product can resolve a
-/// name without touching the login that created it.
+/// Everything here is a view call. Claiming a name needs a ceremony payload and a
+/// wallet; reading one needs neither, which is the point — any product can
+/// resolve a name without touching the ceremony that created it.
 ///
 /// The client and the contract address are arguments rather than imports. This
 /// package ships separately from the repository it currently lives in, so it
@@ -26,7 +26,7 @@ export interface NamesReader {
 
 /// One view call.
 ///
-/// Routed through a narrow cast for the same reason the wallet package does it:
+/// Routed through a narrow cast for one reason:
 /// viem's `PublicClient`, without its chain type parameters, types
 /// `authorizationList` as required even for a read. The alternative is to
 /// spread that noise across every call site here.
