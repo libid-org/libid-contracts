@@ -44,6 +44,7 @@ contract UpgradeSafetyTest is Test {
     bytes32 constant IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     bytes32 constant REENTRANCY_SLOT = 0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
     bytes32 constant NAMES_ROOT = 0x064503501234cc9c6e116cf4a84c07475158dabb6a3dcee437a89227e23bf200;
+    bytes32 constant ROOTS_ROOT = 0x7f78ff13201a03086d4b08e3085224c34a9fc247d0f67d11acd0db52976eb300;
     bytes32 constant X = HandleVectors.PLATFORM_X;
 
     function _slot(string memory ns) internal pure returns (bytes32) {
@@ -66,9 +67,7 @@ contract UpgradeSafetyTest is Test {
             0x92a7c997eeb454ceeeb8ef2d99ba7d4b830287ff966f129f9049c466a8342400
         );
         assertEq(_slot("libid.storage.IdentityNames"), NAMES_ROOT);
-        assertEq(
-            _slot("libid.storage.GoogleJwtRoots"), 0x7f78ff13201a03086d4b08e3085224c34a9fc247d0f67d11acd0db52976eb300
-        );
+        assertEq(_slot("libid.storage.GoogleJwtRoots"), ROOTS_ROOT);
     }
 
     function _implOf(address proxy) internal view returns (address) {
@@ -281,6 +280,23 @@ contract UpgradeSafetyTest is Test {
         bytes32 older = previous.moduli[0];
         assertTrue(newer != older, "two different keys");
         uint256 lifetime = r.READING_LIFETIME();
+
+        // The layout those two generations sit in, pinned word by word.
+        // `notary` is word 0 of the namespace; a Generation is two words --
+        // its stamp, then the length word of its dynamic array, whose
+        // elements hang off keccak256(that word's slot) -- so `current` is
+        // words 1-2 and `previous` words 3-4. A field added to Generation
+        // moves `previous`, and an upgraded implementation would then read
+        // the old generation's stamp as the new field: this is where that
+        // has to fail, loudly, before any upgrade does.
+        uint256 base = uint256(ROOTS_ROOT);
+        assertEq(uint256(vm.load(address(r), bytes32(base))), uint256(uint160(address(ns))), "word 0: notary");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 1))), second, "word 1: current.observedAt");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 2))), 1, "word 2: current.moduli.length");
+        assertEq(vm.load(address(r), keccak256(abi.encode(base + 2))), newer, "current.moduli[0]");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 3))), first, "word 3: previous.observedAt");
+        assertEq(uint256(vm.load(address(r), bytes32(base + 4))), 1, "word 4: previous.moduli.length");
+        assertEq(vm.load(address(r), keccak256(abi.encode(base + 4))), older, "previous.moduli[0]");
 
         GoogleJwtRoots impl2 = new GoogleJwtRoots();
         _expectNotOwner();
