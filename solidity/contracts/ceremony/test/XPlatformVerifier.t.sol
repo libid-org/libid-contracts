@@ -15,6 +15,7 @@ import {NotaryService} from "../NotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
 import {TlsNotaryVerifierBase} from "../TlsNotaryVerifierBase.sol";
 import {XPlatformVerifier} from "../XPlatformVerifier.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract AcceptingHonk is IHonkVerifier {
     bool public answer = true;
@@ -886,5 +887,233 @@ contract XPlatformVerifierTest is Test {
         s.identitySession = ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
         vm.expectPartialRevert(PlatformVerifierBase.WrongAuthority.selector);
         this.run{value: quote}(s);
+    }
+
+    function test_rejectsTheSameSubmissionOnAnotherChain() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        vm.chainId(block.chainid + 1);
+        vm.expectRevert(TlsNotaryVerifierBase.CodeVerifierMismatch.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_refusesTheWrongCeremonyVersionBeforeAnyNotaryCall() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.ceremonyVersion = 2;
+        vm.expectCall(address(notary), abi.encodeWithSelector(INotaryService.verify.selector), 0);
+        vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongCeremonyVersion.selector, 1, 2));
+        this.run{value: quote}(s);
+        assertEq(address(notary).balance, 0);
+    }
+
+    function test_aTlsProfileRefusesAZeroNotary() public {
+        XPlatformVerifier impl = new XPlatformVerifier();
+        vm.expectPartialRevert(PlatformVerifierBase.WrongNotaryForProfile.selector);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                XPlatformVerifier.initialize,
+                (
+                    OWNER,
+                    INotaryService(address(0)),
+                    IHonkVerifier(address(honk)),
+                    address(honk).codehash,
+                    LIFETIME,
+                    SKEW,
+                    SKEW
+                )
+            )
+        );
+    }
+
+    function test_onlyTheOwnerRotatesRootsAndParameters() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(address(honk)), address(honk).codehash);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        verifier.setProtocolParameters(1, 1, 1);
+    }
+
+    function test_zeroHonkVerifierIsRefused() public {
+        vm.prank(OWNER);
+        vm.expectRevert(PlatformVerifierBase.ZeroAddress.selector);
+        verifier.setTrustRoots(INotaryService(address(notary)), IHonkVerifier(address(0)), address(honk).codehash);
+    }
+
+    function test_aRejectionAtTheSecondSessionLeavesNoFee() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession.proof = _signWith(0xB0B, s.identitySession.attestedData);
+        vm.expectPartialRevert(NotaryService.UntrustedNotary.selector);
+        this.run{value: quote}(s);
+        assertEq(address(notary).balance, 0, "the first fee stayed delivered");
+    }
+
+    function test_rejectsOneWeiMoreThanTheQuote() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        vm.expectRevert(abi.encodeWithSelector(PlatformVerifierBase.WrongValue.selector, quote, quote + 1));
+        this.run{value: quote + 1}(s);
+    }
+
+    function test_rejectsAnEmptyClientIdentifier() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        s.tokenSession = _tokenAttestation("authorization_code", "", v);
+        vm.expectPartialRevert(TlsNotaryVerifierBase.ClientIdentifierNotSerializerSafe.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsATokenRequestWithNoHeadBoundary() public {
+        bytes memory whole = abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n",
+            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
+            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+        );
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(whole.length)
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse(true));
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.NoHeadBoundary.selector, 0));
+        this.run{value: quote}(s);
+    }
+
+    /// @dev REQ-COMMON-21A: the method is part of the pinned request line, so
+    ///      a GET with an otherwise honest body is refused before any field
+    ///      is read.
+    function test_rejectsTheWrongMethodOnTheTokenRequest() public {
+        bytes memory whole = abi.encodePacked(
+            "GET /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
+            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
+            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+        );
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(whole.length)
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse(true));
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(TlsNotaryVerifierBase.WrongRequestLine.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// The honest token request, byte for byte as `_tokenAttestation` sends it.
+    function _honestXRequest() private view returns (bytes memory) {
+        return abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
+            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
+            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+        );
+    }
+
+    /// That request as the one revealed run the profile fixes.
+    function _honestTokenSent() private view returns (AttestationBuilder.Direction memory) {
+        bytes memory whole = _honestXRequest();
+        return AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(whole.length)
+        });
+    }
+
+    /// TlsNotaryVerifierBase.sol:294-295: request line hidden under a commitment tiling [0,10).
+    function test_rejectsATokenRequestLineNotAtOrigin() public {
+        bytes memory whole = _honestXRequest(); // the whole honest token request of _tokenAttestation
+        bytes memory rest = new bytes(whole.length - 10);
+        for (uint256 i = 0; i < rest.length; ++i) {
+            rest[i] = whole[10 + i];
+        }
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 10, value: rest})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: 0, end: 10, value: bytes32(uint256(0xAB))})
+            ),
+            length: uint32(whole.length)
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse(true));
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.RequestLineNotAtOrigin.selector, uint32(10)));
+        this.run{value: quote}(s);
+    }
+
+    /// TlsNotaryVerifierBase.sol:293: no revealed range in the sent direction at all.
+    function test_rejectsATokenRequestWithNoRevealedRange() public {
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: new AttestationBuilder.Range[](0), commitments: AttestationBuilder.none(), length: 0
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse(true));
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.RequestLineNotAtOrigin.selector, type(uint32).max));
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsATokenResponseFramingTwoBearers() public {
+        bytes memory p = '"access_token":"';
+        AttestationBuilder.Direction memory recv = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.three(
+                AttestationBuilder.Range({start: 0, value: p}),
+                AttestationBuilder.Range({start: 28, value: abi.encodePacked('"', p)}),
+                AttestationBuilder.Range({start: 57, value: '"'})
+            ),
+            commitments: AttestationBuilder.two(
+                AttestationBuilder.Commitment({start: 16, end: 28, value: TOKEN_COMMITMENT}),
+                AttestationBuilder.Commitment({start: 45, end: 57, value: bytes32(uint256(0x3333))})
+            ),
+            length: 58
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, _honestTokenSent(), recv);
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(CeremonyAttestation.AmbiguousFraming.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_aForeignOperationDomainFailsTheBinding() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.operationDomain = keccak256("someone.else");
+        vm.expectRevert(TlsNotaryVerifierBase.CodeVerifierMismatch.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_aNeedleInsideAHeaderValueIsNotAHeaderLine() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "x-note: authorization: Bearer decoy\r\n");
+        assertEq(this.run{value: quote}(s).handle, "alice");
+    }
+
+    function test_rejectsABareLineFeedInTheIdentityRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "x-pad: a\nauthorization: Bearer STOLEN\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.BareLineFeed.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_rejectsAResponseNamingTwoIds() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation('1","id":"2', "alice", "");
+        vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
+        this.run{value: quote}(s);
+    }
+
+    function test_theIdentityAttestationsOwnTimeIsNotEvidenceTime() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        bytes memory a = s.identitySession.attestedData;
+        // createdAt := 1, the eight bytes after the authority id.
+        for (uint256 i = 32; i < 40; ++i) {
+            a[i] = 0;
+        }
+        a[39] = 0x01;
+        s.identitySession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        assertEq(this.run{value: quote}(s).metadataObservedAt, T0 - SKEW);
+    }
+
+    function test_aMalformedPayloadRevertsWithNoData() public {
+        (bool ok, bytes memory ret) = address(verifier).call{value: quote}(abi.encodeCall(verifier.verify, (hex"")));
+        assertFalse(ok);
+        assertEq(ret.length, 0);
     }
 }

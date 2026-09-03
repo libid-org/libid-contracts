@@ -13,6 +13,9 @@ import {HandleNormalizer} from "../HandleNormalizer.sol";
 import {IdentityNames} from "../IdentityNames.sol";
 import {IdentityNodes} from "../IdentityNodes.sol";
 import {StubPlatformVerifier} from "./StubPlatformVerifier.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 /// @notice IdentityNames wearing the Consumer role, over a real Proof Verifier
 ///         and a stubbed Platform Verifier.
@@ -253,7 +256,7 @@ contract CeremonyClaimTest is Test {
 
     /// @dev The set is authority, not configuration (REQ-COMMON-05C).
     function test_onlyTheOwnerChangesTheSupportedVersionSet() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
         proofVerifier.setVerifier(PLATFORM, 3, IPlatformVerifier(address(verifier)));
     }
 
@@ -289,5 +292,153 @@ contract CeremonyClaimTest is Test {
         vm.prank(WALLET);
         vm.expectRevert(IdentityNames.NoUserId.selector);
         names.claim{value: FEE}(PLATFORM, 1, p, false);
+    }
+
+    function test_rejectsANoncanonicalAddressEncoding() public {
+        bytes memory bad = abi.encodePacked(bytes12(0xffffffffffffffffffffffff), WALLET); // 32 bytes, not an address
+        bytes memory p = abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: DOMAIN,
+                authorizationNonce: bytes32(uint256(20)),
+                transactionData: bad
+            })
+        );
+        vm.prank(WALLET);
+        vm.expectRevert(); // abi.decode's own check
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
+    }
+
+    function test_rejectsShortTransactionData() public {
+        bytes memory p = abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: DOMAIN,
+                authorizationNonce: bytes32(uint256(21)),
+                transactionData: abi.encodePacked(WALLET)
+            })
+        );
+        vm.prank(WALLET);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.BadTransactionData.selector, 20));
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
+    }
+
+    function test_rejectsEmptyTransactionData() public {
+        bytes memory p = abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: DOMAIN,
+                authorizationNonce: bytes32(uint256(22)),
+                transactionData: ""
+            })
+        );
+        vm.prank(WALLET);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.BadTransactionData.selector, 0));
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
+    }
+
+    function test_rejectsOneWeiMoreThanTheQuote() public {
+        bytes memory p = _payload(WALLET, bytes32(uint256(23)));
+        vm.prank(WALLET);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.WrongClaimValue.selector, FEE, FEE + 1));
+        names.claim{value: FEE + 1}(PLATFORM, 1, p, false);
+    }
+
+    function test_setProofVerifierIsOwnerOnlyAndNonZero() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        names.setProofVerifier(IProofVerifier(address(proofVerifier)));
+        vm.prank(OWNER);
+        vm.expectRevert(IdentityNames.ZeroAddress.selector);
+        names.setProofVerifier(IProofVerifier(address(0)));
+    }
+
+    function test_aRejectedClaimSpendsNoDigest() public {
+        verifier.setObservedAt(0);
+        bytes memory p = _payload(WALLET, bytes32(uint256(30)));
+        vm.prank(WALLET);
+        vm.expectRevert(IdentityNames.NoObservationTime.selector);
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
+        assertFalse(names.digestSpent(_digest(WALLET, bytes32(uint256(30)))));
+    }
+
+    function test_theDomainIsJudgedBeforeTransactionDataIsDecoded() public {
+        bytes memory p = abi.encode(
+            StubPlatformVerifier.StubPayload({
+                ceremonyVersion: 1,
+                operationDomain: keccak256("other"),
+                authorizationNonce: bytes32(uint256(40)),
+                transactionData: hex"00"
+            })
+        );
+        vm.prank(WALLET);
+        vm.expectRevert(abi.encodeWithSelector(IdentityNames.ForeignOperationDomain.selector, keccak256("other")));
+        names.claim{value: FEE}(PLATFORM, 1, p, false);
+    }
+
+    function test_onePayloadIsSpentOnceAcrossTwoVerifierVersions() public {
+        StubPlatformVerifier second = new StubPlatformVerifier(PLATFORM, FEE);
+        vm.prank(OWNER);
+        proofVerifier.setVerifier(PLATFORM, 2, IPlatformVerifier(address(second)));
+        bytes memory p = _payload(WALLET, bytes32(uint256(50)));
+        _claim(p, FEE);
+        vm.prank(WALLET);
+        vm.expectRevert(
+            abi.encodeWithSelector(IdentityNames.DigestAlreadySpent.selector, _digest(WALLET, bytes32(uint256(50))))
+        );
+        names.claim{value: FEE}(PLATFORM, 2, p, false);
+    }
+
+    function test_namesCannotReinitialize() public {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        names.initialize(address(this));
+    }
+
+    // Reentrancy (the stronger, negative-paths shape: zero-fee verifier, re-enters via raw call, re-raises)
+
+    function test_aReenteringVerifierIsRefused() public {
+        ReenteringVerifier evil = new ReenteringVerifier(names, PLATFORM);
+        vm.prank(OWNER);
+        proofVerifier.setVerifier(PLATFORM, 1, IPlatformVerifier(address(evil)));
+        bytes memory p = _payload(WALLET, bytes32(uint256(1)));
+        evil.setInner(_payload(address(evil), bytes32(uint256(2))));
+        vm.prank(WALLET);
+        vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+        names.claim(PLATFORM, 1, p, false);
+        assertFalse(names.digestSpent(_digest(WALLET, bytes32(uint256(1)))));
+        assertFalse(names.digestSpent(_digest(address(evil), bytes32(uint256(2)))));
+    }
+}
+
+contract ReenteringVerifier is IPlatformVerifier {
+    IdentityNames immutable names;
+    bytes32 immutable platform;
+    bytes innerPayload;
+    bool armed;
+
+    constructor(IdentityNames n, bytes32 p) {
+        names = n;
+        platform = p;
+    }
+
+    function setInner(bytes memory p) external {
+        innerPayload = p;
+        armed = true;
+    }
+
+    function platformId() external view returns (bytes32) {
+        return platform;
+    }
+
+    function quote() external pure returns (uint256) {
+        return 0;
+    }
+
+    function verify(bytes calldata) external payable returns (VerifiedClaim memory c) {
+        if (armed) {
+            armed = false;
+            (bool ok, bytes memory ret) =
+                address(names).call(abi.encodeCall(IdentityNames.claim, (platform, 1, innerPayload, false)));
+            if (!ok) assembly { revert(add(ret, 32), mload(ret)) }
+        }
     }
 }

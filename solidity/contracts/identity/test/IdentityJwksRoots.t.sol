@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IdentityJwksRoots} from "../IdentityJwksRoots.sol";
 import {Notary} from "../../notary/Notary.sol";
 import {deployNotary} from "../../notary/test/DeployNotary.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// The naming system's Google trust list, fed by a notarized reading of
 /// Google's JWKS endpoint.
@@ -271,7 +272,7 @@ contract IdentityJwksRootsTest is Test {
 
     function test_onlyTheOwnerUntrusts() public {
         vm.prank(keeper);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper));
         roots.untrustModulus(bytes32(uint256(1)));
     }
 
@@ -531,7 +532,7 @@ contract IdentityJwksRootsTest is Test {
 
     function test_onlyTheOwnerRotatesTheNotary() public {
         vm.prank(keeper);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, keeper));
         notaryContract.setNotary(keeper);
     }
 

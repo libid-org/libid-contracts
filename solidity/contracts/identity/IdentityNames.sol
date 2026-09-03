@@ -169,8 +169,10 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         /// meantime keeps it.
         mapping(bytes32 => bytes32) handleOfId;
         mapping(bytes32 => bytes32) idOfHandle;
-        // ── Appended for the ceremony path. The struct's rule is append-only,
-        //    so these sit after everything above and disturb no stored slot.
+        // ── The ceremony path. `proofVerifier` takes the index the retired
+        //    `verifiers` mapping held, which is safe only because a mapping's
+        //    base slot is never written; `everBound` and `spentDigests` are
+        //    appended after everything above.
         /// The one component this Consumer calls to verify a proof.
         ///
         /// One address, not a version set. The Supported Version Set lives at

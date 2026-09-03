@@ -22,9 +22,6 @@ library CeremonyFields {
     ///      authoritative (REQ-COMMON-19A).
     error AmbiguousField(string name);
     error FieldNotFound(string name);
-    /// @dev A JSON string value ran to the end of the revealed bytes without a
-    ///      closing quote, so its extent is not established.
-    error UnterminatedField(string name);
     /// @dev A GitHub `id` must be followed by `,` or `}` and no other byte: the
     ///      terminator is what proves the revealed digits are the whole number
     ///      rather than a prefix of a longer one (REQ-PLAT-51).
@@ -122,31 +119,6 @@ library CeremonyFields {
         }
         if (hit == type(uint256).max) return (Found.None, 0);
         return (Found.One, hit);
-    }
-
-    /// @notice The value of `"name":"value"`, by its full delimiter.
-    /// @notice `tryJsonString`, with the outcome expressed as a revert.
-    ///
-    /// @dev A mapping, not a second implementation. The extraction rules --
-    ///      where a value ends, what terminates an integer, whether a leading
-    ///      zero is canonical -- are security-relevant and belong in one copy,
-    ///      or a fix applied to one leaves the other passing its tests while
-    ///      the live path is wrong.
-    function jsonString(bytes memory data, string memory name) internal pure returns (bytes memory value) {
-        (Found found, bytes memory v) = tryJsonString(data, name);
-        if (found == Found.Several) revert AmbiguousField(name);
-        if (found == Found.Unterminated) revert UnterminatedField(name);
-        if (found == Found.None) revert FieldNotFound(name);
-        return v;
-    }
-
-    /// @notice The same, for a bare JSON integer.
-    function jsonInteger(bytes memory data, string memory name) internal pure returns (bytes memory digits) {
-        (Found found, bytes memory v) = tryJsonInteger(data, name);
-        if (found == Found.Several) revert AmbiguousField(name);
-        if (found == Found.Unterminated) revert UnterminatedField(name);
-        if (found == Found.None) revert FieldNotFound(name);
-        return v;
     }
 
     /// @notice The value of `name=value` in an `application/x-www-form-urlencoded`
