@@ -350,7 +350,11 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
     ///         decide whether to fetch a fresh reading. True from deployment
     ///         until the first rotation lands.
     function needsRotation() external view returns (bool) {
-        return block.timestamp + RENEWAL_MARGIN >= uint256(_s().current.observedAt) + READING_LIFETIME;
+        uint64 observedAt = _s().current.observedAt;
+        // Nothing has been read yet: true by definition, not by arithmetic on
+        // a zero stamp that happens to come out right on a live chain.
+        if (observedAt == 0) return true;
+        return block.timestamp + RENEWAL_MARGIN >= uint256(observedAt) + READING_LIFETIME;
     }
 
     // ─── The transcript ─────────────────────────────────────────────

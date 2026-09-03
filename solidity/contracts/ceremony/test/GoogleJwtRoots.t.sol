@@ -595,6 +595,11 @@ contract GoogleJwtRootsTest is Test {
     /// true again as the runway shortens -- and long before it expires.
     function test_needsRotationTracksTheTrustedRunway() public {
         assertTrue(roots.needsRotation(), "an empty list needs a rotation");
+        // Whatever the clock says: a fresh deployment on a chain younger than
+        // the lifetime must still ask for its first reading.
+        vm.warp(1);
+        assertTrue(roots.needsRotation(), "an empty list needs a rotation at any block time");
+        vm.warp(T0 + 10);
 
         uint64 at = _now();
         _install("kid-1", "one");
