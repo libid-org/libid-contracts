@@ -35,6 +35,9 @@ ARTIFACTS=(
     "GoogleJwtRoots:GoogleJwtRoots"
     # identity
     "IdentityNames:IdentityNames"
+    # ens (deployed once per network, not CREATE3-canonical; embedded so a
+    # consumer can deploy it without a checkout of this repository)
+    "HandleResolver:HandleResolver"
     # factory
     "LibidFactory:LibidFactory"
     "WTIA9:WTIA9"

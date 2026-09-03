@@ -1,13 +1,11 @@
 name: Deploy contracts
 
-# Deploy/upgrade the contracts on a network, signing with an AWS KMS key.
+# Deploy/upgrade contracts on a network, signing with an AWS KMS key.
 #
-# THE DEPLOYMENT ITSELF IS NOT IMPLEMENTED YET — see the clearly marked step at
-# the bottom. Everything above it is the part that has to be right for the
-# signing identity to work at all, and it is verified end to end today: the run
-# assumes the AWS role via OIDC and prints the deployer address it would sign
-# with. That makes this workflow useful before the deploy exists — it proves the
-# trust chain, and it fails loudly if the chain breaks.
+# WHAT IS IMPLEMENTED: the `ens-resolver` component — deploy `HandleResolver`
+# and point an ENS name at it. The `stack` component is still the TODO this
+# file was created with, and still exits 1 rather than pretending to succeed.
+# `component` picks between them.
 #
 # WHY KMS AND NOT A GITHUB SECRET: the deployer owns every UUPS proxy, so the
 # ability to sign as it is the ability to replace the implementation behind the
@@ -35,6 +33,14 @@ name: Deploy contracts
 # on a production deploy: without an approval the job never starts, so the OIDC
 # token is never minted and the role cannot be assumed. Keep it configured.
 #
+# `network` NAMES THE ENVIRONMENT, NOT THE CHAIN. It selects the authorization
+# and the RPC endpoint, and those are the only things it selects. Which chain is
+# reached is decided by the RPC alone — for `stack`, `testnet` means eden, while
+# for `ens-resolver` it means Sepolia, because that is where ENS exists. Rather
+# than leave that to a comment, the preflight asserts the chain id it reached
+# matches the one the component expects, so a wrong endpoint fails before it
+# spends anything.
+#
 # Every third-party action is pinned by commit SHA, with the tag in a comment,
 # so a moved tag cannot change what executes.
 
@@ -42,22 +48,54 @@ on:
   workflow_dispatch:
     inputs:
       network:
-        description: Network to deploy to
+        description: Environment to run in (authorization and the RPC endpoint)
         required: true
         type: choice
         options:
           - testnet
           - mainnet
+      component:
+        description: What to deploy
+        required: true
+        type: choice
+        default: ens-resolver
+        options:
+          - ens-resolver
+          - stack
+      ens_name:
+        description: "ens-resolver: the ENS name to point at the resolver"
+        required: false
+        type: string
+        default: handles.link
+      gateway_url:
+        description: "ens-resolver: CCIP-Read endpoint, carrying the {sender} and {data} placeholders"
+        required: false
+        type: string
+      gateway_signer:
+        description: "ens-resolver: address the gateway signs with; the resolver trusts only this"
+        required: false
+        type: string
+      rpc_url:
+        # Normally the endpoint is an ENVIRONMENT secret, so testnet and mainnet
+        # cannot be confused and a keyed provider URL is never printed with the
+        # run parameters. This input exists because a one-shot deploy should not
+        # be blocked on creating a secret; it is meant for a PUBLIC endpoint.
+        # Do not pass a keyed URL here — dispatch inputs are recorded in the run.
+        description: Public RPC endpoint, overriding the ENS_RPC_URL secret
+        required: false
+        type: string
       dry_run:
-        description: Resolve the signer and stop, without broadcasting
+        description: Check every precondition and stop, without broadcasting
         required: false
         type: boolean
         default: true
 
-# Never let two deploys to the same network overlap, and never cancel one
-# mid-flight — a half-applied upgrade is worse than a queued one.
+# Never let two deploys to the same target overlap, and never cancel one
+# mid-flight — a half-applied upgrade is worse than a queued one, and two runs
+# against one name would race: the second `setResolver` lands on whichever
+# contract deployed last, and the first is orphaned.
 concurrency:
-  group: deploy-${{ inputs.network }}
+  group: deploy-${{ inputs.network }}-${{ inputs.component }}-${{ inputs.ens_name }}
   cancel-in-progress: false
 
 permissions:
@@ -67,27 +105,42 @@ permissions:
 env:
   FOUNDRY_VERSION: v1.7.1
   AWS_REGION: eu-central-1
-  # The same key signs for both networks (see the note above). Its name says
-  # "testnet" for historical reasons — it is the deployer key, not a
-  # network-scoped one. Change here if a network ever gets its own.
+  # The same key signs for both networks (see the note above), and owns the ENS
+  # name besides. Its name says "testnet" for historical reasons — it is the
+  # deployer key, not a network-scoped one.
   KMS_KEY_ID: alias/dyaka-testnet-deployer
+  # The ENS registry is at this address on mainnet and on every testnet.
+  ENS_REGISTRY: "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"
 
 jobs:
   deploy:
-    name: ${{ inputs.network }}
+    name: ${{ inputs.component }} on ${{ inputs.network }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Load-bearing: this is what puts `:environment:<network>` in the OIDC token,
-    # and what lets a protection rule gate the run. See the header.
+    # Load-bearing twice over: it is what puts `:environment:<network>` in the
+    # OIDC token, and what lets a protection rule gate the run. See the header.
     environment:
       name: ${{ inputs.network }}
+    env:
+      RPC_URL: ${{ inputs.rpc_url || secrets.ENS_RPC_URL }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: The chain endpoint is configured
+        if: ${{ inputs.component == 'ens-resolver' }}
+        run: |
+          set -euo pipefail
+          [ -n "$RPC_URL" ] || {
+            echo "::error::no endpoint — pass rpc_url, or set ENS_RPC_URL as a secret on the ${{ inputs.network }} environment"
+            exit 1
+          }
 
       - name: Assume the deployer role
         uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
@@ -101,6 +154,8 @@ jobs:
       # through a deploy.
       - name: Verify KMS signing identity
         id: signer
+        env:
+          AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
         run: |
           set -euo pipefail
           addr=$(cast wallet address --aws)
@@ -108,39 +163,168 @@ jobs:
           echo "Network:  ${{ inputs.network }}"
           echo "KMS key:  ${KMS_KEY_ID}"
           echo "Deployer: $addr"
+
+      # The checks that make a deploy safe to attempt. `setResolver` reverts for
+      # anyone but the name's owner, and a revert AFTER the deploy leaves a
+      # contract nobody points at.
+      - name: Preflight the name and the chain
+        id: name
+        if: ${{ inputs.component == 'ens-resolver' }}
+        env:
+          DEPLOYER: ${{ steps.signer.outputs.deployer }}
+          # Through the environment rather than `${{ }}` in the command: these
+          # are free-text strings arriving at a job that signs with the deployer
+          # key, and a quote must be a character rather than the end of an
+          # argument.
+          NETWORK: ${{ inputs.network }}
+          ENS_NAME: ${{ inputs.ens_name }}
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+          GATEWAY_SIGNER: ${{ inputs.gateway_signer }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          [ -n "$GATEWAY_URL" ] || { echo "::error::gateway_url is required for ens-resolver"; exit 1; }
+          [ -n "$GATEWAY_SIGNER" ] || { echo "::error::gateway_signer is required for ens-resolver"; exit 1; }
+
+          # ERC-3668 substitutes these. Without them the gateway is reached with
+          # no query at all, and every name fails with an opaque client-side
+          # error while the deploy itself reports success.
+          case "$GATEWAY_URL" in
+            *'{sender}'*'{data}'*) ;;
+            *) echo "::error::gateway_url must carry the {sender} and {data} placeholders"
+               exit 1 ;;
+          esac
+
+          # The eden/Sepolia confusion the header warns about, made mechanical.
+          case "$NETWORK" in
+            testnet) want=11155111 ;;
+            mainnet) want=1 ;;
+            *) echo "::error::unknown network $NETWORK"; exit 1 ;;
+          esac
+          got=$(cast chain-id --rpc-url "$RPC_URL")
+          if [ "$got" != "$want" ]; then
+            echo "::error::$NETWORK expects chain $want for ENS, but the endpoint is chain $got"
+            exit 1
+          fi
+
+          node=$(cast namehash "$ENS_NAME")
+          owner=$(cast call "$ENS_REGISTRY" "owner(bytes32)(address)" "$node" --rpc-url "$RPC_URL")
+          before=$(cast call "$ENS_REGISTRY" "resolver(bytes32)(address)" "$node" --rpc-url "$RPC_URL")
+          bal=$(cast balance "$DEPLOYER" --rpc-url "$RPC_URL")
+
+          echo "Chain:    $got"
+          echo "Node:     $node"
+          echo "Owner:    $owner"
+          echo "Resolver: $before  (before)"
+          echo "Balance:  $(cast from-wei "$bal")"
+
+          if [ "${owner,,}" != "${DEPLOYER,,}" ]; then
+            echo "::error::the deployer ($DEPLOYER) does not own $ENS_NAME ($owner)"
+            exit 1
+          fi
+          if [ "$bal" = "0" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "::error::$DEPLOYER has zero balance — fund it before broadcasting"
+            exit 1
+          fi
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          DEPLOYER: ${{ steps.signer.outputs.deployer }}
+          ENS_NAME: ${{ inputs.ens_name }}
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+          GATEWAY_SIGNER: ${{ inputs.gateway_signer }}
+        run: |
           {
             echo "| | |"
             echo "|---|---|"
             echo "| Network | \`${{ inputs.network }}\` |"
-            echo "| Deployer | \`$addr\` |"
+            echo "| Component | \`${{ inputs.component }}\` |"
+            echo "| Deployer | \`$DEPLOYER\` |"
+            if [ "${{ inputs.component }}" = "ens-resolver" ]; then
+              echo "| Name | \`$ENS_NAME\` |"
+              echo "| Gateway URL | \`$GATEWAY_URL\` |"
+              echo "| Gateway signer | \`$GATEWAY_SIGNER\` |"
+            fi
+            echo "| Commit | \`$GITHUB_SHA\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
 
       - name: Stop here on a dry run
         if: ${{ inputs.dry_run }}
         run: |
-          echo "dry_run — signer resolved, nothing broadcast."
-          echo "_Dry run: signer resolved, nothing broadcast._" >> "$GITHUB_STEP_SUMMARY"
+          echo "dry_run — signer resolved, preconditions checked, nothing broadcast."
+          echo "_Dry run: nothing broadcast._" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy the resolver
+        id: deploy
+        if: ${{ !inputs.dry_run && inputs.component == 'ens-resolver' }}
+        working-directory: solidity
+        env:
+          AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
+          OWNER: ${{ steps.signer.outputs.deployer }}
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+          GATEWAY_SIGNER: ${{ inputs.gateway_signer }}
+        run: |
+          set -euo pipefail
+          # `--json` BEFORE `--constructor-args`: that list is greedy, so a flag
+          # after it is swallowed as one more constructor value and forge
+          # reports an arity mismatch naming nothing.
+          #
+          # jq builds the string array so a URL carrying a quote stays one
+          # argument. The address array is UNQUOTED — forge's parser rejects a
+          # quoted address.
+          urls=$(jq -nc --arg u "$GATEWAY_URL" '[$u]')
+          addr=$(forge create --aws --broadcast --rpc-url "$RPC_URL" --json \
+            contracts/ens/HandleResolver.sol:HandleResolver \
+            --constructor-args "$OWNER" "$urls" "[$GATEWAY_SIGNER]" \
+            | jq -r '.deployedTo // empty')
+          # Validated, because the next step spends this: `forge create` can
+          # exit 0 with a payload that does not name it, and
+          # `setResolver(node, null)` would abort AFTER a contract was paid for.
+          case "$addr" in
+            0x*) [ ${#addr} -eq 42 ] || addr="" ;;
+            *) addr="" ;;
+          esac
+          [ -n "$addr" ] || { echo "::error::forge create returned no address"; exit 1; }
+          echo "Deployed: $addr"
+          echo "address=$addr" >> "$GITHUB_OUTPUT"
+
+      - name: Point the name at it
+        if: ${{ !inputs.dry_run && inputs.component == 'ens-resolver' }}
+        env:
+          AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
+          RESOLVER: ${{ steps.deploy.outputs.address }}
+          NODE: ${{ steps.name.outputs.node }}
+          ENS_NAME: ${{ inputs.ens_name }}
+        run: |
+          set -euo pipefail
+          cast send --aws --rpc-url "$RPC_URL" "$ENS_REGISTRY" \
+            "setResolver(bytes32,address)" "$NODE" "$RESOLVER" >/dev/null
+          # Read back and COMPARE: `cast send` exits 0 for a transaction that
+          # reverted, so printing the registry value without checking it would
+          # report success for a name still pointing where it did before.
+          now=$(cast call "$ENS_REGISTRY" "resolver(bytes32)(address)" "$NODE" --rpc-url "$RPC_URL")
+          echo "Resolver: $now"
+          [ "${now,,}" = "${RESOLVER,,}" ] || { echo "::error::the registry did not take it"; exit 1; }
+          # Asked of the registry's resolver, so this probes what a client would
+          # actually reach. One that does not announce ENSIP-10 is never handed
+          # a wildcard name, and the whole arrangement resolves nothing.
+          wildcard=$(cast call "$now" "supportsInterface(bytes4)(bool)" 0x9061b923 --rpc-url "$RPC_URL")
+          echo "ENSIP-10: $wildcard"
+          [ "$wildcard" = "true" ] || { echo "::error::the resolver does not announce ENSIP-10"; exit 1; }
+          echo "_Deployed \`$RESOLVER\` and set it on \`$ENS_NAME\`._" >> "$GITHUB_STEP_SUMMARY"
 
       # ---------------------------------------------------------------------
-      # TODO: the actual deployment. NOT IMPLEMENTED.
+      # TODO: the contract stack. NOT IMPLEMENTED.
       #
       # Everything needed to sign is already in place when this runs:
       #   - AWS credentials for the deployer role are in the environment
       #   - AWS_KMS_KEY_ID selects the key
       #   - forge/cast can sign with `--aws` (no private key anywhere)
-      #
-      # A broadcasting step will need an RPC endpoint per network, which is not
-      # configured yet — add it as an environment secret/variable rather than
-      # hardcoding, so testnet and mainnet cannot be confused.
-      #
-      # Guard it with `if: ${{ !inputs.dry_run }}` so the dry-run default stays
-      # safe, and keep the verify step above it.
       # ---------------------------------------------------------------------
-      - name: Deploy
-        if: ${{ !inputs.dry_run }}
+      - name: Deploy the stack
+        if: ${{ !inputs.dry_run && inputs.component == 'stack' }}
         run: |
-          echo "::error::Deployment is not implemented yet."
+          echo "::error::The stack deployment is not implemented yet."
           echo "See the TODO in .github/workflows/deploy.yml."
           exit 1
