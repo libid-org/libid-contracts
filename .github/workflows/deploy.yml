@@ -1,15 +1,12 @@
-name: Deploy contracts
+name: Deploy the ENS resolver
 
-# Deploy/upgrade contracts on a network, signing with an AWS KMS key.
+# Deploy `HandleResolver` and point an ENS name at it, signing with an AWS KMS
+# key. This is the one thing this workflow does: the contracts themselves are
+# deployed by chain-configurations (`libid-deploy`), not from here.
 #
-# WHAT IS IMPLEMENTED: the `ens-resolver` component — deploy `HandleResolver`
-# and point an ENS name at it. The `stack` component is still the TODO this
-# file was created with, and still exits 1 rather than pretending to succeed.
-# `component` picks between them.
-#
-# WHY KMS AND NOT A GITHUB SECRET: the deployer owns every UUPS proxy, so the
-# ability to sign as it is the ability to replace the implementation behind the
-# contracts and drain them. A KMS key cannot be exported — CI calls kms:Sign and
+# WHY KMS AND NOT A GITHUB SECRET: the deployer key owns the ENS name and the
+# resolver, so the ability to sign as it is the ability to point every name
+# under `handles.link` anywhere. A KMS key cannot be exported — CI calls kms:Sign and
 # gets a signature back — so a compromised runner can sign while the run lasts
 # but cannot walk away with the key.
 #
@@ -35,11 +32,10 @@ name: Deploy contracts
 #
 # `network` NAMES THE ENVIRONMENT, NOT THE CHAIN. It selects the authorization
 # and the RPC endpoint, and those are the only things it selects. Which chain is
-# reached is decided by the RPC alone — for `stack`, `testnet` means eden, while
-# for `ens-resolver` it means Sepolia, because that is where ENS exists. Rather
-# than leave that to a comment, the preflight asserts the chain id it reached
-# matches the one the component expects, so a wrong endpoint fails before it
-# spends anything.
+# reached is decided by the RPC alone — `testnet` means Sepolia, because that is
+# where ENS exists. Rather than leave that to a comment, the preflight asserts
+# the chain id it reached matches the one the environment expects, so a wrong
+# endpoint fails before it spends anything.
 #
 # Every third-party action is pinned by commit SHA, with the tag in a comment,
 # so a moved tag cannot change what executes.
@@ -54,25 +50,17 @@ on:
         options:
           - testnet
           - mainnet
-      component:
-        description: What to deploy
-        required: true
-        type: choice
-        default: ens-resolver
-        options:
-          - ens-resolver
-          - stack
       ens_name:
-        description: "ens-resolver: the ENS name to point at the resolver"
+        description: The ENS name to point at the resolver
         required: false
         type: string
         default: handles.link
       gateway_url:
-        description: "ens-resolver: CCIP-Read endpoint, carrying the {sender} and {data} placeholders"
+        description: "CCIP-Read endpoint, carrying the {sender} and {data} placeholders"
         required: false
         type: string
       gateway_signer:
-        description: "ens-resolver: address the gateway signs with; the resolver trusts only this"
+        description: Address the gateway signs with; the resolver trusts only this
         required: false
         type: string
       rpc_url:
@@ -95,7 +83,7 @@ on:
 # against one name would race: the second `setResolver` lands on whichever
 # contract deployed last, and the first is orphaned.
 concurrency:
-  group: deploy-${{ inputs.network }}-${{ inputs.component }}-${{ inputs.ens_name }}
+  group: deploy-${{ inputs.network }}-${{ inputs.ens_name }}
   cancel-in-progress: false
 
 permissions:
@@ -114,7 +102,7 @@ env:
 
 jobs:
   deploy:
-    name: ${{ inputs.component }} on ${{ inputs.network }}
+    name: ${{ inputs.ens_name }} on ${{ inputs.network }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Load-bearing twice over: it is what puts `:environment:<network>` in the
@@ -134,7 +122,6 @@ jobs:
           version: ${{ env.FOUNDRY_VERSION }}
 
       - name: The chain endpoint is configured
-        if: ${{ inputs.component == 'ens-resolver' }}
         run: |
           set -euo pipefail
           [ -n "$RPC_URL" ] || {
@@ -169,7 +156,6 @@ jobs:
       # contract nobody points at.
       - name: Preflight the name and the chain
         id: name
-        if: ${{ inputs.component == 'ens-resolver' }}
         env:
           DEPLOYER: ${{ steps.signer.outputs.deployer }}
           # Through the environment rather than `${{ }}` in the command: these
@@ -239,13 +225,10 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Network | \`${{ inputs.network }}\` |"
-            echo "| Component | \`${{ inputs.component }}\` |"
             echo "| Deployer | \`$DEPLOYER\` |"
-            if [ "${{ inputs.component }}" = "ens-resolver" ]; then
-              echo "| Name | \`$ENS_NAME\` |"
-              echo "| Gateway URL | \`$GATEWAY_URL\` |"
-              echo "| Gateway signer | \`$GATEWAY_SIGNER\` |"
-            fi
+            echo "| Name | \`$ENS_NAME\` |"
+            echo "| Gateway URL | \`$GATEWAY_URL\` |"
+            echo "| Gateway signer | \`$GATEWAY_SIGNER\` |"
             echo "| Commit | \`$GITHUB_SHA\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -257,7 +240,7 @@ jobs:
 
       - name: Deploy the resolver
         id: deploy
-        if: ${{ !inputs.dry_run && inputs.component == 'ens-resolver' }}
+        if: ${{ !inputs.dry_run }}
         working-directory: solidity
         env:
           AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
@@ -290,7 +273,7 @@ jobs:
           echo "address=$addr" >> "$GITHUB_OUTPUT"
 
       - name: Point the name at it
-        if: ${{ !inputs.dry_run && inputs.component == 'ens-resolver' }}
+        if: ${{ !inputs.dry_run }}
         env:
           AWS_KMS_KEY_ID: ${{ env.KMS_KEY_ID }}
           RESOLVER: ${{ steps.deploy.outputs.address }}
@@ -313,18 +296,3 @@ jobs:
           echo "ENSIP-10: $wildcard"
           [ "$wildcard" = "true" ] || { echo "::error::the resolver does not announce ENSIP-10"; exit 1; }
           echo "_Deployed \`$RESOLVER\` and set it on \`$ENS_NAME\`._" >> "$GITHUB_STEP_SUMMARY"
-
-      # ---------------------------------------------------------------------
-      # TODO: the contract stack. NOT IMPLEMENTED.
-      #
-      # Everything needed to sign is already in place when this runs:
-      #   - AWS credentials for the deployer role are in the environment
-      #   - AWS_KMS_KEY_ID selects the key
-      #   - forge/cast can sign with `--aws` (no private key anywhere)
-      # ---------------------------------------------------------------------
-      - name: Deploy the stack
-        if: ${{ !inputs.dry_run && inputs.component == 'stack' }}
-        run: |
-          echo "::error::The stack deployment is not implemented yet."
-          echo "See the TODO in .github/workflows/deploy.yml."
-          exit 1
