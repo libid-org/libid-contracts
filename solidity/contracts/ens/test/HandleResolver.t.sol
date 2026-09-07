@@ -56,6 +56,15 @@ contract HandleResolverTest is Test {
         assertFalse(resolver.supportsInterface(0xdeadbeef));
     }
 
+    /// ERC-7996 is the id the universal resolver reads as "call me directly,
+    /// skip the batch gateway". A direct call raises the `OffchainLookup`
+    /// again under the universal resolver's address, so a gateway signing for
+    /// the URL's `{sender}` signs for the wrong target and every answer is
+    /// refused. Not announced, and pinned so a future edit has to say why.
+    function test_itDoesNotInviteDirectInvocation() public view {
+        assertFalse(resolver.supportsInterface(0x582de3e7), "ERC-7996 announced");
+    }
+
     /// `resolve` always reverts, and that IS the protocol: the revert carries
     /// the endpoints, which is why nothing has to be registered with a wallet.
     function test_resolveRevertsWithTheEndpointsAndTheQuery() public {
