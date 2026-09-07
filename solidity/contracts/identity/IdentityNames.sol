@@ -27,6 +27,17 @@ import {IdentityNodes} from "./IdentityNodes.sol";
 ///      entry in either mapping. An account's own fresh proof retires the
 ///      handle that account used to hold, and nobody else's — see `claim`.
 ///
+///      **Claiming can cost more than the verification path, and the user set
+///      the price.** A proof also states a service fee and the address to pay
+///      it to, both inside the digest it opens against. Composing a ceremony
+///      by hand names no fee, so a claim made that way costs only the Notary
+///      Fees; a ceremony composed by a hosted application names what that
+///      application charges, and the user saw that number when they consented,
+///      because changing it after the fact changes the digest. This contract
+///      knows no application, holds no price list, and takes no cut: it moves
+///      exactly what one submission authorized to exactly the address that
+///      submission named.
+///
 ///      **What the owner can still do, stated plainly.** It configures which
 ///      verifiers a platform uses, and a verifier is trusted to report what a
 ///      proof says — so an owner that installs a dishonest verifier can mint
@@ -282,6 +293,16 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         bytes32 indexed authorizationDigest, address indexed owner, bytes32 indexed platformId, bytes clientIdentifier
     );
 
+    /// @notice The service fee named by a claim's own Authorized Transaction
+    ///         Data was delivered.
+    ///
+    /// @dev Emitted only when there is one. A ceremony composed by hand names
+    ///      no fee and pays only the verification path; one composed by a
+    ///      hosted application names what that application charges, and the
+    ///      user approved that number at consent time, because it is inside
+    ///      the digest the proof opens against.
+    event ClaimFeePaid(bytes32 indexed authorizationDigest, address indexed receiver, uint256 amount);
+
     /// @notice A handle stopped resolving because the account that held it
     ///         proved a different one.
     /// @dev Nobody else's entry can be retired this way. See `claim`.
@@ -306,11 +327,16 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///
     /// @dev A new operation, or a change to what its transaction data means,
     ///      takes a NEW domain string rather than another digest field
-    ///      (REQ-COMMON-01A). Note the consequence the specification is candid
-    ///      about: a digest is spendable once at EACH Consumer accepting this
-    ///      domain, so two deployments choosing the same string share a digest
-    ///      space.
-    bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity"));
+    ///      (REQ-COMMON-01A). This string is `-v2` because the Authorized
+    ///      Transaction Data stopped being one address and became the triple
+    ///      below: `libid.claim-identity` still means the address alone,
+    ///      wherever it is read, and a submission built for one string opens
+    ///      against nothing under the other.
+    ///
+    ///      Note the consequence the specification is candid about: a digest
+    ///      is spendable once at EACH Consumer accepting this domain, so two
+    ///      deployments choosing the same string share a digest space.
+    bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity-v2"));
 
     error ZeroAddress();
     /// @dev The submission names an operation this Consumer does not own
@@ -318,11 +344,25 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     error ForeignOperationDomain(bytes32 operationDomain);
     /// @dev A digest is spendable once here (REQ-COMMON-03A).
     error DigestAlreadySpent(bytes32 digest);
-    /// @dev The Authorized Transaction Data of this operation is exactly one
-    ///      address; trailing bytes and other shapes are refused
-    ///      (REQ-COMMON-01F).
+    /// @dev The Authorized Transaction Data of this operation is exactly the
+    ///      triple `(address target, uint256 feeAmount, address feeReceiver)`;
+    ///      trailing bytes and other shapes are refused (REQ-COMMON-01F).
     error BadTransactionData(uint256 length);
+    /// @dev Less was delivered than the verification path alone costs.
     error WrongClaimValue(uint256 required, uint256 provided);
+    /// @dev What was delivered above the verification path is not the fee the
+    ///      digest authorized. Over and under are both refused: there is no
+    ///      refund path, and a caller who could overpay would be funding an
+    ///      address the ceremony named, beyond what it consented to.
+    error WrongFeeValue(uint256 required, uint256 provided);
+    /// @dev A free claim is `(0, address(0))` and nothing else. A receiver
+    ///      beside a zero amount is a second encoding of one intent, and an
+    ///      amount beside no receiver would burn it.
+    error NoncanonicalFee(uint256 amount, address receiver);
+    /// @dev The receiver the ceremony named refused the value or ran out of
+    ///      gas taking it. Nothing is written: the fee was authorized as part
+    ///      of this claim, so a claim that cannot pay it did not happen.
+    error FeeTransferFailed(address receiver, uint256 amount);
     /// The proof names a different address than the caller.
     error NotProofTarget(address proved, address caller);
     /// The proof carries no observation time, so it cannot be ordered.
@@ -371,8 +411,8 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     /// @dev The CONSUMER of ceremony-common section 5.1, and only that. It
     ///      owns the operation domain, records the digest, enforces the
     ///      authorization predicate and applies the effect. Dispatch and the
-    ///      fee path belong to the Proof Verifier, which is a contract of its
-    ///      own so a second Consumer does not become a second
+    ///      Notary Fee path belong to the Proof Verifier, which is a contract
+    ///      of its own so a second Consumer does not become a second
     ///      version-governance surface; decoding and verifying the payload
     ///      belong to the Platform Verifier the route ends at.
     ///
@@ -381,9 +421,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      platform, not the ceremony version inside the proof -- and passes
     ///      the bytes through.
     ///
-    ///      The value attached must equal `quoteClaim` for the same pair. Exact
-    ///      value at every hop needs no refund path, so no partial-failure rule
-    ///      is required and nothing can be captured in transit.
+    ///      The value attached is `quoteClaim` for the same pair plus the
+    ///      service fee the submission's own Authorized Transaction Data
+    ///      names, which is zero for a ceremony composed by hand. Exact value
+    ///      at every hop needs no refund path, so no partial-failure rule is
+    ///      required and nothing can be captured in transit.
     function claim(bytes32 platformId, uint16 verifierVersion, bytes calldata payload, bool publishName)
         external
         payable
@@ -393,7 +435,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
         IProofVerifier pv = _s().proofVerifier;
         uint256 required = pv.quote(platformId, verifierVersion);
-        if (msg.value != required) revert WrongClaimValue(required, msg.value);
+        // Only the floor is knowable here: the fee rides in the payload, which
+        // is the Platform Verifier's to decode. A shortfall would otherwise
+        // surface as an out-of-funds revert from the call below, with nothing
+        // for an operator to read.
+        if (msg.value < required) revert WrongClaimValue(required, msg.value);
 
         ICeremony.VerifiedClaim memory claimed = pv.verify{value: required}(platformId, verifierVersion, payload);
 
@@ -431,16 +477,33 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
 
         // ── The authorization predicate ───────────────────────────────
         //
-        // The Authorized Transaction Data of this operation is one address: the
-        // wallet the identity binds to. Requiring it to be the authenticated
-        // caller is what keeps consent-phishing out of identity theft -- binding
-        // to a submitter-supplied address instead would let anyone spend a
-        // genuine proof at an address of their choosing.
-        if (claimed.transactionData.length != 32) {
+        // The Authorized Transaction Data of this operation is a triple: the
+        // wallet the identity binds to, and the service fee that wallet
+        // approved. Requiring the target to be the authenticated caller is what
+        // keeps consent-phishing out of identity theft -- binding to a
+        // submitter-supplied address instead would let anyone spend a genuine
+        // proof at an address of their choosing.
+        if (claimed.transactionData.length != 96) {
             revert BadTransactionData(claimed.transactionData.length);
         }
-        address target = abi.decode(claimed.transactionData, (address));
+        (address target, uint256 feeAmount, address feeReceiver) =
+            abi.decode(claimed.transactionData, (address, uint256, address));
         if (target != msg.sender) revert NotProofTarget(target, msg.sender);
+
+        // One encoding per intent (REQ-COMMON-01F): a free claim is
+        // `(0, address(0))`. The two halves stand or fall together, so a
+        // receiver beside a zero amount and an amount beside no receiver are
+        // both refused rather than silently normalized.
+        if ((feeAmount == 0) != (feeReceiver == address(0))) {
+            revert NoncanonicalFee(feeAmount, feeReceiver);
+        }
+
+        // Whatever was delivered above the verification path is the fee, and it
+        // has to be the number inside the digest -- not less, and not more.
+        // Nobody consented to more, and there is nowhere to return it to.
+        // `required` was already forwarded, so this cannot underflow.
+        uint256 offered = msg.value - required;
+        if (offered != feeAmount) revert WrongFeeValue(feeAmount, offered);
 
         if (bytes(claimed.userId).length == 0) revert NoUserId();
         if (claimed.metadataObservedAt == 0) revert NoObservationTime();
@@ -459,6 +522,19 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
         );
 
         emit CeremonyBound(claimed.sessionId, msg.sender, platformId, claimed.clientIdentifier);
+
+        // ── The one call out, after every effect ──────────────────────
+        //
+        // The receiver is an address the ceremony named, not one this contract
+        // knows, so it gets what an unknown callee gets: every write already
+        // done behind it, and `nonReentrant` in front of it on the way back.
+        // `call` rather than `transfer`, because a receiver that hosts an
+        // application is more likely to be a contract than an EOA.
+        if (feeAmount != 0) {
+            (bool paid,) = feeReceiver.call{value: feeAmount}("");
+            if (!paid) revert FeeTransferFailed(feeReceiver, feeAmount);
+            emit ClaimFeePaid(claimed.sessionId, feeReceiver, feeAmount);
+        }
     }
 
     /// @notice What `claim` requires to be delivered for this pair.
@@ -467,6 +543,11 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///      covers the whole path -- two Notary Fees on X and GitHub, zero on
     ///      Google -- and a Consumer that computed it would need to know the
     ///      path's topology (REQ-COMMON-06E).
+    ///
+    ///      This is the verification path only. A caller adds the service fee
+    ///      named by its own submission, which no quotation could know: it is
+    ///      chosen per ceremony by whoever composed it, and authorized by the
+    ///      digest rather than by anything on this chain.
     function quoteClaim(bytes32 platformId, uint16 verifierVersion) external view returns (uint256) {
         return _s().proofVerifier.quote(platformId, verifierVersion);
     }

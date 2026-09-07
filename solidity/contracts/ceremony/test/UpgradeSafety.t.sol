@@ -387,9 +387,9 @@ contract UpgradeSafetyTest is Test {
         bytes memory payload = abi.encode(
             StubPlatformVerifier.StubPayload({
                 ceremonyVersion: 1,
-                operationDomain: keccak256(bytes("libid.claim-identity")),
+                operationDomain: keccak256(bytes("libid.claim-identity-v2")),
                 authorizationNonce: bytes32(nonce),
-                transactionData: abi.encode(who)
+                transactionData: abi.encode(who, uint256(0), address(0))
             })
         );
         vm.prank(who);
