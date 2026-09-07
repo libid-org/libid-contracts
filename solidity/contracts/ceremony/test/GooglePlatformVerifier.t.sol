@@ -439,14 +439,15 @@ contract GooglePlatformVerifierTest is Test {
         verifier.setJwtRoots(IGoogleJwtRoots(address(0)));
     }
 
-    /// @dev A TLSNotary-shaped payload at the Google verifier: word four of
-    ///      the TLS layout is `pkceNonce`, which Google's layout reads as the
-    ///      offset of `clientIdentifier`, so the decoder walks out of bounds
-    ///      and reverts with no data. No later check ever runs.
+    /// @dev A TLSNotary-shaped payload at the Google verifier. The first four
+    ///      words are common to both layouts; after them the readings diverge,
+    ///      and word five points Google's `publicInputs` at the identity
+    ///      session, whose leading word reads as a length of 64 elements the
+    ///      payload does not carry. The decoder walks out of bounds and
+    ///      reverts with no data, so no later check ever runs.
     function test_aTlsPayloadRevertsWithNoData() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory x;
         x.ceremonyVersion = 1;
-        x.pkceNonce = bytes32(uint256(1));
         (bool ok, bytes memory ret) = address(verifier).call(abi.encodeCall(verifier.verify, (abi.encode(x))));
         assertFalse(ok);
         assertEq(ret.length, 0);

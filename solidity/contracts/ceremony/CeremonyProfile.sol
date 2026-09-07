@@ -6,10 +6,10 @@ pragma solidity ^0.8.24;
 ///         protocol parameters it reads.
 ///
 /// @dev THE NAMESPACED STRINGS ARE OURS, NOT THE SPECIFICATION'S.
-///      ceremony-common fixes exactly one literal: `libid.identity.pkce`, in
-///      section 7. The platform name (REQ-COMMON-55) and each Consumer's
-///      operation domain (REQ-COMMON-01A) are required to exist and required
-///      to be pinned, but their bytes are left to the profile author.
+///      ceremony-common fixes no literal of its own. The platform name
+///      (REQ-COMMON-55) and each Consumer's operation domain (REQ-COMMON-01A)
+///      are required to exist and required to be pinned, but their bytes are
+///      left to the profile author.
 ///
 ///      So these are a cross-implementation agreement, not a reading of the
 ///      specification. A Consumer dispatching on one string and a verifier

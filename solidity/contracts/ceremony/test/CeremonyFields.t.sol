@@ -122,11 +122,11 @@ contract CeremonyFieldsTest is Test {
 
     function test_readsAnXTokenRequestBody() public view {
         bytes memory body = bytes(
-            "grant_type=authorization_code&client_id=abc123&code=xyz&redirect_uri=https%3A%2F%2Fa.example&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I"
+            "grant_type=authorization_code&client_id=abc123&code=xyz&redirect_uri=https%3A%2F%2Fa.example&code_verifier=5teBDl6cz4U77aFweV5PbMhBJ_lEFv6LLNKzqnDI5lo"
         );
         assertEq(string(this.formField(body, "grant_type")), "authorization_code");
         assertEq(string(this.formField(body, "client_id")), "abc123");
-        assertEq(string(this.formField(body, "code_verifier")), "iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I");
+        assertEq(string(this.formField(body, "code_verifier")), "5teBDl6cz4U77aFweV5PbMhBJ_lEFv6LLNKzqnDI5lo");
     }
 
     /// @dev Without the leading boundary, `client_id=` matches inside

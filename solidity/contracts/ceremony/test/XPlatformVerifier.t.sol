@@ -50,7 +50,6 @@ contract XPlatformVerifierTest is Test {
 
     bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
     bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
-    bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444444444444444444444444444444444444444444444444444444444444444));
     /// The digest the fixtures are made for: what the verifier rebuilds from
     /// the payload below, on this chain. Derived in `setUp`, because it
     /// depends on the chain id.
@@ -252,12 +251,11 @@ contract XPlatformVerifierTest is Test {
     /// The `x/v1` payload the fixtures are made for. Public inputs are not in
     /// it: the verifier derives them from the two attestations.
     function _payload() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
-        string memory verifierValue = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        string memory verifierValue = string(CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE));
         s.ceremonyVersion = 1;
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
-        s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
         s.tokenSession = _tokenAttestation("authorization_code", "myClient-1", verifierValue);
         s.identitySession = _identityAttestation("2244994945", "alice", "");
@@ -329,9 +327,14 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    function test_rejectsAForgedPkceNonce() public {
+    /// @dev REQ-COMMON-12: the verifier is derived under the same nonce the
+    ///      digest commits, and the payload carries no second one. Evidence
+    ///      built under any other nonce opens against nothing, even where the
+    ///      payload itself still names the nonce the digest was made for.
+    function test_rejectsAVerifierDerivedUnderAnotherNonce() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        s.pkceNonce = bytes32(uint256(1));
+        string memory foreign = string(CeremonyAuthorization.codeVerifier(DIGEST, bytes32(uint256(1))));
+        s.tokenSession = _tokenAttestation("authorization_code", "myClient-1", foreign);
         vm.expectRevert(TlsNotaryVerifierBase.CodeVerifierMismatch.selector);
         this.run{value: quote}(s);
     }
@@ -355,7 +358,7 @@ contract XPlatformVerifierTest is Test {
     ///      identity proofs at arbitrary addresses from one consent.
     function test_rejectsARefreshGrant() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE));
         s.tokenSession = _tokenAttestation("refresh_token", "myClient-1", v);
         vm.expectPartialRevert(XPlatformVerifier.WrongGrantType.selector);
         this.run{value: quote}(s);
@@ -365,7 +368,7 @@ contract XPlatformVerifierTest is Test {
 
     function test_rejectsAPercentEncodedClientIdentifier() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE));
         s.tokenSession = _tokenAttestation("authorization_code", "my%2Bapp", v);
         vm.expectPartialRevert(TlsNotaryVerifierBase.ClientIdentifierNotSerializerSafe.selector);
         this.run{value: quote}(s);
@@ -782,7 +785,7 @@ contract XPlatformVerifierTest is Test {
         bytes memory whole = abi.encodePacked(
             "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
             "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
@@ -824,7 +827,7 @@ contract XPlatformVerifierTest is Test {
     ///      indistinguishable from a `refresh_token` value, or any other
     ///      substring the prover chose to commit.
     function test_rejectsATokenResponseWithNoRevealedAnchors() public {
-        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE));
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         s.tokenSession = _tokenAttestation("authorization_code", "myClient-1", v, false);
         vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
@@ -954,7 +957,7 @@ contract XPlatformVerifierTest is Test {
 
     function test_rejectsAnEmptyClientIdentifier() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE));
+        string memory v = string(CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE));
         s.tokenSession = _tokenAttestation("authorization_code", "", v);
         vm.expectPartialRevert(TlsNotaryVerifierBase.ClientIdentifierNotSerializerSafe.selector);
         this.run{value: quote}(s);
@@ -964,7 +967,7 @@ contract XPlatformVerifierTest is Test {
         bytes memory whole = abi.encodePacked(
             "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n",
             "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
@@ -985,7 +988,7 @@ contract XPlatformVerifierTest is Test {
         bytes memory whole = abi.encodePacked(
             "GET /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
             "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
@@ -1004,7 +1007,7 @@ contract XPlatformVerifierTest is Test {
         return abi.encodePacked(
             "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
             "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
     }
 

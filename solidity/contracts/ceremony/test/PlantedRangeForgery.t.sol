@@ -36,7 +36,6 @@ contract PlantedRangeForgeryTest is Test {
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
     bytes32 DIGEST;
-    bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444));
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
@@ -108,7 +107,7 @@ contract PlantedRangeForgeryTest is Test {
     /// X ignores it. That header's value is the only other revealed range.
     /// The real body -- grant_type=refresh_token -- is revealed to nobody.
     function _plantedHeaderToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
 
         //  0: "POST /2/oauth2/token HTTP/1.1\r\n"          (31 bytes)
         // 31: "x-pad: " (7)                                -> planted value at 38
@@ -168,7 +167,6 @@ contract PlantedRangeForgeryTest is Test {
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
-        s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
     }
 
@@ -196,7 +194,7 @@ contract PlantedRangeForgeryTest is Test {
     /// Finding 4: a notary that reveals ONE FIELD PER RANGE, as the spec's
     /// section 5.2 table lists them, is rejected.
     function _perFieldToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
         bytes memory line = "POST /2/oauth2/token ";
         bytes memory f1 = "grant_type=authorization_code";
         bytes memory f2 = "client_id=realapp";

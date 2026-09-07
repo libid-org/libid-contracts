@@ -44,7 +44,6 @@ contract GitHubPlatformVerifierTest is Test {
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
     bytes32 DIGEST;
-    bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444444444444444444444444444444444444444444444444444444444444444));
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
@@ -100,7 +99,7 @@ contract GitHubPlatformVerifierTest is Test {
         bytes memory whole = abi.encodePacked(
             "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         uint32 wholeEnd = uint32(whole.length);
         uint32 secretEnd = wholeEnd + 40; // `&client_secret=<hex>`, committed
@@ -187,7 +186,6 @@ contract GitHubPlatformVerifierTest is Test {
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
-        s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
         s.tokenSession = _exchange(CeremonyProfile.AUTHORITY_GITHUB);
         s.identitySession = _identity('{"login":"octocat","id":583231}', CeremonyProfile.AUTHORITY_GITHUB_API);
@@ -357,7 +355,7 @@ contract GitHubPlatformVerifierTest is Test {
         bytes memory whole = abi.encodePacked(
             "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 40, value: whole})),
