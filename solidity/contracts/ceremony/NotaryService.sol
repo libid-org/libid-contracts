@@ -19,7 +19,7 @@ import {INotaryService} from "./INotaryService.sol";
 ///      hashed is what the signature was checked against, and the values the
 ///      Platform Verifier went on to read were whatever the caller supplied
 ///      next to it. Deriving the key from the attested data itself is what
-///      makes those the signed fields (REQ-COMMON-49).
+///      makes those the signed fields (REQ-COMMON-33).
 ///
 ///      It holds several trusted keys rather than one. Rotation must not
 ///      invalidate attestations already made under the outgoing key, so the

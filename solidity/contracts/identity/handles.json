@@ -13,9 +13,10 @@
     "transform gives three languages the same answer with no shared library.",
     "",
     "A platform id is keccak256 of the platform NAME, with no namespace of",
-    "its own: REQ-COMMON-55 fixes it as the keccak256 of the UTF-8 bytes of",
-    "the identity-platform name, and the notary derives the same value when",
-    "it signs an attestation. libID's own constructs -- the node tags, the",
+    "its own. The specification fixes the names -- the launch profiles of",
+    "REQ-PLAT-01 are google, x and github -- and leaves the derivation to",
+    "the profile author, so this repository pins it. The notary derives the",
+    "same value when it signs an attestation. libID's own constructs -- the node tags, the",
     "attestation format tag, the session tags -- are libid-namespaced; a",
     "platform's name is not libID's to namespace."
   ],

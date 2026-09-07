@@ -56,7 +56,7 @@ contract NotaryServiceTest is Test {
         service.verify{value: FEE}(ATTESTED, SIG);
     }
 
-    /// @dev REQ-COMMON-49, and the whole reason this contract replaced one that
+    /// @dev REQ-COMMON-33, and the whole reason this contract replaced one that
     ///      took a digest. The signature is genuine and the key is trusted, but
     ///      the bytes differ by one bit -- so the digest derived HERE differs
     ///      and recovery lands on nobody. A verifier handed a caller-computed

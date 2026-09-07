@@ -8,7 +8,7 @@
 ///
 /// Authenticates one attestation and charges one fee for it. The digest is
 /// derived from the attested bytes on chain, never taken from the caller
-/// (REQ-COMMON-49), which is why `verify` is not on this interface: a
+/// (REQ-COMMON-33), which is why `verify` is not on this interface: a
 /// consumer contract calls it with the fee attached, and the decoded record
 /// comes back to that contract, not to an off-chain reader. What an operator
 /// does from here is hold the trusted key set, set the fee and withdraw what

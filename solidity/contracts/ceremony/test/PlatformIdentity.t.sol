@@ -15,10 +15,13 @@ import {IdentityNodes} from "../../identity/IdentityNodes.sol";
 ///      other -- two keyspaces for one platform, with nothing to make the
 ///      divergence loud. This file is what makes it loud.
 contract PlatformIdentityTest is Test {
-    /// @dev REQ-COMMON-55 fixes `platformId` as the keccak256 of the UTF-8
-    ///      bytes of the identity-platform NAME. The notary derives the same
-    ///      value when it signs, so a namespace of our own here would make
-    ///      every genuine attestation name a platform no verifier recognizes.
+    /// @dev `platformId` is the keccak256 of the UTF-8 bytes of the
+    ///      identity-platform NAME. The specification fixes the names -- the
+    ///      launch profiles of REQ-PLAT-01 are `google`, `x` and `github` --
+    ///      and leaves the derivation to the profile author, so this repository
+    ///      pins it. Everything that derives the same value derives it this
+    ///      way, and a namespace of our own here would make every genuine
+    ///      attestation name a platform no verifier recognizes.
     function test_theTwoTablesAgree() public pure {
         assertEq(HandleVectors.PLATFORM_X, CeremonyProfile.PLATFORM_X, "x");
         assertEq(HandleVectors.PLATFORM_GITHUB, CeremonyProfile.PLATFORM_GITHUB, "github");

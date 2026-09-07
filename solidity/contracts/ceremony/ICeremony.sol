@@ -19,7 +19,7 @@ interface ICeremony {
     ///      no caller-supplied digest, preimage hash, or verifying key: a
     ///      caller-computed digest authenticates whatever the caller hashed,
     ///      not the bytes the Platform Verifier goes on to read
-    ///      (REQ-COMMON-49).
+    ///      (REQ-COMMON-33).
     ///
     ///      Both halves are opaque above the Notary Service. The attested
     ///      bytes are the notary's format, not this chain's -- one notary
