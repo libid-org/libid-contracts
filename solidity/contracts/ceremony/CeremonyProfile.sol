@@ -7,9 +7,10 @@ pragma solidity ^0.8.24;
 ///
 /// @dev THE NAMESPACED STRINGS ARE OURS, NOT THE SPECIFICATION'S.
 ///      ceremony-common fixes no literal of its own. The platform name
-///      (REQ-COMMON-55) and each Consumer's operation domain (REQ-COMMON-01A)
-///      are required to exist and required to be pinned, but their bytes are
-///      left to the profile author.
+///      (REQ-PLAT-01, whose launch profiles are `google`, `x` and `github`)
+///      and each Consumer's operation domain (REQ-COMMON-01A) are required to
+///      exist and required to be pinned, but their bytes are left to the
+///      profile author.
 ///
 ///      So these are a cross-implementation agreement, not a reading of the
 ///      specification. A Consumer dispatching on one string and a verifier
@@ -33,7 +34,7 @@ library CeremonyProfile {
     ///      notary authenticated. It reaches the verifier as `authorityId` and
     ///      never as a transcript range: the transcript holds the authority
     ///      only in a prover-composed `Host` header, which says nothing about
-    ///      which server answered (REQ-COMMON-21, REQ-COMMON-56).
+    ///      which server answered (REQ-COMMON-21, REQ-COMMON-21A).
     ///
     ///      GitHub's two sessions have two different authorities.
     bytes32 internal constant AUTHORITY_X_API = keccak256(bytes("api.x.com"));

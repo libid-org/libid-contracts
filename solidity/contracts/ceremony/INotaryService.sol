@@ -7,8 +7,8 @@ import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 /// @notice The bottom of the verification path of ceremony-common section 5.1.
 /// @dev It answers one question -- is this attestation authentic -- and knows
 ///      nothing else. Which ranges a profile expects and what their bytes must
-///      contain belong to the Platform Verifier (REQ-COMMON-51); deciding
-///      anything profile-specific here is forbidden outright (REQ-COMMON-33).
+///      contain belong to the Platform Verifier; deciding anything
+///      profile-specific here is forbidden outright (REQ-COMMON-33).
 ///
 ///      And nothing above it knows how the answer is reached. A Platform
 ///      Verifier holds attested bytes and an opaque proof that the notary stood
@@ -22,7 +22,7 @@ interface INotaryService {
     ///      the pair by itself. It accepts no digest, preimage hash, or
     ///      verifying key from its caller: a caller-computed digest
     ///      authenticates whatever the caller hashed, which need not be the
-    ///      bytes the Platform Verifier goes on to read (REQ-COMMON-49).
+    ///      bytes the Platform Verifier goes on to read (REQ-COMMON-33).
     ///
     ///      Rejection is a revert, never a returned failure. REQ-COMMON-42
     ///      requires the fees of one submission to take effect together or not

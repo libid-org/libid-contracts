@@ -2,16 +2,25 @@
 pragma solidity ^0.8.24;
 
 /// @title CeremonyAttestation
-/// @notice Decoder for the attested-data layout of ceremony-common section 9.1.
-/// @dev The verifying side holds no transcript. It rebuilds these exact bytes
+/// @notice Decoder for the attested-data layout the launch profiles pin.
+/// @dev THE LAYOUT IS THE PROFILE'S, NOT THE SPECIFICATION'S. REQ-COMMON-18
+///      has a Platform Profile fix the attestation format it accepts and
+///      leaves the format itself to the profile author, so these bytes are an
+///      agreement between four components -- this library, `libid-ceremony` in
+///      libid-rs, the TypeScript mirror, and the notary that signs them --
+///      rather than a reading of a published layout. A divergence is silent:
+///      the signature derives a key nobody trusts and every genuine
+///      attestation is rejected with no error saying why.
+///
+///      The verifying side holds no transcript. It rebuilds these exact bytes
 ///      from what it was handed and derives the signing key from them, so a
 ///      field read differently here than the notary wrote it derives a key
 ///      nobody trusts. Every boundary is derivable from the bytes before it,
-///      which is what lets this be one forward pass (REQ-COMMON-48).
+///      which is what lets this be one forward pass.
 ///
 ///      This library reads and shape-checks. It decides nothing
 ///      profile-specific: which ranges a profile expects and what their bytes
-///      must contain belong to the Platform Verifier (REQ-COMMON-51).
+///      must contain belong to the Platform Verifier.
 ///
 ///      IT DOES NOT CHECK COVERAGE. `decode` accepts a transcript byte covered
 ///      by neither a revealed range nor a commitment, because REQ-COMMON-35 is
@@ -195,8 +204,8 @@ library CeremonyAttestation {
         returns (RangeCommitment memory commitment)
     {
         // One committed range, so the range REQ-COMMON-40 frames and the
-        // commitment the circuit opens are the same object. REQ-COMMON-60
-        // permits several per direction, and nothing else here would tie them.
+        // commitment the circuit opens are the same object. The layout permits
+        // several per direction, and nothing else here would tie them.
         if (block_.commitments.length != 1) revert NotOneCommitment(block_.commitments.length);
         commitment = block_.commitments[0];
 
@@ -470,7 +479,7 @@ library CeremonyAttestation {
 
     /// @dev Ranges ascend, are nonempty, do not overlap, and end inside the
     ///      signed transcript length; commitments additionally never overlap a
-    ///      revealed range (REQ-COMMON-59, REQ-COMMON-60).
+    ///      revealed range.
     function _check(DirectionBlock memory block_, uint32 length) private pure {
         uint32 previousEnd = 0;
         for (uint256 i = 0; i < block_.revealed.length; ++i) {
