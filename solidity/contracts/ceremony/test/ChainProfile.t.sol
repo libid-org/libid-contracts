@@ -7,7 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {CeremonyAuthorization} from "../CeremonyAuthorization.sol";
 import {CeremonyProofVerifier} from "../CeremonyProofVerifier.sol";
 
-/// @notice TEST-EVM-01: the Chain ID this stack commits is the one the EVM
+/// @notice TEST-CHAIN-02: the Chain ID this stack commits is the one the EVM
 ///         Chain Profile publishes, and the one a composition can read.
 /// @dev The expected values are transcribed from `specs/chain-profiles.md`
 ///      §3.1, not produced by this library. A test that rebuilt them here
@@ -30,7 +30,7 @@ contract ChainProfileTest is Test {
         return CeremonyAuthorization.chainId();
     }
 
-    /// @dev REQ-EVM-01. Reproducing three published vectors fixes the
+    /// @dev REQ-CHAIN-04. Reproducing three published vectors fixes the
     ///      preimage: the EIP-155 identifier's unsigned 256-bit big-endian
     ///      encoding, and nothing else of that width.
     function test_chainIdMatchesTheProfileVectors() public {
@@ -42,7 +42,8 @@ contract ChainProfileTest is Test {
         assertEq(this.chainId(), SEPOLIA_CHAIN_ID);
     }
 
-    /// @dev REQ-EVM-01B. The composition supplies the Chain ID to the runtime
+    /// @dev REQ-CHAIN-04B, which is how this profile answers REQ-CHAIN-03.
+    ///      The composition supplies the Chain ID to the runtime
     ///      (REQ-COMMON-01C), and this is where it reads the exact 32 bytes
     ///      rather than deriving them a second time. What the Proof Verifier
     ///      hands out has to be the published value, or a composition that
@@ -58,7 +59,7 @@ contract ChainProfileTest is Test {
         assertEq(pv.chainId(), this.chainId());
     }
 
-    /// @dev REQ-EVM-01 fixes the width at 256 bits, which is the ambiguity a
+    /// @dev REQ-CHAIN-04 fixes the width at 256 bits, which is the ambiguity a
     ///      runtime author faces: the same identifier has a one-byte and an
     ///      eight-byte big-endian form, and each hashes somewhere else. The
     ///      vectors above already settle it; this says which readings they
@@ -69,9 +70,10 @@ contract ChainProfileTest is Test {
         assertTrue(this.chainId() != keccak256(abi.encodePacked(uint64(ETHEREUM))), "an eight-byte preimage");
     }
 
-    /// @dev REQ-EVM-01C in the small: two chains under this profile never
-    ///      share a Chain ID, so a digest built for one opens against nothing
-    ///      on the other.
+    /// @dev What REQ-CHAIN-04 rests on: EIP-155 identifiers are already
+    ///      unique across the chains that honor them, so no two chains under
+    ///      this profile share a Chain ID, and a digest built for one opens
+    ///      against nothing on the other.
     function test_everyChainGetsItsOwnChainId() public pure {
         assertTrue(ETHEREUM_CHAIN_ID != BASE_CHAIN_ID);
         assertTrue(BASE_CHAIN_ID != SEPOLIA_CHAIN_ID);
