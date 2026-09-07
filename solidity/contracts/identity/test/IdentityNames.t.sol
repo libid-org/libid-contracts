@@ -94,7 +94,7 @@ contract IdentityNamesTest is Test {
                 ceremonyVersion: ceremonyVersion,
                 // A literal, not `names.CLAIM_IDENTITY_DOMAIN()`: reading it
                 // is an external call, and it would spend the caller's prank.
-                operationDomain: keccak256(bytes("libid.claim-identity-v2")),
+                operationDomain: keccak256(bytes("libid.claim-identity")),
                 authorizationNonce: bytes32(++nonce),
                 // The free shape: these tests are about the naming rules, and
                 // a ceremony composed by hand pays no application.

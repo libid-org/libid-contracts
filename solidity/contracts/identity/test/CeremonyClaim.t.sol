@@ -27,7 +27,7 @@ contract CeremonyClaimTest is Test {
     address constant OWNER = address(0xA11CE);
     address constant WALLET = address(0xBEEF);
     bytes32 constant PLATFORM = CeremonyProfile.PLATFORM_X;
-    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity-v2"));
+    bytes32 constant DOMAIN = keccak256(bytes("libid.claim-identity"));
     uint256 constant FEE = 0.002 ether;
     /// A hosted application, and what it charges for composing the ceremony.
     address constant HOST = address(0x405);
@@ -58,7 +58,7 @@ contract CeremonyClaimTest is Test {
         vm.deal(WALLET, 100 ether);
     }
 
-    /// The Authorized Transaction Data of `libid.claim-identity-v2`.
+    /// The Authorized Transaction Data of `libid.claim-identity`.
     function _txData(address target, uint256 feeAmount, address feeReceiver) private pure returns (bytes memory) {
         return abi.encode(target, feeAmount, feeReceiver);
     }

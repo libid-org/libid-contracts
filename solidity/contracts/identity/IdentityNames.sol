@@ -327,16 +327,17 @@ contract IdentityNames is Initializable, UUPSUpgradeable, Ownable2StepUpgradeabl
     ///
     /// @dev A new operation, or a change to what its transaction data means,
     ///      takes a NEW domain string rather than another digest field
-    ///      (REQ-COMMON-01A). This string is `-v2` because the Authorized
-    ///      Transaction Data stopped being one address and became the triple
-    ///      below: `libid.claim-identity` still means the address alone,
-    ///      wherever it is read, and a submission built for one string opens
-    ///      against nothing under the other.
+    ///      (REQ-COMMON-01A). The string survives this repository's move from
+    ///      one address to the triple below because nothing had built a
+    ///      submission against it yet: there is no earlier reading anywhere to
+    ///      separate a new one from, and a string spent for that is a string
+    ///      spent for nothing. The rule binds from here -- the next change to
+    ///      what this data means takes a new string.
     ///
     ///      Note the consequence the specification is candid about: a digest
     ///      is spendable once at EACH Consumer accepting this domain, so two
     ///      deployments choosing the same string share a digest space.
-    bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity-v2"));
+    bytes32 public constant CLAIM_IDENTITY_DOMAIN = keccak256(bytes("libid.claim-identity"));
 
     error ZeroAddress();
     /// @dev The submission names an operation this Consumer does not own
