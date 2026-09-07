@@ -35,7 +35,6 @@ contract LayoutForgeryTest is Test {
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
     bytes32 DIGEST;
-    bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444));
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
@@ -85,7 +84,7 @@ contract LayoutForgeryTest is Test {
     /// `_tokenBody` requires -- two would revert `WrongTokenRequestLayout`
     /// before the identity session this file exists to exercise ever runs.
     function _honestToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
         bytes memory request = abi.encodePacked(
             "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
             "grant_type=authorization_code&client_id=attackerapp&code=abc&code_verifier=",
@@ -178,7 +177,6 @@ contract LayoutForgeryTest is Test {
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
-        s.pkceNonce = PKCE_NONCE;
         s.proof = hex"00";
     }
 
@@ -219,7 +217,7 @@ contract LayoutForgeryTest is Test {
     /// composed begins with `POST /2/oauth2/token ` and is the first revealed
     /// range, and a second planted header value is read as "the body".
     function _unanchoredToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, PKCE_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
         bytes memory fakeLine = "POST /2/oauth2/token HTTP/1.1";
         bytes memory fakeBody = abi.encodePacked("grant_type=authorization_code&client_id=victimapp&code_verifier=", v);
         uint32 s1 = 400; // deep inside the transcript, nowhere near offset 0

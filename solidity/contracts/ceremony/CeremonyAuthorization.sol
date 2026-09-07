@@ -25,12 +25,6 @@ library CeremonyAuthorization {
     ///      base64url characters.
     uint256 internal constant PKCE_LEN = 43;
 
-    /// @dev keccak256("libid.identity.pkce"). Carries no version of its own:
-    ///      the digest already binds the ceremony version, and a change to this
-    ///      construction changes the proof statement, which bumps that version
-    ///      (REQ-COMMON-12).
-    bytes32 internal constant PKCE_DOMAIN = keccak256(bytes("libid.identity.pkce"));
-
     /// @dev Raised when the Authorized Transaction Data cannot be described by
     ///      the layout's four-byte length field.
     error TransactionDataTooLong(uint256 length);
@@ -90,16 +84,24 @@ library CeremonyAuthorization {
         return digest(operationDomain, ceremonyVersion, chainId(), authorizationNonce, transactionData);
     }
 
-    /// @notice `SHA256(PKCE_DOMAIN || authorizationDigest || pkceNonce)`.
-    function verifierHash(bytes32 authorizationDigest, bytes32 pkceNonce) internal pure returns (bytes32) {
-        return sha256(abi.encodePacked(PKCE_DOMAIN, authorizationDigest, pkceNonce));
+    /// @notice `SHA256(authorizationDigest || authorizationNonce)`.
+    /// @dev Exactly 64 bytes, and the nonce is the one the digest already
+    ///      commits -- not a second salt beside it (REQ-COMMON-12). One nonce
+    ///      is what makes a retry a new ceremony rather than the same digest
+    ///      carried under a fresh verifier.
+    function verifierHash(bytes32 authorizationDigest, bytes32 authorizationNonce) internal pure returns (bytes32) {
+        return sha256(abi.encodePacked(authorizationDigest, authorizationNonce));
     }
 
     /// @notice `BASE64URL_NOPAD(verifierHash)` -- the 43 ASCII bytes the token
     ///         request reveals, which REQ-COMMON-15A has the Platform Verifier
     ///         recompute and compare byte for byte.
-    function codeVerifier(bytes32 authorizationDigest, bytes32 pkceNonce) internal pure returns (bytes memory) {
-        return _base64UrlNoPad32(verifierHash(authorizationDigest, pkceNonce));
+    function codeVerifier(bytes32 authorizationDigest, bytes32 authorizationNonce)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return _base64UrlNoPad32(verifierHash(authorizationDigest, authorizationNonce));
     }
 
     /// @notice `BASE64URL_NOPAD(SHA256(ASCII(codeVerifier)))`.

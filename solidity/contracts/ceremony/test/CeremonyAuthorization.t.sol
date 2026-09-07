@@ -13,7 +13,6 @@ contract CeremonyAuthorizationTest is Test {
     bytes32 constant OPERATION_DOMAIN = keccak256(bytes("libid.claim-identity"));
     bytes32 constant CHAIN_ID = keccak256(bytes("example:1"));
     bytes32 constant NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
-    bytes32 constant PKCE_NONCE = bytes32(uint256(0x4444444444444444444444444444444444444444444444444444444444444444));
     bytes constant TRANSACTION_DATA = hex"00010203";
 
     bytes32 constant EXPECTED_DIGEST = 0xb318fb559e16a179b853ed2853576cda16032d93b0839bb81a55135d334c0af5;
@@ -25,7 +24,6 @@ contract CeremonyAuthorizationTest is Test {
     function test_derivedConstantsMatchTheSpecification() public pure {
         assertEq(OPERATION_DOMAIN, 0xcb29bed0428519ef88a3d670e8203db76e06f41aca3e684e2c63b516c9b93e1b);
         assertEq(CHAIN_ID, 0x38064d82f31db40935cc75f2a0d07dcfb448d7c08e7484fc30f5de95484a4066);
-        assertEq(CeremonyAuthorization.PKCE_DOMAIN, 0x3961dfe56cd0f2d94e72a15b96df889fbb46968cdb37518830fc0077b0730a01);
     }
 
     function test_preimageMatchesTheSpecificationVector() public pure {
@@ -46,18 +44,23 @@ contract CeremonyAuthorizationTest is Test {
         assertEq(got.length, 102);
     }
 
+    /// @dev The section 7 vector, under the same `authorizationNonce` the
+    ///      section 5 digest above commits. That the one nonce serves both is
+    ///      the construction REQ-COMMON-12 fixes, and reproducing this vector
+    ///      is what says so: a domain-prefixed preimage, or a second salt,
+    ///      lands somewhere else.
     function test_pkceMatchesTheSpecificationVector() public pure {
         assertEq(
-            CeremonyAuthorization.verifierHash(EXPECTED_DIGEST, PKCE_NONCE),
-            0x88c493361ea0424467046958d5cd0c50eb03ecc08ee06f02ee9875fe0219b392
+            CeremonyAuthorization.verifierHash(EXPECTED_DIGEST, NONCE),
+            0xe6d7810e5e9ccf853beda170795e4f6cc84127f94416fe8b2cd2b3aa70c8e65a
         );
-        bytes memory verifier = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, PKCE_NONCE);
-        assertEq(string(verifier), "iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I");
-        assertEq(string(CeremonyAuthorization.codeChallenge(verifier)), "BhFqYIY1YnHafYOrrblUswFnjxFF97UvGjSgqugPQvA");
+        bytes memory verifier = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, NONCE);
+        assertEq(string(verifier), "5teBDl6cz4U77aFweV5PbMhBJ_lEFv6LLNKzqnDI5lo");
+        assertEq(string(CeremonyAuthorization.codeChallenge(verifier)), "c8HLMaJOzc8OUoRYc7AocL5ioAkXVtAOmoGxoSY60IQ");
     }
 
     function test_pkceValuesAreFortyThreeUnpaddedCharacters() public pure {
-        bytes memory verifier = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, PKCE_NONCE);
+        bytes memory verifier = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, NONCE);
         bytes memory challenge = CeremonyAuthorization.codeChallenge(verifier);
         assertEq(verifier.length, CeremonyAuthorization.PKCE_LEN);
         assertEq(challenge.length, CeremonyAuthorization.PKCE_LEN);
@@ -115,13 +118,13 @@ contract CeremonyAuthorizationTest is Test {
     function test_retargetingTheDigestChangesTheVerifier() public pure {
         // This is the whole X and GitHub binding: the revealed verifier is what
         // ties one notarized token request to one transaction.
-        bytes memory a = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, PKCE_NONCE);
-        bytes memory b = CeremonyAuthorization.codeVerifier(bytes32(uint256(EXPECTED_DIGEST) ^ 1), PKCE_NONCE);
+        bytes memory a = CeremonyAuthorization.codeVerifier(EXPECTED_DIGEST, NONCE);
+        bytes memory b = CeremonyAuthorization.codeVerifier(bytes32(uint256(EXPECTED_DIGEST) ^ 1), NONCE);
         assertTrue(keccak256(a) != keccak256(b));
     }
 
-    function testFuzz_encodedVerifierIsAlwaysPkceCharset(bytes32 digest_, bytes32 pkceNonce) public pure {
-        bytes memory verifier = CeremonyAuthorization.codeVerifier(digest_, pkceNonce);
+    function testFuzz_encodedVerifierIsAlwaysPkceCharset(bytes32 digest_, bytes32 nonce) public pure {
+        bytes memory verifier = CeremonyAuthorization.codeVerifier(digest_, nonce);
         assertEq(verifier.length, CeremonyAuthorization.PKCE_LEN);
         for (uint256 i = 0; i < verifier.length; ++i) {
             bytes1 c = verifier[i];

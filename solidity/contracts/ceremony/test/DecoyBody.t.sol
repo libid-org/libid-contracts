@@ -37,7 +37,6 @@ contract DecoyBodyTest is Test {
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
     bytes32 DIGEST;
-    bytes32 constant NONCE = bytes32(uint256(0x4444444444444444444444444444444444444444444444444444444444444444));
     bytes32 constant TOKEN_C = bytes32(uint256(0x1111));
     bytes32 constant ID_C = bytes32(uint256(0x2222));
 
@@ -84,7 +83,7 @@ contract DecoyBodyTest is Test {
         bytes memory head = "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-length: 90\r\n\r\n";
         bytes memory decoy = abi.encodePacked(
             "grant_type=authorization_code&client_id=trustedApp&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, NONCE)
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
         uint32 h = uint32(head.length);
         uint32 r = h + 90; // the real body x.com actually parsed
@@ -153,7 +152,6 @@ contract DecoyBodyTest is Test {
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
-        s.pkceNonce = NONCE;
         s.proof = hex"00";
         s.tokenSession = _decoyToken();
         s.identitySession = _identity();

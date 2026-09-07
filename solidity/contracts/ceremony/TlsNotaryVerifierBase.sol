@@ -62,10 +62,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @param operationDomain    Into the digest, and returned for the Consumer
     ///                           to judge (REQ-COMMON-06A).
     /// @param authorizationNonce Into the digest, making it unique and therefore
-    ///                           its own replay nullifier.
+    ///                           its own replay nullifier, and into the PKCE
+    ///                           verifier the digest is carried under. There is
+    ///                           no second salt beside it (REQ-COMMON-12).
     /// @param transactionData    Into the digest, and returned opaque
     ///                           (REQ-COMMON-06B).
-    /// @param pkceNonce          The PKCE salt the digest is carried under.
     /// @param tokenSession       The token exchange, notarized.
     /// @param identitySession    The identity read, notarized.
     /// @param proof              Verified under the artifact governance
@@ -75,7 +76,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         bytes32 operationDomain;
         bytes32 authorizationNonce;
         bytes transactionData;
-        bytes32 pkceNonce;
         Attestation tokenSession;
         Attestation identitySession;
         bytes proof;
@@ -303,7 +303,9 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         // the transaction: retargeting an attestation to another digest would
         // take a second preimage of the revealed verifier.
         bytes memory revealedVerifier = CeremonyFields.formField(body, "code_verifier");
-        bytes memory expected = CeremonyAuthorization.codeVerifier(authorizationDigest, p.pkceNonce);
+        // Under the same nonce the digest commits, so a caller has no second
+        // value to move: changing it moves the digest too (REQ-COMMON-12).
+        bytes memory expected = CeremonyAuthorization.codeVerifier(authorizationDigest, p.authorizationNonce);
         if (keccak256(revealedVerifier) != keccak256(expected)) revert CodeVerifierMismatch();
 
         bytes memory clientId = CeremonyFields.formField(body, "client_id");

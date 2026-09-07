@@ -6,7 +6,7 @@ import {CeremonyProfile} from "../CeremonyProfile.sol";
 
 /// @notice Pins the profile tags to fixed bytes.
 /// @dev These strings are a cross-implementation agreement, not a reading of
-///      the specification, which fixes only `libid.identity.pkce`. The notary
+///      the specification, which fixes no literal of its own. The notary
 ///      writes them and the verifier compares them; a silent disagreement
 ///      rejects every genuine attestation with no error that says why. The
 ///      expected values below were computed with `cast keccak`, independently
