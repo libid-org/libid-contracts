@@ -41,6 +41,8 @@ pub const COVERED: &[(&str, &str)] = &[
     ("GoogleJwtRoots", "GoogleJwtRoots"),
     // identity
     ("IdentityNames", "IdentityNames"),
+    // ens (deployed once per network, not CREATE3-canonical)
+    ("HandleResolver", "HandleResolver"),
     // factory
     ("LibidFactory", "LibidFactory"),
     ("WTIA9", "WTIA9"),

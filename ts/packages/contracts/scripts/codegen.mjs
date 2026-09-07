@@ -32,6 +32,7 @@ const callsDir = join(packageDir, 'src', 'calls')
 // imports.
 const contracts = [
   { file: 'IdentityNames.sol', name: 'IdentityNames', exportName: 'identityNamesAbi' },
+  { file: 'HandleResolver.sol', name: 'HandleResolver', exportName: 'handleResolverAbi' },
   { file: 'NotaryService.sol', name: 'NotaryService', exportName: 'notaryServiceAbi' },
   {
     file: 'CeremonyProofVerifier.sol',
