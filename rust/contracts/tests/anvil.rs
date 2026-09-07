@@ -384,3 +384,55 @@ async fn bootstraps_the_deterministic_factory_and_deploys_through_it() {
     assert_eq!(notary.fee().call().await.unwrap(), U256::from(7));
     assert_eq!(notary.owner().call().await.unwrap(), deployer0);
 }
+
+/// The ENS resolver: a plain contract with constructor arguments, deployed
+/// through `deploy_with_ctor` from the embedded artifact, then read back.
+#[tokio::test]
+async fn deploys_the_ens_resolver_with_its_constructor_arguments() {
+    use alloy::{
+        primitives::FixedBytes,
+        sol_types::SolValue,
+    };
+    use libid_contracts::{
+        bindings::ens::HandleResolver,
+        deploy::deploy_with_ctor,
+    };
+
+    let provider = test_provider();
+    let artifacts = Artifacts::embedded();
+    let deployer = default_signer(&provider).await;
+    let gateway_signer = Address::repeat_byte(0x51);
+    let urls = vec!["https://gw.handles.link/{sender}/{data}.json".to_string()];
+
+    let ctor_args = (deployer, urls.clone(), vec![gateway_signer]).abi_encode_params();
+    let resolver_addr = deploy_with_ctor(
+        &provider,
+        &artifacts.bytecode("HandleResolver").unwrap(),
+        &ctor_args,
+        "HandleResolver",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let resolver = HandleResolver::new(resolver_addr, &provider);
+    assert_eq!(resolver.owner().call().await.unwrap(), deployer);
+    assert_eq!(resolver.urlCount().call().await.unwrap(), U256::from(1));
+    assert_eq!(resolver.urls(U256::ZERO).call().await.unwrap(), urls[0]);
+    assert!(resolver.signers(gateway_signer).call().await.unwrap());
+    // ENSIP-10, or no wildcard name ever reaches it.
+    let ensip10 = FixedBytes::<4>::from([0x90, 0x61, 0xb9, 0x23]);
+    assert!(resolver.supportsInterface(ensip10).call().await.unwrap());
+
+    // The owner rotates the signer set; the read follows.
+    let next = Address::repeat_byte(0x52);
+    resolver
+        .setSigner(next, true)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(resolver.signers(next).call().await.unwrap());
+}
