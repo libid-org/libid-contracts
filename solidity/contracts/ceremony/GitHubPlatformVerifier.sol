@@ -107,15 +107,15 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
     /// @dev GitHub commits its `client_secret`, ordered last under
     ///      REQ-COMMON-22, so exactly one committed range reaches the end.
     function _tokenSentCommitments() internal pure override returns (uint256) {
-        return 1;
+        return CeremonyProfile.GITHUB_TOKEN_SENT_COMMITMENTS;
     }
 
     function _tokenRequestLine() internal pure override returns (bytes memory) {
-        return "POST /login/oauth/access_token ";
+        return CeremonyProfile.GITHUB_TOKEN_REQUEST_LINE;
     }
 
     function _identityRequestLine() internal pure override returns (bytes memory) {
-        return "GET /user ";
+        return CeremonyProfile.GITHUB_IDENTITY_REQUEST_LINE;
     }
 
     /// @dev REQ-PLAT-51. GitHub's `id` is a BARE integer, so it is read by the
@@ -131,6 +131,6 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
         override
         returns (string memory idField, IdShape idShape, string memory handleField)
     {
-        return ("id", IdShape.JsonInteger, "login");
+        return (CeremonyProfile.GITHUB_ID_FIELD, IdShape.JsonInteger, CeremonyProfile.GITHUB_HANDLE_FIELD);
     }
 }

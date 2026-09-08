@@ -10,10 +10,12 @@ set -euo pipefail
 
 cargo_manifest="rust/contracts/Cargo.toml"
 identity_manifest="rust/identity/Cargo.toml"
+profiles_manifest="rust/profiles/Cargo.toml"
 npm_manifest="ts/packages/contracts/package.json"
 
 cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$cargo_manifest" | head -n1)"
 identity_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$identity_manifest" | head -n1)"
+profiles_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$profiles_manifest" | head -n1)"
 npm_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$npm_manifest")"
 
 if [ -z "$cargo_version" ]; then
@@ -23,10 +25,12 @@ fi
 
 echo "cargo ($cargo_manifest):        $cargo_version"
 echo "cargo ($identity_manifest):         $identity_version"
+echo "cargo ($profiles_manifest):         $profiles_version"
 echo "npm   ($npm_manifest): $npm_version"
 
-if [ "$cargo_version" != "$npm_version" ] || [ "$cargo_version" != "$identity_version" ]; then
-  echo "::error::version mismatch: cargo=$cargo_version identity=$identity_version npm=$npm_version — run scripts/bump-version.sh to set all three" >&2
+if [ "$cargo_version" != "$npm_version" ] || [ "$cargo_version" != "$identity_version" ] \
+  || [ "$cargo_version" != "$profiles_version" ]; then
+  echo "::error::version mismatch: cargo=$cargo_version identity=$identity_version profiles=$profiles_version npm=$npm_version — run scripts/bump-version.sh to set them all" >&2
   exit 1
 fi
 

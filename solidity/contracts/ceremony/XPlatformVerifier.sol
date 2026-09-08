@@ -78,15 +78,15 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
     /// @dev X uses a public client and hides no body field, so its token
     ///      request is revealed whole.
     function _tokenSentCommitments() internal pure override returns (uint256) {
-        return 0;
+        return CeremonyProfile.X_TOKEN_SENT_COMMITMENTS;
     }
 
     function _tokenRequestLine() internal pure override returns (bytes memory) {
-        return "POST /2/oauth2/token ";
+        return CeremonyProfile.X_TOKEN_REQUEST_LINE;
     }
 
     function _identityRequestLine() internal pure override returns (bytes memory) {
-        return "GET /2/users/me ";
+        return CeremonyProfile.X_IDENTITY_REQUEST_LINE;
     }
 
     /// @dev REQ-PLAT-56, and X's only extra token-body check. The runtime's own
@@ -111,6 +111,6 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
         override
         returns (string memory idField, IdShape idShape, string memory handleField)
     {
-        return ("id", IdShape.JsonString, "username");
+        return (CeremonyProfile.X_ID_FIELD, IdShape.JsonString, CeremonyProfile.X_HANDLE_FIELD);
     }
 }
