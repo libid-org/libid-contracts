@@ -96,7 +96,9 @@ contract IdentityNamesTest is Test {
                 // is an external call, and it would spend the caller's prank.
                 operationDomain: keccak256(bytes("libid.claim-identity")),
                 authorizationNonce: bytes32(++nonce),
-                transactionData: abi.encode(stagedTarget)
+                // The free shape: these tests are about the naming rules, and
+                // a ceremony composed by hand pays no application.
+                transactionData: abi.encode(stagedTarget, uint256(0), address(0))
             })
         );
     }
