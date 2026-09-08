@@ -2,7 +2,7 @@
 # Set the release version everywhere it lives: the crate manifest, the crate's
 # entry in Cargo.lock, and the npm package manifest. The version is single-
 # sourced by convention — this script is the only supported way to change it,
-# and CI's `versions` job fails any PR where the two manifests disagree.
+# and CI's `versions` job fails any PR where the manifests disagree.
 #
 #   scripts/bump-version.sh 1.2.3
 #   scripts/bump-version.sh 1.2.0-rc.1
@@ -20,13 +20,16 @@ fi
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cargo_manifest="$root/rust/contracts/Cargo.toml"
 identity_manifest="$root/rust/identity/Cargo.toml"
+profiles_manifest="$root/rust/profiles/Cargo.toml"
 npm_manifest="$root/ts/packages/contracts/package.json"
 
-python3 - "$new" "$cargo_manifest" "$identity_manifest" "$npm_manifest" <<'PY'
+python3 - "$new" "$cargo_manifest" "$identity_manifest" "$profiles_manifest" "$npm_manifest" <<'PY'
 import re
 import sys
 
-new, cargo_manifest, identity_manifest, npm_manifest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+new, cargo_manifest, identity_manifest, profiles_manifest, npm_manifest = (
+    sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+)
 
 def rewrite(path, pattern, replacement):
     text = open(path).read()
@@ -37,6 +40,7 @@ def rewrite(path, pattern, replacement):
 
 rewrite(cargo_manifest, r'^version = ".*"$', f'version = "{new}"')
 rewrite(identity_manifest, r'^version = ".*"$', f'version = "{new}"')
+rewrite(profiles_manifest, r'^version = ".*"$', f'version = "{new}"')
 rewrite(npm_manifest, r'^(\s*)"version": ".*",$', rf'\1"version": "{new}",')
 PY
 
@@ -45,12 +49,13 @@ PY
 # because that is all this needs, with a networked fallback just in case.
 (cd "$root/rust" && (cargo update --workspace --offline 2>/dev/null || cargo update --workspace))
 
-# Prove the two manifests now agree, using the same check CI runs.
+# Prove the manifests now agree, using the same check CI runs.
 "$root/.github/workflows/scripts/verify-tag.sh" >/dev/null
 
 echo "Version set to $new in:"
 echo "  rust/contracts/Cargo.toml (+ rust/Cargo.lock)"
 echo "  rust/identity/Cargo.toml"
+echo "  rust/profiles/Cargo.toml"
 echo "  ts/packages/contracts/package.json"
 echo
 echo "Next steps:"

@@ -86,15 +86,21 @@ jobs:
   # the source and a committed output leaves every per-language test green
   # while the languages disagree with each other.
   # ---------------------------------------------------------------------------
-  handles-drift:
-    name: Generated handle tables
+  generated-tables:
+    name: Generated tables
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # No submodules: the script formats its Solidity output through
+      # No submodules: the scripts format their Solidity output through
       # `forge fmt --raw -` (stdin), which reads foundry.toml but compiles
       # nothing, so the libraries are never consulted.
+      #
+      # Tags ARE needed: the ceremony-profile check compares each shipped
+      # profile against the last release, and a shallow clone carrying none
+      # would find nothing to compare and pass in silence.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # Not the forge-build composite: this job needs the `forge` binary for
       # fmt, not the artifacts, and skipping the build keeps the check at the
@@ -103,8 +109,13 @@ jobs:
         with:
           version: ${{ env.FOUNDRY_VERSION }}
 
-      - name: Generated files are current
+      - name: Generated handle tables are current
         run: python3 scripts/regen-identity-handles.py --check
+
+      # Also refuses a shipped ceremony profile whose values changed while its
+      # ceremonyVersion stayed put, which needs the release tags.
+      - name: Generated ceremony profiles are current
+        run: python3 scripts/regen-ceremony-profiles.py --check
 
   # ---------------------------------------------------------------------------
   # Rust: vendored artifacts, formatting, clippy, tests. Needs forge twice
@@ -335,6 +346,7 @@ jobs:
         working-directory: rust
         run: |
           cargo publish --dry-run -p libid-identity
+          cargo publish --dry-run -p libid-profiles
           cargo publish --dry-run --allow-dirty -p libid-contracts
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -400,7 +412,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'release' && github.event.action == 'published'
-    needs: [verify-tag, versions, solidity, rust, publish-check]
+    # `generated-tables` is load-bearing here, not decoration: it is what
+    # refuses a release whose committed tables no longer match the file they
+    # come from, and what refuses a shipped ceremony profile whose values
+    # changed while its version stayed put. Publishing either would put a
+    # table on crates.io that no deployed verifier agrees with.
+    needs: [verify-tag, versions, solidity, rust, publish-check, generated-tables]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -429,7 +446,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          for crate in libid-identity libid-contracts; do
+          for crate in libid-identity libid-profiles libid-contracts; do
             published="$(curl -fsSL "https://index.crates.io/li/bi/$crate" | jq -r .vers || true)"
             if grep -qxF "$version" <<<"$published"; then
               echo "::notice::$crate $version is already on crates.io; skipping its publish."
@@ -444,7 +461,12 @@ jobs:
         working-directory: rust
         run: cargo publish -p libid-identity --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
 
-      # libid-contracts only: libid-identity is pure Rust and embeds nothing.
+      - name: cargo publish libid-profiles
+        if: steps.crates-check.outputs.publish-profiles == 'true'
+        working-directory: rust
+        run: cargo publish -p libid-profiles --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+
+      # libid-contracts only: the other two are pure Rust and embed nothing.
       - name: Vendor artifacts
         run: ./scripts/vendor-artifacts.sh
 

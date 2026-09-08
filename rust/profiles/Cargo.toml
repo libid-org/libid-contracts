@@ -1,0 +1,22 @@
+[package]
+name = "libid-profiles"
+version = "0.7.0"
+edition = "2021"
+rust-version = "1.94.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/libid-org/libid-contracts"
+description = "The libID ceremony profiles: what each platform's notarized sessions request and reveal, mirroring CeremonyProfile.sol byte for byte."
+keywords = ["ethereum", "identity", "oauth", "tlsnotary"]
+categories = ["cryptography::cryptocurrencies"]
+include = ["src/**", "README.md"]
+
+# No runtime dependencies on purpose, and none are coming. A prover, a notary
+# and a backend all need these constants, and none of them should inherit
+# anything to read a table. Hashing a platform name into an id is the caller's,
+# which is why nothing here pulls in keccak outside its own tests.
+[dependencies]
+
+# Tests only. The vectors below hash the strings and compare against the
+# numbers `CeremonyProfile.t.sol` pins, so nothing published carries this.
+[dev-dependencies]
+tiny-keccak = { version = "2.0", features = ["keccak"] }

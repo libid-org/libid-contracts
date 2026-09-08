@@ -1,0 +1,120 @@
+{
+  "note": [
+    "The single source of truth for the ceremony profiles. Solidity, Rust and",
+    "TypeScript constants are generated from this file by",
+    "scripts/regen-ceremony-profiles.py. The Platform Verifiers are hand",
+    "written and READ these constants; only the values live here.",
+    "",
+    "THESE STRINGS ARE OURS, NOT THE SPECIFICATION'S. ceremony-common fixes no",
+    "literal of its own: platform-ceremonies REQ-PLAT-01 fixes the profile",
+    "NAMES, and every byte below is the profile author's choice. So this is a",
+    "cross-implementation agreement, and it is agreed here rather than four",
+    "times over.",
+    "",
+    "Four components must produce the same bytes: this repository's verifiers,",
+    "the browser that notarizes three of the four sessions, the deployment that",
+    "notarizes the fourth, and the notary that signs what they observed. A",
+    "disagreement is silent -- a Consumer dispatching on one string and a",
+    "verifier registered under another simply never meet, and a request line a",
+    "prover composes one byte differently is an attestation rejected with no",
+    "error that says why.",
+    "",
+    "Changing a value here changes what a deployed verifier accepts. That is a",
+    "new ceremonyVersion, not an edit: --check compares every shipped profile",
+    "against the last release and refuses a changed profile that kept its",
+    "version."
+  ],
+  "parameters": {
+    "maxFutureAttestationSkewSeconds": 300,
+    "note": [
+      "Governance-owned seconds, read where they are enforced. A Platform",
+      "Verifier reads the current value when it verifies and MUST NOT accept a",
+      "caller-supplied substitute (REQ-PARAM-02). These are the launch values;",
+      "a deployment stores and updates them."
+    ]
+  },
+  "profiles": [
+    {
+      "platform": "google",
+      "ceremonyVersion": 1,
+      "note": [
+        "Google's evidence is a signed token checked against Google's published",
+        "keys, so the profile notarizes nothing: no session, no attestation,",
+        "and no Notary Fee."
+      ],
+      "sessions": {}
+    },
+    {
+      "platform": "x",
+      "ceremonyVersion": 1,
+      "proofLifetimeSeconds": 3600,
+      "note": [
+        "A public client with S256 PKCE and two browser-owned sessions, both",
+        "served by the same host."
+      ],
+      "sessions": {
+        "token": {
+          "authority": "api.x.com",
+          "method": "POST",
+          "path": "/2/oauth2/token",
+          "secretField": null,
+          "note": [
+            "A public client hides no body field, so the request is revealed",
+            "whole and the verifier accepts exactly zero committed ranges in",
+            "this direction."
+          ]
+        },
+        "identity": {
+          "authority": "api.x.com",
+          "method": "GET",
+          "path": "/2/users/me",
+          "idField": "id",
+          "idShape": "jsonString",
+          "handleField": "username",
+          "note": [
+            "X's id is a JSON string, so both members are read by their full",
+            "`\"field\":\"` delimiters."
+          ]
+        }
+      }
+    },
+    {
+      "platform": "github",
+      "ceremonyVersion": 1,
+      "proofLifetimeSeconds": 3600,
+      "note": [
+        "A confidential client. The exchange runs in the deployment because the",
+        "secret cannot reach the browser, and the two sessions are served by",
+        "DIFFERENT hosts -- which is why one pinned authority per profile would",
+        "be wrong."
+      ],
+      "sessions": {
+        "token": {
+          "authority": "github.com",
+          "method": "POST",
+          "path": "/login/oauth/access_token",
+          "secretField": "client_secret",
+          "note": [
+            "The client secret is committed rather than revealed, ordered last",
+            "in the body under REQ-COMMON-22 so the committed run is a suffix",
+            "and not a hole."
+          ]
+        },
+        "identity": {
+          "authority": "api.github.com",
+          "method": "GET",
+          "path": "/user",
+          "idField": "id",
+          "idShape": "jsonInteger",
+          "handleField": "login",
+          "note": [
+            "GitHub's id is a BARE integer, read with its terminator pinned to",
+            "`,` or `}` and no other byte: the terminator is what proves the",
+            "revealed digits are the whole number rather than a prefix",
+            "(REQ-PLAT-51)."
+          ]
+        }
+      }
+    }
+  ]
+}

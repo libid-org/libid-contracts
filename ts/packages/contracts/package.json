@@ -26,6 +26,10 @@
       "types": "./dist/abis/index.d.ts",
       "default": "./dist/abis/index.js"
     },
+    "./ceremony": {
+      "types": "./dist/ceremony/index.d.ts",
+      "default": "./dist/ceremony/index.js"
+    },
     "./identity": {
       "types": "./dist/identity/index.d.ts",
       "default": "./dist/identity/index.js"
