@@ -14,3 +14,6 @@ ts/packages/*/dist/
 rust/contracts/artifacts/
 ts/packages/contracts/src/abis/
 ts/packages/contracts/src/calls/
+
+# Python bytecode from the generator scripts.
+__pycache__/
