@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -109,6 +110,25 @@ def authorities(spec: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+SAFE = re.compile(r"^[A-Za-z0-9._~:/?#\[\]@!$&*+,;=%-]+$")
+
+
+def safe(value: str, what: str) -> str:
+    """A value the three languages can all carry as a literal.
+
+    The handles generator escapes instead, because its vectors deliberately
+    hold bytes a source file cannot: that is what they test. Nothing here is
+    like that. A path, a method, a host and a JSON member name are drawn from
+    URL and identifier characters, so a quote or a backslash is a mistake, and
+    escaping one would emit a constant no verifier could ever match. Refusing
+    says so where the reason is visible -- rather than, as Solidity did before
+    this check, as a parser error about an unexpected token.
+    """
+    if not SAFE.fullmatch(value):
+        raise SystemExit(f"ERROR: {what} {value!r} carries a character a literal cannot hold")
+    return value
+
+
 def validate(spec: dict[str, Any]) -> None:
     """Refuse a spec that would generate constants nothing can rely on."""
     seen: set[str] = set()
@@ -119,8 +139,16 @@ def validate(spec: dict[str, Any]) -> None:
         seen.add(platform)
         if not platform.islower() or not platform.isascii():
             raise SystemExit(f"ERROR: platform {platform!r} must be lowercase ASCII")
+        safe(platform, "platform")
         for name, session in sessions_of(profile):
-            host = session["authority"]
+            host = safe(session["authority"], "authority")
+            safe(session["method"], "method")
+            safe(session["path"], "path")
+            if name == "token" and session["secretField"] is not None:
+                safe(session["secretField"], "secretField")
+            if name == "identity":
+                safe(session["idField"], "idField")
+                safe(session["handleField"], "handleField")
             if host != host.lower() or host.endswith("."):
                 raise SystemExit(
                     f"ERROR: authority {host!r} must be lowercase with no trailing dot"
@@ -386,18 +414,18 @@ def sol_formatted(source: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def rust_doc(note, indent="", marker="///"):
+def rust_doc(note: Any, indent: str = "", marker: str = "///") -> list[str]:
     return [f"{indent}{marker} {line}" if line else f"{indent}{marker}" for line in as_lines(note)]
 
 
-def rust_str(value):
+def rust_str(value: str | None) -> str:
     if value is None:
         return "None"
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'Some("{escaped}")'
 
 
-def rust_session(session, indent):
+def rust_session(session: dict[str, Any], indent: int) -> list[str]:
     pad = " " * indent
     return [
         f"{pad}session: Session {{",
@@ -409,7 +437,7 @@ def rust_session(session, indent):
     ]
 
 
-def gen_rust(spec):
+def gen_rust(spec: dict[str, Any]) -> str:
     lines = [header("//").rstrip("\n"), ""]
     lines += rust_doc(spec.get("note"), marker="//!")
     lines += [
@@ -547,14 +575,14 @@ def gen_rust(spec):
 # --------------------------------------------------------------------------
 
 
-def ts_str(value):
+def ts_str(value: str | None) -> str:
     if value is None:
         return "null"
     escaped = value.replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
 
 
-def ts_doc(note, indent=""):
+def ts_doc(note: Any, indent: str = "") -> list[str]:
     lines = as_lines(note)
     if not lines:
         return []
@@ -564,7 +592,7 @@ def ts_doc(note, indent=""):
     return out
 
 
-def ts_session(session, indent):
+def ts_session(session: dict[str, Any], indent: int) -> list[str]:
     pad = " " * indent
     return [
         f"{pad}session: {{",
@@ -576,7 +604,7 @@ def ts_session(session, indent):
     ]
 
 
-def gen_ts(spec):
+def gen_ts(spec: dict[str, Any]) -> str:
     lines = [header("//").rstrip("\n"), ""]
     lines += ts_doc(spec.get("note"))
     lines += [
