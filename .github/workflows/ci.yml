@@ -412,7 +412,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'release' && github.event.action == 'published'
-    needs: [verify-tag, versions, solidity, rust, publish-check]
+    # `generated-tables` is load-bearing here, not decoration: it is what
+    # refuses a release whose committed tables no longer match the file they
+    # come from, and what refuses a shipped ceremony profile whose values
+    # changed while its version stayed put. Publishing either would put a
+    # table on crates.io that no deployed verifier agrees with.
+    needs: [verify-tag, versions, solidity, rust, publish-check, generated-tables]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
