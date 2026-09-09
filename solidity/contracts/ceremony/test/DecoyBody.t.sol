@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {AttestationBuilder} from "./AttestationBuilder.sol";
-import {CeremonyAttestation} from "../CeremonyAttestation.sol";
 import {CeremonyAuthorization} from "../CeremonyAuthorization.sol";
 import {CeremonyProfile} from "../CeremonyProfile.sol";
 import {ICeremony} from "../ICeremony.sol";

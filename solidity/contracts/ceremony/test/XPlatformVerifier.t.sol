@@ -7,7 +7,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {AttestationBuilder} from "./AttestationBuilder.sol";
 import {CeremonyAttestation} from "../CeremonyAttestation.sol";
 import {CeremonyAuthorization} from "../CeremonyAuthorization.sol";
-import {CeremonyFields} from "../CeremonyFields.sol";
 import {CeremonyProfile} from "../CeremonyProfile.sol";
 import {ICeremony} from "../ICeremony.sol";
 import {INotaryService} from "../INotaryService.sol";
