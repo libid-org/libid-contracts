@@ -20,3 +20,10 @@ include = ["src/**", "README.md"]
 # numbers `CeremonyProfile.t.sol` pins, so nothing published carries this.
 [dev-dependencies]
 tiny-keccak = { version = "2.0", features = ["keccak"] }
+# The head this table pins is a claim about what hyper writes, so the test that
+# checks it drives the real encoder rather than a model of one. Tests only:
+# nothing published carries any of this.
+hyper = { version = "1.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "io-util"] }
