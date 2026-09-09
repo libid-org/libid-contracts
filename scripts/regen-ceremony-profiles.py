@@ -168,10 +168,10 @@ HEADER = re.compile(r"^[a-z][a-z0-9-]*: [\x20-\x21\x23-\x26\x28-\x5b\x5d-\x7e]+$
 def request_headers(session: dict[str, Any], host: str) -> None:
     """Refuse a header list a verifier could not compare, or should not.
 
-    The list becomes one pinned run of bytes, so a header the wire spells
+    A verifier compares these lines raw, so a header the wire spells
     differently -- another case, a second copy of a field name, a `content-length`
-    the client is going to append anyway -- is a profile that rejects every
-    honest session, and says so here rather than as a rejection with no reason.
+    whose value no profile can know -- is a profile that rejects every honest
+    session, and says so here rather than as a rejection with no reason.
     """
     headers = session["requestHeaders"]
     if not isinstance(headers, list) or not headers:
@@ -194,7 +194,7 @@ def request_headers(session: dict[str, Any], host: str) -> None:
     if "content-type" not in names:
         raise SystemExit("ERROR: the media type selects the platform's request parser and is required")
     if "content-length" in names:
-        raise SystemExit("ERROR: the HTTP client appends `content-length`; a profile stating it moves it")
+        raise SystemExit("ERROR: `content-length` is the body's own count; the verifier reads it, no profile can state it")
 
 
 def validate(spec: dict[str, Any]) -> None:
@@ -500,9 +500,9 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// whose request hides nothing and is revealed whole.",
         "    pub secret_field: Option<&'static str>,",
         "    /// Every header this request sends, lowercased as the wire spells them,",
-        "    /// in the order a prover must set them. `content-length` is absent",
-        "    /// because the HTTP client appends it; a builder setting one of its own",
-        "    /// moves it and the head below stops matching.",
+        "    /// in no particular order. `content-length` is absent because its value",
+        "    /// is the body's own count: the HTTP client appends it and the verifier",
+        "    /// reads it rather than compares it.",
         "    pub request_headers: &'static [&'static str],",
         "    /// The same lines joined by CRLF, which is the shape a Platform",
         "    /// Verifier splits and matches as a set -- order is the prover's, the",
@@ -659,11 +659,11 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly session: Session",
         "  /** The body field committed rather than revealed, or null. */",
         "  readonly secretField: string | null",
-        "  /** Every header this request sends, lowercased, in the order to set them.",
+        "  /** Every header this request sends, lowercased, in no particular order.",
         "   * `content-length` is absent: the HTTP client appends it. */",
         "  readonly requestHeaders: readonly string[]",
-        "  /** Those headers as the run of bytes the Platform Verifier compares, ending",
-        "   * at the `content-length` value it reads out of the transcript. */",
+        "  /** The same lines joined by CRLF, which a Platform Verifier splits and",
+        "   * matches as a set. */",
         "  readonly requestHeaderBlock: string",
         "}",
         "",

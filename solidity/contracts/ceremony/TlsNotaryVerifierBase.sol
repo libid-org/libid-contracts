@@ -99,9 +99,9 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
-    /// @dev The token request's head is not the run of bytes the profile fixes:
-    ///      a header added, removed, reordered or given another value, or a
-    ///      declared body length that is not plain decimal digits.
+    /// @dev The token request's head is not the profile's header set: a header
+    ///      added, removed, repeated or given another value, or a declared body
+    ///      length that is not plain decimal digits.
     error WrongTokenRequestHead();
     /// @dev The request declared a body of one length and the notary signed
     ///      another, so the bytes the platform parsed as the form are not the
@@ -115,14 +115,14 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _tokenRequestLine() internal pure virtual returns (bytes memory);
     function _identityRequestLine() internal pure virtual returns (bytes memory);
 
-    /// @dev The token request's head, byte for byte, up to the `content-length`
-    ///      value this verifier reads out of the transcript itself.
+    /// @dev The token request's header lines, CRLF-joined, which `_checkTokenHead`
+    ///      splits and matches as a set. `content-length` is not among them:
+    ///      this verifier reads its value out of the transcript itself.
     ///
     ///      Only the token request has one. The identity request carries the
-    ///      bearer in a header, so its head is not fixed bytes and its headers
-    ///      are held to `requireBearerHeaderRequest` instead: coverage, one
-    ///      line-anchored `authorization`, and the framing around the committed
-    ///      value.
+    ///      bearer in a header, so its headers are not fixed and are held to
+    ///      `requireBearerHeaderRequest` instead: coverage, one line-anchored
+    ///      `authorization`, and the framing around the committed value.
     function _tokenRequestHeaders() internal pure virtual returns (bytes memory);
 
     /// @dev How many committed ranges the token request carries. X hides no

@@ -89,8 +89,8 @@ contract GitHubPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The header block `github/v1` fixes, in the order the Token-Exchange
-    /// Service must send it.
+    /// The header set `github/v1` fixes, laid out in the profile's order; the
+    /// verifier accepts any.
     bytes constant EXCHANGE_HEADERS =
         "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
 

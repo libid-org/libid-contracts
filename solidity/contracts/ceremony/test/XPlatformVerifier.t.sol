@@ -108,7 +108,8 @@ contract XPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The header block `x/v1` fixes, in the order the browser sends it.
+    /// The header set `x/v1` fixes, laid out in the profile's order; the
+    /// verifier accepts any.
     bytes constant TOKEN_HEADERS =
         "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
 

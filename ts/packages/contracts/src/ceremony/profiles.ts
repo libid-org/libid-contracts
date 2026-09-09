@@ -41,11 +41,11 @@ export interface TokenSession {
   readonly session: Session
   /** The body field committed rather than revealed, or null. */
   readonly secretField: string | null
-  /** Every header this request sends, lowercased, in the order to set them.
+  /** Every header this request sends, lowercased, in no particular order.
    * `content-length` is absent: the HTTP client appends it. */
   readonly requestHeaders: readonly string[]
-  /** Those headers as the run of bytes the Platform Verifier compares, ending
-   * at the `content-length` value it reads out of the transcript. */
+  /** The same lines joined by CRLF, which a Platform Verifier splits and
+   * matches as a set. */
   readonly requestHeaderBlock: string
 }
 

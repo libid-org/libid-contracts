@@ -74,10 +74,10 @@
             "deployment profile because it selects the platform's request",
             "parser, and a pin nothing compares is a pin in name only.",
             "",
-            "In the order the browser sets them, which is the order they reach",
-            "the wire. `content-length` is not among them: the HTTP client",
-            "appends it, its value is the body's own length, and the verifier",
-            "checks it against the length the notary signed."
+            "In no particular order: the verifier matches them as a set.",
+            "`content-length` is not among them: the HTTP client appends it,",
+            "its value is the body's own length, and the verifier checks it",
+            "against the length the notary signed."
           ]
         },
         "identity": {

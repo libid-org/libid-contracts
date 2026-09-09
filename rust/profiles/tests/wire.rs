@@ -38,17 +38,16 @@ async fn head_hyper_writes(session: &TokenSession, body: &'static [u8]) -> Vec<u
         .method(session.session.method)
         .uri(session.session.path);
 
-    // In the order the profile lists them, which is the order the head is laid
-    // out in. hyper preserves it; that is half of what this test is for.
+    // In the profile's order, which decides nothing: the verifier matches the
+    // head as a set, and the order hyper writes is not asserted below.
     for header in session.request_headers {
         let (name, value) = header.split_once(": ").expect("`name: value`");
         request = request.header(name, value);
     }
 
-    // No `content-length` is set here, deliberately: hyper appends its own for
-    // a known-length body, and a builder that set one would land it where the
-    // caller put it rather than last. The profile's note says so, and the
-    // generator refuses a list that states one.
+    // No `content-length` is set here: hyper appends its own for a known-length
+    // body, and the profile cannot state one -- its value is the body's own
+    // count, which the verifier reads from the head rather than compares.
     let request = request
         .body(http_body_util::Full::new(hyper::body::Bytes::from(body)))
         .expect("valid request");
@@ -127,8 +126,8 @@ async fn the_github_exchange_head_is_one_the_profile_admits() {
 #[tokio::test]
 async fn the_declared_length_is_the_body_and_moves_with_it() {
     // The verifier compares the declared length against the body the notary
-    // signed, so the digits after the pinned run have to be the body's own
-    // count -- including when that count needs more than one digit.
+    // signed, so the digits hyper writes have to be the body's own count --
+    // including when that count needs more than one digit.
     let session = X.token.expect("x notarizes a token session");
     for body in [
         &b"a=1"[..],

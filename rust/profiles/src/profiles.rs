@@ -61,9 +61,9 @@ pub struct TokenSession {
     /// whose request hides nothing and is revealed whole.
     pub secret_field: Option<&'static str>,
     /// Every header this request sends, lowercased as the wire spells them,
-    /// in the order a prover must set them. `content-length` is absent
-    /// because the HTTP client appends it; a builder setting one of its own
-    /// moves it and the head below stops matching.
+    /// in no particular order. `content-length` is absent because its value
+    /// is the body's own count: the HTTP client appends it and the verifier
+    /// reads it rather than compares it.
     pub request_headers: &'static [&'static str],
     /// The same lines joined by CRLF, which is the shape a Platform
     /// Verifier splits and matches as a set -- order is the prover's, the
