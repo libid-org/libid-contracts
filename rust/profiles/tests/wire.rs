@@ -110,7 +110,7 @@ fn assert_head_admits(session: &TokenSession, wire: &[u8], body_len: usize) {
 async fn the_x_token_request_head_is_one_the_profile_admits() {
     let session = X.token.expect("x notarizes a token session");
     // Shaped like the real body: five form fields, no reserved bytes.
-    let body = b"grant_type=authorization_code&client_id=abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I";
+    let body = b"grant_type=authorization_code&client_id=abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=5teBDl6cz4U77aFweV5PbMhBJ_lEFv6LLNKzqnDI5lo";
     let wire = head_hyper_writes(&session, body).await;
     assert_head_admits(&session, &wire, body.len());
 }
@@ -119,7 +119,7 @@ async fn the_x_token_request_head_is_one_the_profile_admits() {
 async fn the_github_exchange_head_is_one_the_profile_admits() {
     let session = GITHUB.token.expect("github notarizes a token session");
     // GitHub's body carries the secret last, per REQ-COMMON-22.
-    let body = b"client_id=Iv1.abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I&client_secret=deadbeef";
+    let body = b"client_id=Iv1.abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=5teBDl6cz4U77aFweV5PbMhBJ_lEFv6LLNKzqnDI5lo&client_secret=deadbeef";
     let wire = head_hyper_writes(&session, body).await;
     assert_head_admits(&session, &wire, body.len());
 }
