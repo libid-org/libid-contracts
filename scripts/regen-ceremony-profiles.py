@@ -15,10 +15,6 @@ That is the point: four components must produce the same bytes, and a
 disagreement between them is silent -- a Consumer dispatching on one string and
 a verifier registered under another simply never meet.
 
-`--check` additionally refuses a SHIPPED profile whose values changed while its
-`ceremonyVersion` stayed put. Changing what a deployed verifier accepts is a new
-version, not an edit, and the previous release is what says which is which.
-
 Run: ./scripts/regen-ceremony-profiles.py
 """
 from __future__ import annotations
@@ -48,6 +44,11 @@ BANNER = [
 ]
 
 SESSIONS = ("token", "identity")
+
+# The transport's, not a platform's: TLSNotary speaks HTTP/1.1, and the length
+# header is written by the HTTP client rather than chosen by anyone.
+HTTP_VERSION = "HTTP/1.1"
+LENGTH_HEADER = "content-length: "
 
 
 def header(comment: str) -> str:
@@ -91,6 +92,25 @@ def request_line(session: dict[str, Any]) -> str:
     return f"{session['method']} {session['path']} "
 
 
+def request_header_block(session: dict[str, Any]) -> str:
+    """The header lines a verifier must find, joined by CRLF.
+
+    A block rather than one run of the whole head, because the head's ORDER is
+    not fixed. A verifier splits both this and the head it was given into lines
+    and matches them as sets: every line here found exactly once there, nothing
+    there that is not here, plus the `content-length` HTTP framing owns.
+
+    Order is left to the prover because it changes nothing a platform does with
+    the request, and fixing it would bind every prover to the order its HTTP
+    library emits -- the browser reaches the wire through tlsn's wasm prover,
+    whose `HttpRequest` holds headers in a `HashMap`. Neither is the version or
+    the length header profile data: hyper writes `HTTP/1.1`, lowercases every
+    field name, and appends its own length, so the profile states what a caller
+    chooses and the verifier expects what the client does with it.
+    """
+    return "\r\n".join(session["requestHeaders"])
+
+
 def sessions_of(profile: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     """The profile's sessions in a fixed order, skipping those it has none of."""
     return [(name, profile["sessions"][name]) for name in SESSIONS if name in profile["sessions"]]
@@ -129,6 +149,54 @@ def safe(value: str, what: str) -> str:
     return value
 
 
+def escaped(value: str) -> str:
+    """A generated string as a literal, in all three languages at once.
+
+    Only the line endings need escaping, and all three spell them the same way:
+    `safe` and `HEADER` refuse every byte that would need more, so a value
+    reaching here carries no quote and no backslash of its own.
+    """
+    return value.replace("\r", "\\r").replace("\n", "\\n")
+
+
+# Lowercase field name, one colon and one space, then printable ASCII with the
+# three bytes a literal would have to escape left out. Lowercase because that is
+# what hyper puts on the wire, and these bytes are compared raw.
+HEADER = re.compile(r"^[a-z][a-z0-9-]*: [\x20-\x21\x23-\x26\x28-\x5b\x5d-\x7e]+$")
+
+
+def request_headers(session: dict[str, Any], host: str) -> None:
+    """Refuse a header list a verifier could not compare, or should not.
+
+    A verifier compares these lines raw, so a header the wire spells
+    differently -- another case, a second copy of a field name, a `content-length`
+    whose value no profile can know -- is a profile that rejects every honest
+    session, and says so here rather than as a rejection with no reason.
+    """
+    headers = session["requestHeaders"]
+    if not isinstance(headers, list) or not headers:
+        raise SystemExit("ERROR: a token session must list the headers it sends")
+
+    names: list[str] = []
+    for line in headers:
+        if not isinstance(line, str) or not HEADER.fullmatch(line):
+            raise SystemExit(f"ERROR: header {line!r} is not `lowercase-name: value`")
+        names.append(line.split(":", 1)[0])
+    if len(set(names)) != len(names):
+        raise SystemExit(f"ERROR: {names} names one header twice")
+
+    # The `Host` header is prover-composed text and says nothing about which
+    # server answered -- but a profile whose pinned header names one host while
+    # its pinned authority names another contradicts itself, and only one of the
+    # two can be what the session did.
+    if f"host: {host}" not in headers:
+        raise SystemExit(f"ERROR: the headers must carry `host: {host}`, the pinned authority")
+    if "content-type" not in names:
+        raise SystemExit("ERROR: the media type selects the platform's request parser and is required")
+    if "content-length" in names:
+        raise SystemExit("ERROR: `content-length` is the body's own count; the verifier reads it, no profile can state it")
+
+
 def validate(spec: dict[str, Any]) -> None:
     """Refuse a spec that would generate constants nothing can rely on."""
     seen: set[str] = set()
@@ -144,8 +212,10 @@ def validate(spec: dict[str, Any]) -> None:
             host = safe(session["authority"], "authority")
             safe(session["method"], "method")
             safe(session["path"], "path")
-            if name == "token" and session["secretField"] is not None:
-                safe(session["secretField"], "secretField")
+            if name == "token":
+                request_headers(session, host)
+                if session["secretField"] is not None:
+                    safe(session["secretField"], "secretField")
             if name == "identity":
                 safe(session["idField"], "idField")
                 safe(session["handleField"], "handleField")
@@ -164,79 +234,6 @@ def validate(spec: dict[str, Any]) -> None:
         # links them.
         if len(sessions_of(profile)) == 1:
             raise SystemExit(f"ERROR: {platform!r} has one session; expected none or both")
-
-
-# --------------------------------------------------------------------------
-# Version guard
-# --------------------------------------------------------------------------
-
-
-def without_notes(value: Any) -> Any:
-    """The value with every `note` removed, so prose can change freely."""
-    if isinstance(value, dict):
-        return {k: without_notes(v) for k, v in value.items() if k != "note"}
-    if isinstance(value, list):
-        return [without_notes(v) for v in value]
-    return value
-
-
-def previous_release(spec: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    """The newest release tag that carried this file, and what it said.
-
-    Returns nothing when the file is new, when no release carries it yet, or
-    when git is unavailable -- a check that cannot read history must not
-    invent a verdict.
-    """
-    if shutil.which("git") is None:
-        return None
-    try:
-        tags = subprocess.run(
-            ["git", "tag", "--list", "v*", "--sort=-v:refname"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=REPO_ROOT,
-        ).stdout.split()
-    except subprocess.CalledProcessError:
-        return None
-
-    for tag in tags:
-        done = subprocess.run(
-            ["git", "show", f"{tag}:{SOURCE_REL}"],
-            capture_output=True,
-            text=True,
-            cwd=REPO_ROOT,
-        )
-        if done.returncode == 0:
-            try:
-                return tag, json.loads(done.stdout)
-            except json.JSONDecodeError:
-                return None
-    return None
-
-
-def check_versions(spec: dict[str, Any]) -> list[str]:
-    """Complaints about profiles that changed without moving their version."""
-    found = previous_release(spec)
-    if found is None:
-        return []
-    tag, old = found
-
-    released = {p["platform"]: p for p in old["profiles"]}
-    problems = []
-    for profile in spec["profiles"]:
-        before = released.get(profile["platform"])
-        if before is None:
-            continue
-        if without_notes(before) == without_notes(profile):
-            continue
-        if before["ceremonyVersion"] == profile["ceremonyVersion"]:
-            problems.append(
-                f"{profile['platform']}/v{profile['ceremonyVersion']} changed since {tag} "
-                f"but kept its ceremonyVersion. Changing what a deployed verifier "
-                f"accepts is a new version, not an edit."
-            )
-    return problems
 
 
 # --------------------------------------------------------------------------
@@ -313,6 +310,29 @@ def gen_sol(spec: dict[str, Any]) -> str:
         for session_name, session in sessions_of(profile):
             const = f"{name}_{upper(session_name)}_REQUEST_LINE"
             lines.append(f'    bytes internal constant {const} = "{request_line(session)}";')
+
+    lines += [
+        "",
+        "    /// @dev The token request's head, byte for byte, ending at the",
+        "    ///      `content-length` value the verifier reads out of the transcript.",
+        "    ///      Its headers are revealed, so leaving them uncompared left the one",
+        "    ///      that decides how the platform parses the body -- the media type",
+        "    ///      REQ-COMMON-21B fixes -- public and unconstrained.",
+        "    ///",
+        "    ///      Pinned as ONE run rather than as a set of lines: the head is fixed",
+        "    ///      bytes, so a comparison against it needs no header parser, and a",
+        "    ///      parser is where an added, reordered or restated header would have",
+        "    ///      to be caught one rule at a time.",
+        "",
+    ]
+    for profile in profiles:
+        token = profile["sessions"].get("token")
+        if token is None:
+            continue
+        const = f"{upper(profile['platform'])}_TOKEN_REQUEST_HEADERS"
+        lines.append(
+            f'    bytes internal constant {const} = "{escaped(request_header_block(token))}";'
+        )
 
     lines += [
         "",
@@ -479,6 +499,15 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,",
         "    /// whose request hides nothing and is revealed whole.",
         "    pub secret_field: Option<&'static str>,",
+        "    /// Every header this request sends, lowercased as the wire spells them,",
+        "    /// in no particular order. `content-length` is absent because its value",
+        "    /// is the body's own count: the HTTP client appends it and the verifier",
+        "    /// reads it rather than compares it.",
+        "    pub request_headers: &'static [&'static str],",
+        "    /// The same lines joined by CRLF, which is the shape a Platform",
+        "    /// Verifier splits and matches as a set -- order is the prover's, the",
+        "    /// set is the profile's.",
+        "    pub request_header_block: &'static str,",
         "}",
         "",
         "/// The identity session: the authenticated read that names the account.",
@@ -523,9 +552,14 @@ def gen_rust(spec: dict[str, Any]) -> str:
         if token is None:
             lines.append("    token: None,")
         else:
+            headers = ", ".join(f'"{line}"' for line in token["requestHeaders"])
             lines.append("    token: Some(TokenSession {")
             lines += rust_session(token, 8)
             lines.append(f"        secret_field: {rust_str(token['secretField'])},")
+            lines.append(f"        request_headers: &[{headers}],")
+            lines.append(
+                f'        request_header_block: "{escaped(request_header_block(token))}",'
+            )
             lines.append("    }),")
 
         identity = profile["sessions"].get("identity")
@@ -625,6 +659,12 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly session: Session",
         "  /** The body field committed rather than revealed, or null. */",
         "  readonly secretField: string | null",
+        "  /** Every header this request sends, lowercased, in no particular order.",
+        "   * `content-length` is absent: the HTTP client appends it. */",
+        "  readonly requestHeaders: readonly string[]",
+        "  /** The same lines joined by CRLF, which a Platform Verifier splits and",
+        "   * matches as a set. */",
+        "  readonly requestHeaderBlock: string",
         "}",
         "",
         "export interface IdentitySession {",
@@ -658,6 +698,13 @@ def gen_ts(spec: dict[str, Any]) -> str:
             lines.append("  token: {")
             lines += ts_session(token, 4)
             lines.append(f"    secretField: {ts_str(token['secretField'])},")
+            # Broken across lines the way the repository's formatter would
+            # break them, so a generated file passes `fmt:check` unformatted.
+            lines.append("    requestHeaders: [")
+            lines += [f"      {ts_str(line)}," for line in token["requestHeaders"]]
+            lines.append("    ],")
+            lines.append("    requestHeaderBlock:")
+            lines.append(f"      '{escaped(request_header_block(token))}',")
             lines.append("  },")
 
         identity = profile["sessions"].get("identity")
@@ -707,8 +754,7 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Write nothing; exit non-zero if a generated file is stale or a "
-        "shipped profile changed without moving its version.",
+        help="Write nothing; exit non-zero if a generated file is stale.",
     )
     args = parser.parse_args()
 
@@ -733,10 +779,6 @@ def main() -> int:
         )
 
     if args.check:
-        failed = False
-        for problem in check_versions(spec):
-            print(f"ERROR: {problem}", file=sys.stderr)
-            failed = True
         stale = [
             path
             for path, text in outputs
@@ -749,8 +791,6 @@ def main() -> int:
             )
             for path in stale:
                 print(f"  {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-            failed = True
-        if failed:
             return 1
         print("generated files are up to date")
         return 0

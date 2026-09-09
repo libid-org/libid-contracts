@@ -153,3 +153,35 @@ fn the_launch_list_is_closed() {
         assert_eq!(profile.ceremony_version, 1);
     }
 }
+
+#[test]
+fn the_token_request_head_is_the_headers_beside_it() {
+    // Two representations of one agreement: the list a prover builds its
+    // request from, and the block the Platform Verifier matches against. They
+    // are generated together, and this is what says the two say the same thing.
+    for profile in LAUNCH {
+        let Some(token) = profile.token else {
+            continue;
+        };
+        // The block is those same lines joined, which is the shape a verifier
+        // splits and matches as a set. It carries no `content-length`: that
+        // value is the body's own and the verifier reads it off the transcript.
+        assert_eq!(
+            token.request_header_block,
+            token.request_headers.join("\r\n")
+        );
+
+        assert!(
+            !token
+                .request_headers
+                .iter()
+                .any(|header| header.starts_with("content-length:")),
+            "the HTTP client appends the length; a listed one would move it"
+        );
+        let host = format!("host: {}", token.session.authority);
+        assert!(
+            token.request_headers.contains(&host.as_str()),
+            "the pinned `host` header and the pinned authority must name one server"
+        );
+    }
+}

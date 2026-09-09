@@ -80,10 +80,19 @@ contract DecoyBodyTest is Test {
 
     /// head revealed | REAL refresh-grant body COMMITTED | decoy body revealed
     function _decoyToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory head = "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-length: 90\r\n\r\n";
         bytes memory decoy = abi.encodePacked(
             "grant_type=authorization_code&client_id=trustedApp&code_verifier=",
             CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+        );
+        // The head is the profile's, declaring exactly the bytes that follow
+        // it: everything about this direction is honest except which of them
+        // was revealed.
+        bytes memory head = abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n",
+            "content-type: application/x-www-form-urlencoded\r\naccept: application/json\r\n",
+            "connection: close\r\ncontent-length: ",
+            vm.toString(90 + decoy.length),
+            "\r\n\r\n"
         );
         uint32 h = uint32(head.length);
         uint32 r = h + 90; // the real body x.com actually parsed

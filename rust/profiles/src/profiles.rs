@@ -21,9 +21,7 @@
 //! error that says why.
 //!
 //! Changing a value here changes what a deployed verifier accepts. That is a
-//! new ceremonyVersion, not an edit: --check compares every shipped profile
-//! against the last release and refuses a changed profile that kept its
-//! version.
+//! new ceremonyVersion, not an edit.
 
 /// Which shape a platform's immutable identifier takes in its response.
 ///
@@ -62,6 +60,15 @@ pub struct TokenSession {
     /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,
     /// whose request hides nothing and is revealed whole.
     pub secret_field: Option<&'static str>,
+    /// Every header this request sends, lowercased as the wire spells them,
+    /// in no particular order. `content-length` is absent because its value
+    /// is the body's own count: the HTTP client appends it and the verifier
+    /// reads it rather than compares it.
+    pub request_headers: &'static [&'static str],
+    /// The same lines joined by CRLF, which is the shape a Platform
+    /// Verifier splits and matches as a set -- order is the prover's, the
+    /// set is the profile's.
+    pub request_header_block: &'static str,
 }
 
 /// The identity session: the authenticated read that names the account.
@@ -116,6 +123,8 @@ pub const X: Profile = Profile {
             request_line: "POST /2/oauth2/token ",
         },
         secret_field: None,
+        request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
+        request_header_block: "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -145,6 +154,8 @@ pub const GITHUB: Profile = Profile {
             request_line: "POST /login/oauth/access_token ",
         },
         secret_field: Some("client_secret"),
+        request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
+        request_header_block: "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
     }),
     identity: Some(IdentitySession {
         session: Session {

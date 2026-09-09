@@ -108,6 +108,20 @@ contract XPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    /// The header set `x/v1` fixes, laid out in the profile's order; the
+    /// verifier accepts any.
+    bytes constant TOKEN_HEADERS =
+        "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
+
+    /// A token request head: the request line, a header block, and the length
+    /// the platform frames the body by. Assembled from its parts so a test can
+    /// change one header and watch the verifier refuse it.
+    function _tokenHead(bytes memory headers, uint256 bodyLength) private pure returns (bytes memory) {
+        return abi.encodePacked(
+            "POST /2/oauth2/token HTTP/1.1\r\n", headers, "content-length: ", vm.toString(bodyLength), "\r\n\r\n"
+        );
+    }
+
     /// The token request: request line at offset 0, then the whole form body.
     function _tokenAttestation(string memory grantType, string memory clientId, string memory verifierValue)
         private
@@ -129,15 +143,10 @@ contract XPlatformVerifierTest is Test {
         // The whole request in one revealed run: X uses a public client and
         // hides no body field, so the head boundary is visible and the body is
         // located by the framing the server itself parsed.
-        bytes memory whole = abi.encodePacked(
-            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
-            "grant_type=",
-            grantType,
-            "&client_id=",
-            clientId,
-            "&code=abc&code_verifier=",
-            verifierValue
+        bytes memory body = abi.encodePacked(
+            "grant_type=", grantType, "&client_id=", clientId, "&code=abc&code_verifier=", verifierValue
         );
+        bytes memory whole = abi.encodePacked(_tokenHead(TOKEN_HEADERS, body.length), body);
         uint32 wholeEnd = uint32(whole.length);
 
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
@@ -782,11 +791,7 @@ contract XPlatformVerifierTest is Test {
         // The verifier is derived from the digest the payload rebuilds to, so
         // the request passes the PKCE check and the coverage gap below is what
         // the verifier trips on.
-        bytes memory whole = abi.encodePacked(
-            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
-            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
-        );
+        bytes memory whole = _honestXRequest();
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
             commitments: AttestationBuilder.none(),
@@ -963,11 +968,18 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev The head is the profile's right up to its last header, and then
+    ///      never ends: one CRLF where the blank line belongs. Nothing says
+    ///      which bytes are the body, so nothing may read one.
     function test_rejectsATokenRequestWithNoHeadBoundary() public {
+        bytes memory body = _honestTokenBody();
         bytes memory whole = abi.encodePacked(
-            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n",
-            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            "POST /2/oauth2/token HTTP/1.1\r\n",
+            TOKEN_HEADERS,
+            "content-length: ",
+            vm.toString(body.length),
+            "\r\n",
+            body
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
@@ -985,10 +997,14 @@ contract XPlatformVerifierTest is Test {
     ///      a GET with an otherwise honest body is refused before any field
     ///      is read.
     function test_rejectsTheWrongMethodOnTheTokenRequest() public {
+        bytes memory body = _honestTokenBody();
         bytes memory whole = abi.encodePacked(
-            "GET /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
-            "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            "GET /2/oauth2/token HTTP/1.1\r\n",
+            TOKEN_HEADERS,
+            "content-length: ",
+            vm.toString(body.length),
+            "\r\n\r\n",
+            body
         );
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
@@ -1004,11 +1020,179 @@ contract XPlatformVerifierTest is Test {
 
     /// The honest token request, byte for byte as `_tokenAttestation` sends it.
     function _honestXRequest() private view returns (bytes memory) {
+        bytes memory body = _honestTokenBody();
+        return abi.encodePacked(_tokenHead(TOKEN_HEADERS, body.length), body);
+    }
+
+    /// The body of that request, for a test that varies only the head.
+    function _honestTokenBody() private view returns (bytes memory) {
         return abi.encodePacked(
-            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
             "grant_type=authorization_code&client_id=myClient-1&code=abc&code_verifier=",
             CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
+    }
+
+    // ─── The token request's headers (REQ-COMMON-21B) ───────────────
+
+    /// A token session honest in every respect but the head it is handed: the
+    /// layout, the digest binding, the response anchors and the coverage all
+    /// check out, so the head is the only thing left to decide it.
+    function _tokenSessionWithHead(bytes memory head) private view returns (ICeremony.Attestation memory) {
+        bytes memory whole = abi.encodePacked(head, _honestTokenBody());
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(whole.length)
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, _tokenResponse(true));
+        return ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+    }
+
+    /// That session under a header block of the test's choosing, declaring the
+    /// body it really carries.
+    function _payloadWithHeaders(bytes memory headers)
+        private
+        view
+        returns (TlsNotaryVerifierBase.TlsNotaryProof memory s)
+    {
+        s = _payload();
+        s.tokenSession = _tokenSessionWithHead(_tokenHead(headers, _honestTokenBody().length));
+    }
+
+    /// That session under a whole head of the test's choosing, for the cases
+    /// where the length header's own position is what is under test.
+    function _payloadWithHead(bytes memory head) private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+        s = _payload();
+        s.tokenSession = _tokenSessionWithHead(head);
+    }
+
+    /// @dev The fixtures compose their head from parts; this is what says the
+    ///      parts are the profile's own. Without it an edit to `profiles.json`
+    ///      that the fixtures did not follow would fail every test in this
+    ///      file at once and name none of them as the reason.
+    function test_theFixtureHeadIsTheProfilesOwn() public pure {
+        assertEq(
+            string(_tokenHead(TOKEN_HEADERS, 0)),
+            string(
+                abi.encodePacked(
+                    "POST /2/oauth2/token HTTP/1.1\r\n",
+                    CeremonyProfile.X_TOKEN_REQUEST_HEADERS,
+                    "\r\ncontent-length: 0\r\n\r\n"
+                )
+            )
+        );
+    }
+
+    /// @dev REQ-COMMON-21B: the media type selects the platform's request
+    ///      parser, and `_tokenBody` reads those same bytes under a form
+    ///      encoding. Announcing JSON leaves X parsing one document while this
+    ///      verifier reads another, with every other check still passing --
+    ///      which is what a pinned media type nothing compared was worth.
+    function test_rejectsAnotherMediaTypeOnTheTokenRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/json\r\naccept: application/json\r\nconnection: close\r\n"
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A header the profile does not name is one the prover chose, in a
+    ///      request every other byte of which is pinned. `authorization: Basic`
+    ///      is the shape of it: X authenticates the client from that header
+    ///      instead, so the revealed `client_id` this verifier returns stops
+    ///      being the credential the exchange was made under.
+    function test_rejectsAnExtraHeaderOnTheTokenRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\n"
+            "authorization: Basic bXlDbGllbnQtMTpzM2NyZXQ=\r\nconnection: close\r\n"
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And a header the profile DOES name has to be there. Dropping
+    ///      `accept` leaves X free to answer in another representation, which
+    ///      is a response the framing around the committed bearer was chosen
+    ///      for one shape of.
+    function test_rejectsATokenRequestMissingAHeader() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev Membership is pinned, not order. The same four headers in another
+    ///      order are the same request: field order is insignificant in HTTP
+    ///      except for repeated names, which this rejects separately, so a
+    ///      reordering changes nothing X does with the request. Pinning it
+    ///      would instead bind every prover to the order its HTTP library
+    ///      emits -- and the browser reaches the wire through a `HashMap`,
+    ///      which has none to promise.
+    function test_acceptsTheSameHeadersInAnotherOrder() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\naccept: application/json\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the length header may sit anywhere among them, because where a
+    ///      client appends it is that client's business. hyper puts it last;
+    ///      nothing promises the next one will.
+    function test_acceptsTheLengthHeaderAnywhereInTheHead() public {
+        uint256 length = _honestTokenBody().length;
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHead(
+            abi.encodePacked(
+                "POST /2/oauth2/token HTTP/1.1\r\ncontent-length: ",
+                vm.toString(length),
+                "\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n\r\n"
+            )
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev The declared length is what the PLATFORM framed the body by. A
+    ///      short one leaves X parsing a form that stops early while every
+    ///      field this verifier reads comes from the bytes after it -- a
+    ///      `grant_type` X never saw, over a grant it did.
+    function test_rejectsATokenRequestUnderdeclaringItsBody() public {
+        uint256 length = _honestTokenBody().length;
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = _tokenSessionWithHead(_tokenHead(TOKEN_HEADERS, length - 10));
+        vm.expectRevert(
+            abi.encodeWithSelector(TlsNotaryVerifierBase.WrongDeclaredBodyLength.selector, length - 10, length)
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev The bytes between the pinned head and the blank line are the
+    ///      declared length and nothing else. Were anything else allowed there,
+    ///      it would be a header after the last one the profile names.
+    function test_rejectsADeclaredBodyLengthThatIsNotDigits() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = _tokenSessionWithHead(
+            abi.encodePacked("POST /2/oauth2/token HTTP/1.1\r\n", TOKEN_HEADERS, "content-length: 72, 8\r\n\r\n")
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A leading zero is a second spelling of a head this exists to fix
+    ///      one spelling of, and it declares the same length, so nothing below
+    ///      would notice.
+    function test_rejectsANoncanonicalDeclaredBodyLength() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = _tokenSessionWithHead(
+            abi.encodePacked(
+                "POST /2/oauth2/token HTTP/1.1\r\n",
+                TOKEN_HEADERS,
+                "content-length: 0",
+                vm.toString(_honestTokenBody().length),
+                "\r\n\r\n"
+            )
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
     }
 
     /// That request as the one revealed run the profile fixes.

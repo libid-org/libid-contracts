@@ -85,10 +85,15 @@ contract LayoutForgeryTest is Test {
     /// before the identity session this file exists to exercise ever runs.
     function _honestToken() private view returns (ICeremony.Attestation memory) {
         bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
+        bytes memory body =
+            abi.encodePacked("grant_type=authorization_code&client_id=attackerapp&code=abc&code_verifier=", v);
         bytes memory request = abi.encodePacked(
-            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n\r\n",
-            "grant_type=authorization_code&client_id=attackerapp&code=abc&code_verifier=",
-            v
+            "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\n",
+            "content-type: application/x-www-form-urlencoded\r\naccept: application/json\r\n",
+            "connection: close\r\ncontent-length: ",
+            vm.toString(body.length),
+            "\r\n\r\n",
+            body
         );
         uint32 bodyEnd = uint32(request.length);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({

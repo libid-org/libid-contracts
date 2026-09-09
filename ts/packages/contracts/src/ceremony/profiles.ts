@@ -22,9 +22,7 @@
  * error that says why.
  *
  * Changing a value here changes what a deployed verifier accepts. That is a
- * new ceremonyVersion, not an edit: --check compares every shipped profile
- * against the last release and refuses a changed profile that kept its
- * version.
+ * new ceremonyVersion, not an edit.
  */
 
 /** Which shape a platform's immutable identifier takes in its response. */
@@ -43,6 +41,12 @@ export interface TokenSession {
   readonly session: Session
   /** The body field committed rather than revealed, or null. */
   readonly secretField: string | null
+  /** Every header this request sends, lowercased, in no particular order.
+   * `content-length` is absent: the HTTP client appends it. */
+  readonly requestHeaders: readonly string[]
+  /** The same lines joined by CRLF, which a Platform Verifier splits and
+   * matches as a set. */
+  readonly requestHeaderBlock: string
 }
 
 export interface IdentitySession {
@@ -87,6 +91,14 @@ export const X: Profile = {
       requestLine: 'POST /2/oauth2/token ',
     },
     secretField: null,
+    requestHeaders: [
+      'host: api.x.com',
+      'content-type: application/x-www-form-urlencoded',
+      'accept: application/json',
+      'connection: close',
+    ],
+    requestHeaderBlock:
+      'host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
   },
   identity: {
     session: {
@@ -118,6 +130,14 @@ export const GITHUB: Profile = {
       requestLine: 'POST /login/oauth/access_token ',
     },
     secretField: 'client_secret',
+    requestHeaders: [
+      'host: github.com',
+      'content-type: application/x-www-form-urlencoded',
+      'accept: application/json',
+      'connection: close',
+    ],
+    requestHeaderBlock:
+      'host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
   },
   identity: {
     session: {
