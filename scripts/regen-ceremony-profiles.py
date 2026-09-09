@@ -98,23 +98,23 @@ def request_line(session: dict[str, Any]) -> str:
     return f"{session['method']} {session['path']} "
 
 
-def request_head(session: dict[str, Any]) -> str:
-    """The token request's head, up to the body length HTTP framing owns.
+def request_header_block(session: dict[str, Any]) -> str:
+    """The header lines a verifier must find, joined by CRLF.
 
-    The request line with its version, then every header the profile fixes in
-    the profile's order, then the `content-length` name and nothing after it.
-    A verifier compares these bytes and reads the digits that follow.
+    A block rather than one run of the whole head, because the head's ORDER is
+    not fixed. A verifier splits both this and the head it was given into lines
+    and matches them as sets: every line here found exactly once there, nothing
+    there that is not here, plus the `content-length` HTTP framing owns.
 
-    Neither the version nor the length header is profile data. Both provers are
-    hyper -- the browser through tlsn's wasm prover, the Token-Exchange Service
-    through `libid-tlsn` -- and hyper writes `HTTP/1.1`, lowercases every field
-    name, and appends `content-length` after the headers its caller set. So the
-    profile states what a caller chooses and this states what the client does
-    with it, which is why a builder must not set a length header of its own: it
-    would land where the caller put it rather than last.
+    Order is left to the prover because it changes nothing a platform does with
+    the request, and fixing it would bind every prover to the order its HTTP
+    library emits -- the browser reaches the wire through tlsn's wasm prover,
+    whose `HttpRequest` holds headers in a `HashMap`. Neither is the version or
+    the length header profile data: hyper writes `HTTP/1.1`, lowercases every
+    field name, and appends its own length, so the profile states what a caller
+    chooses and the verifier expects what the client does with it.
     """
-    lines = "".join(f"{line}\r\n" for line in session["requestHeaders"])
-    return f"{request_line(session)}{HTTP_VERSION}\r\n{lines}{LENGTH_HEADER}"
+    return "\r\n".join(session["requestHeaders"])
 
 
 def sessions_of(profile: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -438,8 +438,10 @@ def gen_sol(spec: dict[str, Any]) -> str:
         token = profile["sessions"].get("token")
         if token is None:
             continue
-        const = f"{upper(profile['platform'])}_TOKEN_REQUEST_HEAD"
-        lines.append(f'    bytes internal constant {const} = "{escaped(request_head(token))}";')
+        const = f"{upper(profile['platform'])}_TOKEN_REQUEST_HEADERS"
+        lines.append(
+            f'    bytes internal constant {const} = "{escaped(request_header_block(token))}";'
+        )
 
     lines += [
         "",
@@ -611,10 +613,10 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// because the HTTP client appends it; a builder setting one of its own",
         "    /// moves it and the head below stops matching.",
         "    pub request_headers: &'static [&'static str],",
-        "    /// Those headers as the run of bytes the Platform Verifier compares: the",
-        "    /// request line, the headers, and the `content-length` name whose value",
-        "    /// the verifier reads and checks against the signed body length.",
-        "    pub request_head: &'static str,",
+        "    /// The same lines joined by CRLF, which is the shape a Platform",
+        "    /// Verifier splits and matches as a set -- order is the prover's, the",
+        "    /// set is the profile's.",
+        "    pub request_header_block: &'static str,",
         "}",
         "",
         "/// The identity session: the authenticated read that names the account.",
@@ -664,7 +666,9 @@ def gen_rust(spec: dict[str, Any]) -> str:
             lines += rust_session(token, 8)
             lines.append(f"        secret_field: {rust_str(token['secretField'])},")
             lines.append(f"        request_headers: &[{headers}],")
-            lines.append(f'        request_head: "{escaped(request_head(token))}",')
+            lines.append(
+                f'        request_header_block: "{escaped(request_header_block(token))}",'
+            )
             lines.append("    }),")
 
         identity = profile["sessions"].get("identity")
@@ -769,7 +773,7 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly requestHeaders: readonly string[]",
         "  /** Those headers as the run of bytes the Platform Verifier compares, ending",
         "   * at the `content-length` value it reads out of the transcript. */",
-        "  readonly requestHead: string",
+        "  readonly requestHeaderBlock: string",
         "}",
         "",
         "export interface IdentitySession {",
@@ -808,8 +812,8 @@ def gen_ts(spec: dict[str, Any]) -> str:
             lines.append("    requestHeaders: [")
             lines += [f"      {ts_str(line)}," for line in token["requestHeaders"]]
             lines.append("    ],")
-            lines.append("    requestHead:")
-            lines.append(f"      '{escaped(request_head(token))}',")
+            lines.append("    requestHeaderBlock:")
+            lines.append(f"      '{escaped(request_header_block(token))}',")
             lines.append("  },")
 
         identity = profile["sessions"].get("identity")

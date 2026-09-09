@@ -1,30 +1,25 @@
-//! hyper writes the head this table pins.
+//! hyper writes a head this table admits.
 //!
-//! `X_TOKEN_REQUEST_HEAD` and its Rust twin claim something about a library
-//! rather than about a profile: that hyper writes `HTTP/1.1`, lowercases every
-//! field name, keeps the order the headers were set in, and appends
-//! `content-length` last. A verifier compares against those bytes, so if any
-//! part of that is wrong the profile pins a head no honest session produces and
-//! every genuine attestation is refused.
+//! The profile fixes which headers a token request carries, not the order they
+//! go in, so what a verifier checks is a set: every line the profile lists,
+//! once each, nothing else, plus the `content-length` HTTP framing owns. This
+//! asserts that hyper, given the profile's headers, writes exactly that -- the
+//! request built from `request_headers` and driven through the real
+//! `hyper::client::conn::http1` encoder over an in-memory duplex, so what is
+//! compared is the bytes hyper actually wrote.
 //!
-//! Reading hyper's source establishes it; this asserts it. The request is built
-//! from `request_headers` -- the same list the generator lays the head out from
-//! -- and driven through the real `hyper::client::conn::http1` encoder over an
-//! in-memory duplex, so what is compared is the bytes hyper actually wrote.
+//! Order is deliberately not asserted. Nothing promises where a client puts a
+//! header, and the browser reaches the wire through tlsn's wasm prover, whose
+//! `HttpRequest` holds them in a `HashMap` -- a test demanding an order would
+//! pass here and fail there for a reason neither end could name.
 //!
-//! What that comparison can and cannot catch is worth stating, because both
-//! sides come from one source and move together. It catches a reordering and it
-//! catches `content-length` landing anywhere but last -- hyper doing either
-//! would break the comparison however the profile is written. It cannot catch
-//! the lowercasing claim, because the names in the profile are already
-//! lowercase and would match whether hyper folded case or not; that one needs
-//! an input the profile does not supply, which is what the last test below is.
+//! What this still catches is a header hyper adds or drops on its own, and a
+//! `content-length` it does not append for a known-length body. The lowercase
+//! claim needs an input the profile cannot supply, which is the last case.
 //!
 //! The GitHub exchange is the reason this exists. It runs in the deployment's
 //! backend, which is the prover for that session and reaches the wire through
-//! `libid-tlsn::prover_generic` -- the same hyper. Nothing sends that request
-//! yet, so the head is pinned before its sender is written, and this is what
-//! keeps the two from disagreeing when it is.
+//! `libid-tlsn::prover_generic` -- the same hyper.
 
 use hyper_util::rt::TokioIo;
 use libid_profiles::{
@@ -86,30 +81,47 @@ async fn head_hyper_writes(session: &TokenSession, body: &'static [u8]) -> Vec<u
     wire
 }
 
-async fn assert_head_matches(session: &TokenSession, body: &'static [u8]) {
-    let wire = head_hyper_writes(session, body).await;
-    let expected = format!("{}{}\r\n\r\n", session.request_head, body.len());
+/// The head's header lines, in whatever order hyper wrote them.
+fn header_lines(wire: &[u8]) -> Vec<String> {
+    let head = String::from_utf8(wire.to_vec()).expect("ascii head");
+    let head = head.trim_end_matches("\r\n\r\n");
+    head.split("\r\n").skip(1).map(str::to_owned).collect()
+}
+
+fn assert_head_admits(session: &TokenSession, wire: &[u8], body_len: usize) {
+    let mut written = header_lines(wire);
+    written.sort();
+
+    let mut expected: Vec<String> = session
+        .request_headers
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect();
+    expected.push(format!("content-length: {body_len}"));
+    expected.sort();
+
     assert_eq!(
-        String::from_utf8_lossy(&wire),
-        expected,
-        "hyper wrote a head the profile does not pin"
+        written, expected,
+        "hyper wrote a head the profile does not admit"
     );
 }
 
 #[tokio::test]
-async fn the_x_token_request_head_is_the_one_pinned() {
+async fn the_x_token_request_head_is_one_the_profile_admits() {
     let session = X.token.expect("x notarizes a token session");
     // Shaped like the real body: five form fields, no reserved bytes.
     let body = b"grant_type=authorization_code&client_id=abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I";
-    assert_head_matches(&session, body).await;
+    let wire = head_hyper_writes(&session, body).await;
+    assert_head_admits(&session, &wire, body.len());
 }
 
 #[tokio::test]
-async fn the_github_exchange_head_is_the_one_pinned() {
+async fn the_github_exchange_head_is_one_the_profile_admits() {
     let session = GITHUB.token.expect("github notarizes a token session");
     // GitHub's body carries the secret last, per REQ-COMMON-22.
     let body = b"client_id=Iv1.abc&code=xyz&redirect_uri=https%3A%2F%2Fexample.test%2Fcb&code_verifier=iMSTNh6gQkRnBGlY1c0MUOsD7MCO4G8C7ph1_gIZs5I&client_secret=deadbeef";
-    assert_head_matches(&session, body).await;
+    let wire = head_hyper_writes(&session, body).await;
+    assert_head_admits(&session, &wire, body.len());
 }
 
 #[tokio::test]
@@ -124,10 +136,9 @@ async fn the_declared_length_is_the_body_and_moves_with_it() {
     ] {
         let body: &'static [u8] = Box::leak(body.to_vec().into_boxed_slice());
         let wire = head_hyper_writes(&session, body).await;
-        let tail = format!("content-length: {}\r\n\r\n", body.len());
         assert!(
-            String::from_utf8_lossy(&wire).ends_with(&tail),
-            "expected the head to end {tail:?}"
+            header_lines(&wire).contains(&format!("content-length: {}", body.len())),
+            "the declared length is not the body's own"
         );
     }
 }

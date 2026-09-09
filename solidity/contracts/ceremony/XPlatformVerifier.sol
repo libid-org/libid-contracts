@@ -89,8 +89,8 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
     ///      sends them, and the media type that makes X read the body the way
     ///      `formField` reads it. Revealed but uncompared, they were bytes a
     ///      prover chose in a request every other field of which is pinned.
-    function _tokenRequestHead() internal pure override returns (bytes memory) {
-        return CeremonyProfile.X_TOKEN_REQUEST_HEAD;
+    function _tokenRequestHeaders() internal pure override returns (bytes memory) {
+        return CeremonyProfile.X_TOKEN_REQUEST_HEADERS;
     }
 
     function _identityRequestLine() internal pure override returns (bytes memory) {

@@ -1058,6 +1058,13 @@ contract XPlatformVerifierTest is Test {
         s.tokenSession = _tokenSessionWithHead(_tokenHead(headers, _honestTokenBody().length));
     }
 
+    /// That session under a whole head of the test's choosing, for the cases
+    /// where the length header's own position is what is under test.
+    function _payloadWithHead(bytes memory head) private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+        s = _payload();
+        s.tokenSession = _tokenSessionWithHead(head);
+    }
+
     /// @dev The fixtures compose their head from parts; this is what says the
     ///      parts are the profile's own. Without it an edit to `profiles.json`
     ///      that the fixtures did not follow would fail every test in this
@@ -1065,7 +1072,13 @@ contract XPlatformVerifierTest is Test {
     function test_theFixtureHeadIsTheProfilesOwn() public pure {
         assertEq(
             string(_tokenHead(TOKEN_HEADERS, 0)),
-            string(abi.encodePacked(CeremonyProfile.X_TOKEN_REQUEST_HEAD, "0\r\n\r\n"))
+            string(
+                abi.encodePacked(
+                    "POST /2/oauth2/token HTTP/1.1\r\n",
+                    CeremonyProfile.X_TOKEN_REQUEST_HEADERS,
+                    "\r\ncontent-length: 0\r\n\r\n"
+                )
+            )
         );
     }
 
@@ -1108,16 +1121,32 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// @dev Order is pinned, not membership. The same four headers in another
-    ///      order are a request some other client composed, and telling the two
-    ///      apart would need a header parser -- whose own leniencies are what
-    ///      `requireCrlfLineEndings` exists to close on the identity request.
-    ///      Fixed bytes have no leniencies to find.
-    function test_rejectsReorderedTokenRequestHeaders() public {
+    /// @dev Membership is pinned, not order. The same four headers in another
+    ///      order are the same request: field order is insignificant in HTTP
+    ///      except for repeated names, which this rejects separately, so a
+    ///      reordering changes nothing X does with the request. Pinning it
+    ///      would instead bind every prover to the order its HTTP library
+    ///      emits -- and the browser reaches the wire through a `HashMap`,
+    ///      which has none to promise.
+    function test_acceptsTheSameHeadersInAnotherOrder() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
             "host: api.x.com\r\naccept: application/json\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"
         );
-        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the length header may sit anywhere among them, because where a
+    ///      client appends it is that client's business. hyper puts it last;
+    ///      nothing promises the next one will.
+    function test_acceptsTheLengthHeaderAnywhereInTheHead() public {
+        uint256 length = _honestTokenBody().length;
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHead(
+            abi.encodePacked(
+                "POST /2/oauth2/token HTTP/1.1\r\ncontent-length: ",
+                vm.toString(length),
+                "\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n\r\n"
+            )
+        );
         this.run{value: quote}(s);
     }
 

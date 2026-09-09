@@ -39,6 +39,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      response byte is hidden, so without these the committed range is
     ///      indistinguishable from a `refresh_token` value (REQ-PLAT-57,
     ///      REQ-PLAT-58).
+    /// @dev HTTP framing owns this one, not the profile: the client appends
+    ///      it and its value is the body's own count, so the head carries it
+    ///      and no profile lists it.
+    bytes private constant LENGTH_HEADER = "content-length: ";
+
     bytes internal constant ACCESS_TOKEN_PREFIX = '"access_token":"';
     bytes internal constant ACCESS_TOKEN_SUFFIX = '"';
 
@@ -118,7 +123,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      are held to `requireBearerHeaderRequest` instead: coverage, one
     ///      line-anchored `authorization`, and the framing around the committed
     ///      value.
-    function _tokenRequestHead() internal pure virtual returns (bytes memory);
+    function _tokenRequestHeaders() internal pure virtual returns (bytes memory);
 
     /// @dev How many committed ranges the token request carries. X hides no
     ///      body field and uses a public client, so zero; GitHub commits its
@@ -479,6 +484,113 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      the length the NOTARY signed. Without that the platform could frame
     ///      a shorter body than the one read below, and parse a form this
     ///      verifier never saw.
+    /// @dev The head's header lines are the profile's, in any order, plus the
+    ///      one `content-length` HTTP framing owns. Returns its value.
+    ///
+    ///      A SET rather than a fixed run of bytes. Order changes nothing a
+    ///      platform does with a request -- field order is insignificant except
+    ///      for repeated names, which this rejects, and the
+    ///      `transfer-encoding` precedence is by presence rather than position
+    ///      -- so pinning it would only bind every prover to the order its HTTP
+    ///      library emits. The browser's reaches the wire through a `HashMap`.
+    ///
+    ///      Reading lines is what a fixed run avoided, so the leniencies a
+    ///      parser invites are refused first: `requireCrlfLineEndings` is the
+    ///      same guard REQ-COMMON-39 puts on the identity request, and without
+    ///      it a bare line feed ends the head somewhere the platform's parser
+    ///      does and this one does not.
+    function _checkTokenHead(bytes memory head) private pure returns (uint256 declared) {
+        CeremonyAttestation.requireCrlfLineEndings(head);
+
+        bytes memory expected = _tokenRequestHeaders();
+        uint256 wanted = _countLines(expected);
+        // One bit per expected line. A profile with more than 256 headers is
+        // not a profile, and `validate` in the generator refuses one long
+        // before this could matter.
+        uint256 found;
+        uint256 lengths;
+
+        // Past the request line, which `_tokenSession` has already compared.
+        uint256 from = _lineEnd(head, 0) + 2;
+        while (from < head.length) {
+            uint256 to = _lineEnd(head, from);
+            bytes memory line = _slice(head, from, to);
+
+            if (_startsWith(line, LENGTH_HEADER)) {
+                if (lengths != 0) revert WrongTokenRequestHead();
+                lengths = 1;
+                declared = _decimal(line, LENGTH_HEADER.length);
+            } else {
+                uint256 i = _indexOfLine(expected, line);
+                if (i == type(uint256).max) revert WrongTokenRequestHead();
+                if (found & (1 << i) != 0) revert WrongTokenRequestHead();
+                found |= 1 << i;
+            }
+            from = to + 2;
+        }
+
+        if (lengths == 0) revert WrongTokenRequestHead();
+        // Every expected line seen: the low `wanted` bits all set.
+        if (found != (1 << wanted) - 1) revert WrongTokenRequestHead();
+    }
+
+    /// @dev The offset of the CRLF that ends the line beginning at `from`, or
+    ///      the end of `data` for the last line -- the head is sliced at the
+    ///      blank line, so its final header carries no CRLF of its own.
+    function _lineEnd(bytes memory data, uint256 from) private pure returns (uint256) {
+        for (uint256 i = from; i + 1 < data.length; ++i) {
+            if (data[i] == 0x0d && data[i + 1] == 0x0a) return i;
+        }
+        return data.length;
+    }
+
+    function _countLines(bytes memory block_) private pure returns (uint256 count) {
+        count = 1;
+        for (uint256 i = 0; i + 1 < block_.length; ++i) {
+            if (block_[i] == 0x0d && block_[i + 1] == 0x0a) ++count;
+        }
+    }
+
+    /// @dev Which line of the CRLF-joined `block_` equals `line`, or `max`.
+    function _indexOfLine(bytes memory block_, bytes memory line) private pure returns (uint256) {
+        uint256 index;
+        uint256 from;
+        while (from <= block_.length) {
+            uint256 to = from;
+            while (to + 1 < block_.length && !(block_[to] == 0x0d && block_[to + 1] == 0x0a)) {
+                ++to;
+            }
+            if (to + 1 >= block_.length) to = block_.length;
+            if (_equal(_slice(block_, from, to), line)) return index;
+            ++index;
+            from = to + 2;
+        }
+        return type(uint256).max;
+    }
+
+    /// @dev Canonical decimal, at most `uint32`'s ten digits. A leading zero is
+    ///      a second spelling of a length this compares one spelling of.
+    function _decimal(bytes memory line, uint256 from) private pure returns (uint256 value) {
+        uint256 width = line.length - from;
+        if (width == 0 || width > 10) revert WrongTokenRequestHead();
+        if (width > 1 && line[from] == "0") revert WrongTokenRequestHead();
+        for (uint256 i = from; i < line.length; ++i) {
+            if (line[i] < "0" || line[i] > "9") revert WrongTokenRequestHead();
+            value = value * 10 + (uint8(line[i]) - 0x30);
+        }
+    }
+
+    function _slice(bytes memory data, uint256 from, uint256 to) private pure returns (bytes memory out) {
+        out = new bytes(to - from);
+        for (uint256 i = 0; i < out.length; ++i) {
+            out[i] = data[from + i];
+        }
+    }
+
+    function _equal(bytes memory a, bytes memory b) private pure returns (bool) {
+        return a.length == b.length && keccak256(a) == keccak256(b);
+    }
+
     function _tokenBody(CeremonyAttestation.DirectionBlock memory block_, uint32 signedLength)
         internal
         pure
@@ -488,9 +600,6 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             revert WrongTokenRequestLayout(block_.revealed.length, block_.commitments.length);
         }
         bytes memory whole = block_.revealed[0].value;
-
-        bytes memory head = _tokenRequestHead();
-        if (!_startsWith(whole, head)) revert WrongTokenRequestHead();
 
         // Exactly one head boundary. A well-formed request has one; requiring
         // it removes any question of which run of bytes the body is.
@@ -504,18 +613,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         }
         if (seen != 1) revert NoHeadBoundary(seen);
 
-        // Everything between the pinned head and that boundary is the declared
-        // length and nothing else, so no header can hide after the last one the
-        // profile names. Ten digits is `uint32`'s worst case, which is what a
-        // signed transcript length is; a leading zero is a second spelling of a
-        // head this exists to fix one spelling of.
-        uint256 declared;
-        if (at <= head.length || at - head.length > 10) revert WrongTokenRequestHead();
-        if (at - head.length > 1 && whole[head.length] == "0") revert WrongTokenRequestHead();
-        for (uint256 i = head.length; i < at; ++i) {
-            if (whole[i] < "0" || whole[i] > "9") revert WrongTokenRequestHead();
-            declared = declared * 10 + (uint8(whole[i]) - 0x30);
-        }
+        uint256 declared = _checkTokenHead(_slice(whole, 0, at));
 
         at += 4;
         // `signedLength` is the whole request, and the head is revealed, so the

@@ -157,22 +157,19 @@ fn the_launch_list_is_closed() {
 #[test]
 fn the_token_request_head_is_the_headers_beside_it() {
     // Two representations of one agreement: the list a prover builds its
-    // request from, and the run of bytes the Platform Verifier compares. They
-    // are generated together, and this is what says a prover setting the listed
-    // headers in the listed order produces exactly what the chain pins.
+    // request from, and the block the Platform Verifier matches against. They
+    // are generated together, and this is what says the two say the same thing.
     for profile in LAUNCH {
         let Some(token) = profile.token else {
             continue;
         };
-        let mut composed = format!("{}HTTP/1.1\r\n", token.session.request_line);
-        for header in token.request_headers {
-            composed.push_str(header);
-            composed.push_str("\r\n");
-        }
-        // The head stops at the length rather than stating one: the value is
-        // the body's own, and the verifier reads it out of the transcript.
-        composed.push_str("content-length: ");
-        assert_eq!(token.request_head, composed);
+        // The block is those same lines joined, which is the shape a verifier
+        // splits and matches as a set. It carries no `content-length`: that
+        // value is the body's own and the verifier reads it off the transcript.
+        assert_eq!(
+            token.request_header_block,
+            token.request_headers.join("\r\n")
+        );
 
         assert!(
             !token

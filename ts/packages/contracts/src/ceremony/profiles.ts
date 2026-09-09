@@ -50,7 +50,7 @@ export interface TokenSession {
   readonly requestHeaders: readonly string[]
   /** Those headers as the run of bytes the Platform Verifier compares, ending
    * at the `content-length` value it reads out of the transcript. */
-  readonly requestHead: string
+  readonly requestHeaderBlock: string
 }
 
 export interface IdentitySession {
@@ -101,8 +101,8 @@ export const X: Profile = {
       'accept: application/json',
       'connection: close',
     ],
-    requestHead:
-      'POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ',
+    requestHeaderBlock:
+      'host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
   },
   identity: {
     session: {
@@ -140,8 +140,8 @@ export const GITHUB: Profile = {
       'accept: application/json',
       'connection: close',
     ],
-    requestHead:
-      'POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ',
+    requestHeaderBlock:
+      'host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
   },
   identity: {
     session: {

@@ -74,10 +74,10 @@ library CeremonyProfile {
     ///      parser is where an added, reordered or restated header would have
     ///      to be caught one rule at a time.
 
-    bytes internal constant X_TOKEN_REQUEST_HEAD =
-        "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ";
-    bytes internal constant GITHUB_TOKEN_REQUEST_HEAD =
-        "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ";
+    bytes internal constant X_TOKEN_REQUEST_HEADERS =
+        "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close";
+    bytes internal constant GITHUB_TOKEN_REQUEST_HEADERS =
+        "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close";
 
     /// @dev How many committed ranges the token request carries. A confidential
     ///      client commits its secret and a public client hides nothing, so this

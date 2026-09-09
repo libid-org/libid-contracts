@@ -117,8 +117,8 @@ contract GitHubPlatformVerifier is TlsNotaryVerifierBase {
     /// @dev REQ-COMMON-21B, and section 6.2's media type and `accept`. The
     ///      Token-Exchange Service composes this request rather than a browser,
     ///      so these bytes are agreed here before that service is written.
-    function _tokenRequestHead() internal pure override returns (bytes memory) {
-        return CeremonyProfile.GITHUB_TOKEN_REQUEST_HEAD;
+    function _tokenRequestHeaders() internal pure override returns (bytes memory) {
+        return CeremonyProfile.GITHUB_TOKEN_REQUEST_HEADERS;
     }
 
     function _identityRequestLine() internal pure override returns (bytes memory) {

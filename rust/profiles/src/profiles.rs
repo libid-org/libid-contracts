@@ -69,10 +69,10 @@ pub struct TokenSession {
     /// because the HTTP client appends it; a builder setting one of its own
     /// moves it and the head below stops matching.
     pub request_headers: &'static [&'static str],
-    /// Those headers as the run of bytes the Platform Verifier compares: the
-    /// request line, the headers, and the `content-length` name whose value
-    /// the verifier reads and checks against the signed body length.
-    pub request_head: &'static str,
+    /// The same lines joined by CRLF, which is the shape a Platform
+    /// Verifier splits and matches as a set -- order is the prover's, the
+    /// set is the profile's.
+    pub request_header_block: &'static str,
 }
 
 /// The identity session: the authenticated read that names the account.
@@ -128,7 +128,7 @@ pub const X: Profile = Profile {
         },
         secret_field: None,
         request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_head: "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ",
+        request_header_block: "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -159,7 +159,7 @@ pub const GITHUB: Profile = Profile {
         },
         secret_field: Some("client_secret"),
         request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_head: "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ",
+        request_header_block: "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
     }),
     identity: Some(IdentitySession {
         session: Session {

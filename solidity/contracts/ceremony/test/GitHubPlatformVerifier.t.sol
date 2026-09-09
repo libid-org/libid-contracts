@@ -431,7 +431,14 @@ contract GitHubPlatformVerifierTest is Test {
     ///      what says the parts are the profile's own.
     function test_theFixtureHeadIsTheProfilesOwn() public pure {
         assertEq(
-            string(_exchangeHead(0)), string(abi.encodePacked(CeremonyProfile.GITHUB_TOKEN_REQUEST_HEAD, "0\r\n\r\n"))
+            string(_exchangeHead(0)),
+            string(
+                abi.encodePacked(
+                    "POST /login/oauth/access_token HTTP/1.1\r\n",
+                    CeremonyProfile.GITHUB_TOKEN_REQUEST_HEADERS,
+                    "\r\ncontent-length: 0\r\n\r\n"
+                )
+            )
         );
     }
 
