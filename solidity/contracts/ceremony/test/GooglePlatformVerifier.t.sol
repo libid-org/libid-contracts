@@ -55,13 +55,13 @@ contract GooglePlatformVerifierTest is Test {
     bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
     /// The digest the public inputs carry as the signed `nonce`, derived in
     /// `setUp` from the payload below and this chain.
-    bytes32 DIGEST;
+    bytes32 digest;
     bytes constant CLIENT_ID = "123456789-abcdef.apps.googleusercontent.com";
     string constant SUB = "123456789012345678901";
     string constant EMAIL = "a.b+tag@example.com";
 
     function setUp() public {
-        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
+        digest = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0);
         roots = new Roots();
         honk = new Honk();
@@ -127,10 +127,10 @@ contract GooglePlatformVerifierTest is Test {
         return keccak256(packed);
     }
 
-    function _inputs(bytes32 digest, bytes memory clientId, uint64 exp) private pure returns (bytes32[] memory pi) {
+    function _inputs(bytes32 digest_, bytes memory clientId, uint64 exp) private pure returns (bytes32[] memory pi) {
         pi = new bytes32[](56);
         for (uint256 i = 0; i < 32; ++i) {
-            pi[i] = bytes32(uint256(uint8(digest[i])));
+            pi[i] = bytes32(uint256(uint8(digest_[i])));
         }
         bytes32 aud = sha256(clientId);
         pi[32] = bytes32(uint256(aud) >> 128);
@@ -158,7 +158,7 @@ contract GooglePlatformVerifierTest is Test {
         s.authorizationNonce = AUTH_NONCE;
         s.transactionData = _txData();
         s.clientIdentifier = CLIENT_ID;
-        s.publicInputs = _inputs(DIGEST, CLIENT_ID, EXP);
+        s.publicInputs = _inputs(digest, CLIENT_ID, EXP);
         s.proof = hex"00";
     }
 
@@ -180,7 +180,7 @@ contract GooglePlatformVerifierTest is Test {
     function test_rejectsAnExpiryFurtherAheadThanTheAllowance() public {
         uint64 farOut = uint64(block.timestamp) + GOOGLE_ALLOWANCE + 1;
         GooglePlatformVerifier.GoogleProof memory s = _payload();
-        s.publicInputs = _inputs(DIGEST, CLIENT_ID, farOut);
+        s.publicInputs = _inputs(digest, CLIENT_ID, farOut);
         vm.expectPartialRevert(PlatformVerifierBase.ObservedInTheFuture.selector);
         this.run(s);
     }
@@ -257,7 +257,7 @@ contract GooglePlatformVerifierTest is Test {
     ///      for another digest does not match.
     function test_rejectsAProofForAnotherDigest() public {
         GooglePlatformVerifier.GoogleProof memory s = _payload();
-        s.publicInputs = _inputs(bytes32(uint256(DIGEST) ^ 1), CLIENT_ID, EXP);
+        s.publicInputs = _inputs(bytes32(uint256(digest) ^ 1), CLIENT_ID, EXP);
         vm.expectPartialRevert(GooglePlatformVerifier.DigestMismatch.selector);
         this.run(s);
     }

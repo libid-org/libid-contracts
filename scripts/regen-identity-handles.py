@@ -262,13 +262,17 @@ def gen_sol(spec: dict[str, Any]) -> str:
     lines.append("")
     lines.append("    function all() internal pure returns (Vector[] memory v) {")
     lines.append(f"        v = new Vector[]({len(vectors)});")
+    # Named fields, as the Rust and TypeScript tables already have them: a
+    # literal that names its fields cannot be silently reordered against the
+    # struct, which is what `forge lint` (named-struct-fields) is for.
     for i, vec in enumerate(vectors):
         accepted = "output" in vec
         out = sol_escape(vec.get("output", ""))
         kind = "0" if accepted else str(error_index(errors, vec["error"]))
         lines.append(
-            f'        v[{i}] = Vector("{vec["platform"]}", "{sol_escape(vec["input"])}",'
-            f' "{out}", {"true" if accepted else "false"}, {kind});'
+            f'        v[{i}] = Vector({{platform: "{vec["platform"]}",'
+            f' input: "{sol_escape(vec["input"])}", output: "{out}",'
+            f' accepted: {"true" if accepted else "false"}, errorKind: {kind}}});'
         )
     lines.append("    }")
     lines.append("}")

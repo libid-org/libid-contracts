@@ -374,6 +374,9 @@ library CeremonyAttestation {
                     for (uint256 j = 0; j < take; ++j) {
                         out[n++] = r.value[offset + j];
                     }
+                    // Casting to uint32 is safe: `take` is clamped to `to - at`
+                    // above, and both of those are uint32.
+                    // forge-lint: disable-next-line(unsafe-typecast)
                     at += uint32(take);
                     found = true;
                     break;
@@ -444,6 +447,9 @@ library CeremonyAttestation {
             at += 12;
             if (at + len > data.length) revert Truncated();
             if (start + len > type(uint32).max) revert Truncated();
+            // Casting to uint32 is safe: the line above refuses a sum past
+            // type(uint32).max.
+            // forge-lint: disable-next-line(unsafe-typecast)
             block_.revealed[i] = RevealedRange({start: start, end: uint32(start + len), value: data[at:at + len]});
             at += len;
         }

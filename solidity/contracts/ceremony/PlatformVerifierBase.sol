@@ -109,7 +109,9 @@ abstract contract PlatformVerifierBase is ICeremony, Initializable, UUPSUpgradea
     /// @dev The verifier at that address is not the artifact governance named.
     error WrongVerifierArtifact(bytes32 expected, bytes32 found);
 
-    // solhint-disable-next-line func-name-mixedcase
+    // OpenZeppelin's initializer convention -- `__Contract_init`, so a child's
+    // initializer reads which base each call sets up -- over mixedCase.
+    // forge-lint: disable-next-line(mixed-case-function)
     function __PlatformVerifierBase_init(
         address owner_,
         INotaryService notary_,

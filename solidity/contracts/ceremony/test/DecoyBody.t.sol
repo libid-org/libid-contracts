@@ -35,12 +35,12 @@ contract DecoyBodyTest is Test {
     bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
-    bytes32 DIGEST;
+    bytes32 digest;
     bytes32 constant TOKEN_C = bytes32(uint256(0x1111));
     bytes32 constant ID_C = bytes32(uint256(0x2222));
 
     function setUp() public {
-        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
+        digest = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0 + 10);
         NotaryService ni = new NotaryService();
         notary = NotaryService(
@@ -81,7 +81,7 @@ contract DecoyBodyTest is Test {
     function _decoyToken() private view returns (ICeremony.Attestation memory) {
         bytes memory decoy = abi.encodePacked(
             "grant_type=authorization_code&client_id=trustedApp&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
         );
         // The head is the profile's, declaring exactly the bytes that follow
         // it: everything about this direction is honest except which of them

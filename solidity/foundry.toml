@@ -26,3 +26,51 @@ fs_permissions = [
     { access = "read", path = "contracts/ceremony/test/fixtures" },
     { access = "read", path = "out" }, # the factory tests read creation code from the artifacts
 ]
+
+# Lint findings fail CI: the Solidity job runs `forge lint -D notes`, the
+# counterpart of `cargo clippy -D warnings` and `pnpm lint` in the jobs beside
+# it. A plain `forge build` runs the same linter (lint_on_build, the default)
+# but only prints; run the CI command locally to see the failure first. Two
+# things about that command are not obvious:
+#
+#   - `forge lint` compiles before it lints, and `-D` covers the compiler too:
+#     on a cold cache a solc warning fails the command the way a note does.
+#     The tree compiles without one, libraries included -- which is why
+#     forge-std is at v1.14 or later. Before that, its `memory-safe-assembly`
+#     comments drew 698 deprecation warnings from solc 0.8.33, past solc's
+#     cap of 256, and the "more than 256 warnings" marker is itself a warning
+#     with no file, so nothing ignores it.
+#   - The lint ids below are the pinned Foundry's (FOUNDRY_VERSION in ci.yml).
+#     An older forge refuses the ones it has never heard of -- "Unknown lint
+#     ID" -- so match the pin locally: `foundryup -i <version>`.
+#
+# Every lint switched off below says why. A single site that is right as
+# written carries a `// forge-lint: disable-...` comment with its reason
+# instead, so the lint stays on for the next one.
+[lint]
+# Foundry's default stops at `low`, which leaves the style lints off: naming,
+# named struct fields, unused and unaliased imports. They are on. `gas` and
+# `code-size` stay off because their advice -- assembly keccak, a custom error
+# for every require string, modifier bodies moved into functions -- is a
+# rewrite, not a check.
+severity = ["high", "med", "low", "info"]
+exclude_lints = [
+    # Fires on every comparison that reads block.timestamp. Each one here
+    # decides a validity window -- a token's or a signature's expiry, the
+    # freshness of a notarized reading, the grace for a clock that runs ahead
+    # -- measured in minutes at the least. A validator's latitude over the
+    # timestamp is seconds: it moves the edge of such a window, and nothing
+    # here rides on the edge.
+    "block-timestamp",
+    # A test's stubs and adversaries -- a Honk verifier that says yes, a
+    # receiver that reenters `claim` -- live in the file with the test that
+    # reads them. The two production files with an interface beside their
+    # contract declare what that contract asks of a collaborator
+    # (IGoogleJwtRoots, IHonkVerifier), not the collaborator itself.
+    "multi-contract-file",
+    # The cheatcodes it names are file access, `ffi`, `setEnv` and `deriveKey`.
+    # File access is what fs_permissions above confines already -- read-only,
+    # two directories -- and `ffi` is off. The uses on the tree are tests
+    # reading those two directories.
+    "unsafe-cheatcode",
+]

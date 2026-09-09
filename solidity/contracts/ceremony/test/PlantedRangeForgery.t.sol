@@ -35,12 +35,12 @@ contract PlantedRangeForgeryTest is Test {
     bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
-    bytes32 DIGEST;
+    bytes32 digest;
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
     function setUp() public {
-        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
+        digest = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0 + 10);
         NotaryService nImpl = new NotaryService();
         notary = NotaryService(
@@ -107,7 +107,7 @@ contract PlantedRangeForgeryTest is Test {
     /// X ignores it. That header's value is the only other revealed range.
     /// The real body -- grant_type=refresh_token -- is revealed to nobody.
     function _plantedHeaderToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE);
 
         //  0: "POST /2/oauth2/token HTTP/1.1\r\n"          (31 bytes)
         // 31: "x-pad: " (7)                                -> planted value at 38
@@ -131,7 +131,7 @@ contract PlantedRangeForgeryTest is Test {
         return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
-    function _honestIdentity() private view returns (ICeremony.Attestation memory) {
+    function _honestIdentity() private pure returns (ICeremony.Attestation memory) {
         bytes memory head =
             abi.encodePacked("GET /2/users/me HTTP/1.1\r\nhost: api.x.com\r\n", "\r\nauthorization: Bearer ");
         bytes memory bearer = "TOKENTOKENTOKEN";
@@ -162,7 +162,7 @@ contract PlantedRangeForgeryTest is Test {
         return abi.encode(address(0xBEEF));
     }
 
-    function _base() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+    function _base() private pure returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
         s.ceremonyVersion = 1;
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;
@@ -194,7 +194,7 @@ contract PlantedRangeForgeryTest is Test {
     /// Finding 4: a notary that reveals ONE FIELD PER RANGE, as the spec's
     /// section 5.2 table lists them, is rejected.
     function _perFieldToken() private view returns (ICeremony.Attestation memory) {
-        bytes memory v = CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE);
+        bytes memory v = CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE);
         bytes memory line = "POST /2/oauth2/token ";
         bytes memory f1 = "grant_type=authorization_code";
         bytes memory f2 = "client_id=realapp";

@@ -78,7 +78,7 @@ contract CeremonyAttestationTest is Test {
     }
 
     /// @dev Never reverts with a panic, whatever a caller hands it.
-    function test_rejectsEveryTruncation() public {
+    function test_rejectsEveryTruncation() public view {
         for (uint256 cut = 0; cut < FIXTURE.length; ++cut) {
             bytes memory prefix = new bytes(cut);
             for (uint256 i = 0; i < cut; ++i) {
@@ -89,7 +89,7 @@ contract CeremonyAttestationTest is Test {
         }
     }
 
-    function test_rejectsACountThatOutrunsTheBuffer() public {
+    function test_rejectsACountThatOutrunsTheBuffer() public view {
         // A declared count of 0xffff with nothing behind it must not read past
         // the end.
         bytes memory tampered = FIXTURE;

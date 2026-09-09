@@ -522,14 +522,14 @@ contract CeremonyClaimTest is Test {
 }
 
 contract ReenteringVerifier is IPlatformVerifier {
-    IdentityNames immutable names;
-    bytes32 immutable platform;
+    IdentityNames immutable NAMES;
+    bytes32 immutable PLATFORM;
     bytes innerPayload;
     bool armed;
 
     constructor(IdentityNames n, bytes32 p) {
-        names = n;
-        platform = p;
+        NAMES = n;
+        PLATFORM = p;
     }
 
     function setInner(bytes memory p) external {
@@ -538,20 +538,22 @@ contract ReenteringVerifier is IPlatformVerifier {
     }
 
     function platformId() external view returns (bytes32) {
-        return platform;
+        return PLATFORM;
     }
 
     function quote() external pure returns (uint256) {
         return 0;
     }
 
+    /// @dev The claim it returns is zeroed; the reentry is the whole point.
     function verify(bytes calldata) external payable returns (VerifiedClaim memory c) {
         if (armed) {
             armed = false;
             (bool ok, bytes memory ret) =
-                address(names).call(abi.encodeCall(IdentityNames.claim, (platform, 1, innerPayload, false)));
+                address(NAMES).call(abi.encodeCall(IdentityNames.claim, (PLATFORM, 1, innerPayload, false)));
             if (!ok) assembly { revert(add(ret, 32), mload(ret)) }
         }
+        return c;
     }
 }
 
@@ -564,19 +566,19 @@ contract RejectingReceiver {
 
 /// @notice A fee receiver that tries to claim again while being paid.
 contract ReenteringReceiver {
-    IdentityNames immutable names;
-    bytes32 immutable platform;
+    IdentityNames immutable NAMES;
+    bytes32 immutable PLATFORM;
     bytes payload;
     bool public reentryReverted;
 
     constructor(IdentityNames n, bytes32 p, bytes memory inner) {
-        names = n;
-        platform = p;
+        NAMES = n;
+        PLATFORM = p;
         payload = inner;
     }
 
     receive() external payable {
-        (bool ok,) = address(names).call(abi.encodeCall(IdentityNames.claim, (platform, 1, payload, false)));
+        (bool ok,) = address(NAMES).call(abi.encodeCall(IdentityNames.claim, (PLATFORM, 1, payload, false)));
         reentryReverted = !ok;
     }
 }

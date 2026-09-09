@@ -56,7 +56,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Solidity: build, tests, formatting.
+  # Solidity: build, tests, lint, formatting.
   # ---------------------------------------------------------------------------
   solidity:
     name: Solidity
@@ -75,6 +75,15 @@ jobs:
       - name: Test
         working-directory: solidity
         run: forge test -vvv
+
+      # The counterpart of `cargo clippy -D warnings` and `pnpm lint`: any
+      # finding, warning or note, fails the job. The build step above ran the
+      # same linter (lint_on_build) and only printed. Which lints run, why the
+      # excluded ones are excluded, and what `-D` covers besides the linter,
+      # is `[lint]` in solidity/foundry.toml.
+      - name: Lint
+        working-directory: solidity
+        run: forge lint -D notes
 
       - name: Formatting
         working-directory: solidity

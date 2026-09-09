@@ -417,7 +417,7 @@ contract IdentityNamesTest is Test {
 
     /// The `published` flag and the ceremony version out of the last
     /// `IdentityBound` in the recorded logs.
-    function _lastBind() internal returns (bool published, uint16 ceremonyVersion) {
+    function _lastBind() internal view returns (bool published, uint16 ceremonyVersion) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 topic = keccak256("IdentityBound(address,bytes32,bytes32,bytes32,string,string,uint64,bool,uint16)");
         for (uint256 i = logs.length; i > 0; i--) {
@@ -429,7 +429,7 @@ contract IdentityNamesTest is Test {
         revert("no IdentityBound in the logs");
     }
 
-    function _lastBindPublished() internal returns (bool published) {
+    function _lastBindPublished() internal view returns (bool published) {
         (published,) = _lastBind();
     }
 

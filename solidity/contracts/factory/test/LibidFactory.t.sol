@@ -92,7 +92,7 @@ contract LibidFactoryTest is Test {
         assertEq(factory.predict(name), predicted);
         vm.prank(owner);
         assertEq(factory.deploy(name, abi.encodePacked(type(Pong).creationCode, abi.encode(uint256(7)))), predicted);
-        assertEq(Pong(predicted).stored(), 7);
+        assertEq(Pong(predicted).STORED(), 7);
     }
 
     function test_predict_matchesActualForSeveralNames() public {

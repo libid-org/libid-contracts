@@ -42,12 +42,12 @@ contract GitHubPlatformVerifierTest is Test {
     bytes32 constant AUTH_NONCE = bytes32(uint256(0x5555555555555555555555555555555555555555555555555555555555555555));
     /// The digest the fixtures are made for, derived in `setUp` from the
     /// payload below and this chain.
-    bytes32 DIGEST;
+    bytes32 digest;
     bytes32 constant TOKEN_COMMITMENT = bytes32(uint256(0x1111));
     bytes32 constant IDENTITY_COMMITMENT = bytes32(uint256(0x2222));
 
     function setUp() public {
-        DIGEST = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
+        digest = CeremonyAuthorization.digestFor(DOMAIN, 1, AUTH_NONCE, _txData());
         vm.warp(T0 + 10);
         NotaryService nImpl = new NotaryService();
         notary = NotaryService(
@@ -119,7 +119,7 @@ contract GitHubPlatformVerifierTest is Test {
     function _exchangeSent() private view returns (AttestationBuilder.Direction memory) {
         bytes memory prefix = abi.encodePacked(
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
         );
         // The declared length covers the committed `client_secret` too: it is
         // the body GitHub parsed, not the part of it this side can read.
@@ -229,7 +229,7 @@ contract GitHubPlatformVerifierTest is Test {
         assertEq(f.userId, "583231");
         assertEq(f.handle, "octocat");
         assertEq(string(f.clientIdentifier), "Iv1.8a61f9b3a7aba766");
-        assertEq(f.sessionId, DIGEST);
+        assertEq(f.sessionId, digest);
         assertEq(f.operationDomain, DOMAIN);
         assertEq(f.transactionData, _txData());
         assertEq(f.ceremonyVersion, 1);
@@ -377,7 +377,7 @@ contract GitHubPlatformVerifierTest is Test {
     function test_rejectsAnExchangeWhoseRequestLineIsHidden() public {
         bytes memory prefix = abi.encodePacked(
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
         );
         bytes memory whole = abi.encodePacked(_exchangeHead(prefix.length), prefix);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
@@ -403,7 +403,7 @@ contract GitHubPlatformVerifierTest is Test {
     function test_rejectsAnotherMediaTypeOnTheExchange() public {
         bytes memory prefix = abi.encodePacked(
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
-            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
         );
         bytes memory head = _exchangeHead(
             "host: github.com\r\ncontent-type: application/json\r\naccept: application/json\r\nconnection: close\r\n",

@@ -89,57 +89,84 @@ library HandleVectors {
 
     function all() internal pure returns (Vector[] memory v) {
         v = new Vector[](44);
-        v[0] = Vector("x", " @Alice_1 ", "alice_1", true, 0);
-        v[1] = Vector("x", "alice", "alice", true, 0);
-        v[2] = Vector("x", "@a", "a", true, 0);
-        v[3] = Vector("x", "A1_b2", "a1_b2", true, 0);
-        v[4] = Vector("x", "a12345678901234", "a12345678901234", true, 0);
-        v[5] = Vector("x", "a123456789012345", "", false, 1);
-        v[6] = Vector("x", "", "", false, 0);
-        v[7] = Vector("x", "   ", "", false, 0);
-        v[8] = Vector("x", "@", "", false, 0);
-        v[9] = Vector("x", "@@alice", "", false, 2);
-        v[10] = Vector("x", "alice-1", "", false, 2);
-        v[11] = Vector("x", "ali ce", "", false, 2);
-        v[12] = Vector("x", "ali\tce", "", false, 2);
-        v[13] = Vector("x", "ali\nce", "", false, 2);
-        v[14] = Vector("x", "alic\xc3\xa9", "", false, 2);
-        v[15] = Vector("x", "\talice", "", false, 2);
-        v[16] = Vector("x", "alice\t", "", false, 2);
-        v[17] = Vector("x", "\nalice", "", false, 2);
-        v[18] = Vector("x", " @ alice ", "", false, 2);
-        v[19] = Vector("github", "@Octo-Cat", "octo-cat", true, 0);
-        v[20] = Vector("github", "octocat", "octocat", true, 0);
-        v[21] = Vector("github", " OctoCat ", "octocat", true, 0);
-        v[22] = Vector("github", "a", "a", true, 0);
-        v[23] = Vector("github", "o-c", "o-c", true, 0);
-        v[24] = Vector("github", "-octocat", "", false, 3);
-        v[25] = Vector("github", "octocat-", "", false, 3);
-        v[26] = Vector("github", "octo--cat", "", false, 3);
-        v[27] = Vector("github", "octo_cat", "", false, 2);
-        v[28] = Vector("github", "-", "", false, 3);
-        v[29] = Vector("github", "", "", false, 0);
-        v[30] = Vector(
-            "github", "abcdefghijabcdefghijabcdefghijabcdefghi", "abcdefghijabcdefghijabcdefghijabcdefghi", true, 0
-        );
-        v[31] = Vector("github", "abcdefghijabcdefghijabcdefghijabcdefghij", "", false, 1);
-        v[32] = Vector("github", "\n", "", false, 2);
-        v[33] = Vector("google", "A.B+tag@Example.COM", "a.b+tag@example.com", true, 0);
-        v[34] = Vector("google", "alice@example.com", "alice@example.com", true, 0);
-        v[35] = Vector("google", " Alice@Example.com ", "alice@example.com", true, 0);
-        v[36] = Vector("google", "@Alice@example.com", "", false, 3);
-        v[37] = Vector("google", "alice", "", false, 3);
-        v[38] = Vector("google", "@example.com", "", false, 3);
-        v[39] = Vector("google", "alice@", "", false, 3);
-        v[40] = Vector("google", "", "", false, 0);
-        v[41] = Vector("google", "ali ce@example.com", "", false, 2);
-        v[42] = Vector(
-            "google",
-            "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
-            "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
-            true,
-            0
-        );
-        v[43] = Vector("google", "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijk@example.com", "", false, 1);
+        v[0] = Vector({platform: "x", input: " @Alice_1 ", output: "alice_1", accepted: true, errorKind: 0});
+        v[1] = Vector({platform: "x", input: "alice", output: "alice", accepted: true, errorKind: 0});
+        v[2] = Vector({platform: "x", input: "@a", output: "a", accepted: true, errorKind: 0});
+        v[3] = Vector({platform: "x", input: "A1_b2", output: "a1_b2", accepted: true, errorKind: 0});
+        v[4] =
+            Vector({platform: "x", input: "a12345678901234", output: "a12345678901234", accepted: true, errorKind: 0});
+        v[5] = Vector({platform: "x", input: "a123456789012345", output: "", accepted: false, errorKind: 1});
+        v[6] = Vector({platform: "x", input: "", output: "", accepted: false, errorKind: 0});
+        v[7] = Vector({platform: "x", input: "   ", output: "", accepted: false, errorKind: 0});
+        v[8] = Vector({platform: "x", input: "@", output: "", accepted: false, errorKind: 0});
+        v[9] = Vector({platform: "x", input: "@@alice", output: "", accepted: false, errorKind: 2});
+        v[10] = Vector({platform: "x", input: "alice-1", output: "", accepted: false, errorKind: 2});
+        v[11] = Vector({platform: "x", input: "ali ce", output: "", accepted: false, errorKind: 2});
+        v[12] = Vector({platform: "x", input: "ali\tce", output: "", accepted: false, errorKind: 2});
+        v[13] = Vector({platform: "x", input: "ali\nce", output: "", accepted: false, errorKind: 2});
+        v[14] = Vector({platform: "x", input: "alic\xc3\xa9", output: "", accepted: false, errorKind: 2});
+        v[15] = Vector({platform: "x", input: "\talice", output: "", accepted: false, errorKind: 2});
+        v[16] = Vector({platform: "x", input: "alice\t", output: "", accepted: false, errorKind: 2});
+        v[17] = Vector({platform: "x", input: "\nalice", output: "", accepted: false, errorKind: 2});
+        v[18] = Vector({platform: "x", input: " @ alice ", output: "", accepted: false, errorKind: 2});
+        v[19] = Vector({platform: "github", input: "@Octo-Cat", output: "octo-cat", accepted: true, errorKind: 0});
+        v[20] = Vector({platform: "github", input: "octocat", output: "octocat", accepted: true, errorKind: 0});
+        v[21] = Vector({platform: "github", input: " OctoCat ", output: "octocat", accepted: true, errorKind: 0});
+        v[22] = Vector({platform: "github", input: "a", output: "a", accepted: true, errorKind: 0});
+        v[23] = Vector({platform: "github", input: "o-c", output: "o-c", accepted: true, errorKind: 0});
+        v[24] = Vector({platform: "github", input: "-octocat", output: "", accepted: false, errorKind: 3});
+        v[25] = Vector({platform: "github", input: "octocat-", output: "", accepted: false, errorKind: 3});
+        v[26] = Vector({platform: "github", input: "octo--cat", output: "", accepted: false, errorKind: 3});
+        v[27] = Vector({platform: "github", input: "octo_cat", output: "", accepted: false, errorKind: 2});
+        v[28] = Vector({platform: "github", input: "-", output: "", accepted: false, errorKind: 3});
+        v[29] = Vector({platform: "github", input: "", output: "", accepted: false, errorKind: 0});
+        v[30] = Vector({
+            platform: "github",
+            input: "abcdefghijabcdefghijabcdefghijabcdefghi",
+            output: "abcdefghijabcdefghijabcdefghijabcdefghi",
+            accepted: true,
+            errorKind: 0
+        });
+        v[31] = Vector({
+            platform: "github",
+            input: "abcdefghijabcdefghijabcdefghijabcdefghij",
+            output: "",
+            accepted: false,
+            errorKind: 1
+        });
+        v[32] = Vector({platform: "github", input: "\n", output: "", accepted: false, errorKind: 2});
+        v[33] = Vector({
+            platform: "google",
+            input: "A.B+tag@Example.COM",
+            output: "a.b+tag@example.com",
+            accepted: true,
+            errorKind: 0
+        });
+        v[34] = Vector({
+            platform: "google", input: "alice@example.com", output: "alice@example.com", accepted: true, errorKind: 0
+        });
+        v[35] = Vector({
+            platform: "google", input: " Alice@Example.com ", output: "alice@example.com", accepted: true, errorKind: 0
+        });
+        v[36] = Vector({platform: "google", input: "@Alice@example.com", output: "", accepted: false, errorKind: 3});
+        v[37] = Vector({platform: "google", input: "alice", output: "", accepted: false, errorKind: 3});
+        v[38] = Vector({platform: "google", input: "@example.com", output: "", accepted: false, errorKind: 3});
+        v[39] = Vector({platform: "google", input: "alice@", output: "", accepted: false, errorKind: 3});
+        v[40] = Vector({platform: "google", input: "", output: "", accepted: false, errorKind: 0});
+        v[41] = Vector({platform: "google", input: "ali ce@example.com", output: "", accepted: false, errorKind: 2});
+        v[42] = Vector({
+            platform: "google",
+            input: "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
+            output: "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij@example.com",
+            accepted: true,
+            errorKind: 0
+        });
+        v[43] = Vector({
+            platform: "google",
+            input: "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijk@example.com",
+            output: "",
+            accepted: false,
+            errorKind: 1
+        });
     }
 }

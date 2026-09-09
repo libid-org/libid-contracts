@@ -37,12 +37,13 @@ contract NotaryServiceTest is Test {
     /// @dev The anvil key whose address is `NOTARY`.
     uint256 constant NOTARY_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
-    bytes SIG;
+    /// @dev `NOTARY`'s signature over `ATTESTED`, made in `setUp`.
+    bytes signature;
 
     function setUp() public {
         (uint8 v, bytes32 r, bytes32 sVal) =
             vm.sign(NOTARY_KEY, MessageHashUtils.toEthSignedMessageHash(keccak256(ATTESTED)));
-        SIG = abi.encodePacked(r, sVal, v);
+        signature = abi.encodePacked(r, sVal, v);
 
         NotaryService impl = new NotaryService();
         service = NotaryService(
@@ -53,7 +54,7 @@ contract NotaryServiceTest is Test {
     // ─── The core property ──────────────────────────────────────────
 
     function test_acceptsARealNotarySignature() public {
-        service.verify{value: FEE}(ATTESTED, SIG);
+        service.verify{value: FEE}(ATTESTED, signature);
     }
 
     /// @dev REQ-COMMON-33, and the whole reason this contract replaced one that
@@ -66,7 +67,7 @@ contract NotaryServiceTest is Test {
         tampered[200] = bytes1(uint8(tampered[200]) ^ 0x01);
 
         vm.expectPartialRevert(NotaryService.UntrustedNotary.selector);
-        service.verify{value: FEE}(tampered, SIG);
+        service.verify{value: FEE}(tampered, signature);
     }
 
     function test_rejectsAnUntrustedKey() public {
@@ -94,13 +95,13 @@ contract NotaryServiceTest is Test {
     ///      no silent overcharge of the Fee Payer.
     function test_rejectsAnyValueOtherThanTheFee() public {
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, FEE, FEE - 1));
-        service.verify{value: FEE - 1}(ATTESTED, SIG);
+        service.verify{value: FEE - 1}(ATTESTED, signature);
 
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, FEE, FEE + 1));
-        service.verify{value: FEE + 1}(ATTESTED, SIG);
+        service.verify{value: FEE + 1}(ATTESTED, signature);
 
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, FEE, 0));
-        service.verify(ATTESTED, SIG);
+        service.verify(ATTESTED, signature);
     }
 
     /// @dev REQ-COMMON-34C: a fee that varies by principal or content is
@@ -114,13 +115,13 @@ contract NotaryServiceTest is Test {
             vm.prank(callers[i], callers[i]); // distinct sender AND origin
             assertEq(service.fee(), quoted, "the fee moved with the caller");
             vm.prank(callers[i]);
-            service.verify{value: quoted}(ATTESTED, SIG);
+            service.verify{value: quoted}(ATTESTED, signature);
         }
     }
 
     function test_feesAccrueAndOnlyTheOwnerWithdraws() public {
-        service.verify{value: FEE}(ATTESTED, SIG);
-        service.verify{value: FEE}(ATTESTED, SIG);
+        service.verify{value: FEE}(ATTESTED, signature);
+        service.verify{value: FEE}(ATTESTED, signature);
         assertEq(address(service).balance, 2 * FEE);
 
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
@@ -154,12 +155,12 @@ contract NotaryServiceTest is Test {
         assertTrue(service.isTrustedNotary(NOTARY));
         assertTrue(service.isTrustedNotary(vm.addr(incoming)));
         // Not reverting IS the assertion: the outgoing key still verifies.
-        service.verify{value: FEE}(ATTESTED, SIG);
+        service.verify{value: FEE}(ATTESTED, signature);
 
         vm.prank(OWNER);
         service.setNotary(NOTARY, false);
         vm.expectRevert(abi.encodeWithSelector(NotaryService.UntrustedNotary.selector, NOTARY));
-        service.verify{value: FEE}(ATTESTED, SIG);
+        service.verify{value: FEE}(ATTESTED, signature);
     }
 
     function test_onlyTheOwnerGoverns() public {
@@ -173,10 +174,10 @@ contract NotaryServiceTest is Test {
         vm.prank(OWNER);
         service.setFee(5 wei);
         assertEq(service.fee(), 5 wei);
-        service.verify{value: 5 wei}(ATTESTED, SIG);
+        service.verify{value: 5 wei}(ATTESTED, signature);
 
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, 5 wei, FEE));
-        service.verify{value: FEE}(ATTESTED, SIG);
+        service.verify{value: FEE}(ATTESTED, signature);
     }
 
     /// @dev A deployment may meter at no charge, and an exact match still
@@ -185,9 +186,9 @@ contract NotaryServiceTest is Test {
     function test_aZeroFeeStillRequiresAnExactMatch() public {
         vm.prank(OWNER);
         service.setFee(0);
-        service.verify(ATTESTED, SIG);
+        service.verify(ATTESTED, signature);
         vm.expectRevert(abi.encodeWithSelector(NotaryService.WrongFee.selector, 0, 1));
-        service.verify{value: 1}(ATTESTED, SIG);
+        service.verify{value: 1}(ATTESTED, signature);
     }
 
     /// @dev The record comes back decoded, so a caller cannot hold the fields
@@ -195,7 +196,7 @@ contract NotaryServiceTest is Test {
     ///      bare accept, nothing but two adjacent statements kept
     ///      "authenticate, then read" true.
     function test_handsBackTheDecodedRecord() public {
-        CeremonyAttestation.AttestedData memory a = service.verify{value: FEE}(ATTESTED, SIG);
+        CeremonyAttestation.AttestedData memory a = service.verify{value: FEE}(ATTESTED, signature);
 
         assertEq(a.authorityId, keccak256(bytes("api.x.com")));
         assertEq(a.createdAt, 1_770_000_000);

@@ -315,7 +315,7 @@ contract GoogleJwtRootsTest is Test {
     }
 
     /// The one `KeysRotated` among the recorded logs, decoded.
-    function _lastRotation() private returns (uint64 observedAt, string[] memory kids, bytes32[] memory moduli) {
+    function _lastRotation() private view returns (uint64 observedAt, string[] memory kids, bytes32[] memory moduli) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 topic = keccak256("KeysRotated(uint64,string[],bytes32[])");
         uint256 seen;

@@ -25,9 +25,12 @@ pragma solidity ^0.8.20;
 ///         re-enter and withdraw twice. The original is safe only by accident
 ///         of the gas stipend.
 contract WTIA9 {
+    // ERC-20 names these getters; a constant is the cheapest way to answer.
+    // forge-lint: disable-start(screaming-snake-case-const)
     string public constant name = "Wrapped TIA";
     string public constant symbol = "WTIA";
     uint8 public constant decimals = 18;
+    // forge-lint: disable-end(screaming-snake-case-const)
 
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event Transfer(address indexed from, address indexed to, uint256 value);
