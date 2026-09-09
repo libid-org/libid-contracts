@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import {CeremonyAttestation} from "./CeremonyAttestation.sol";
 import {CeremonyAuthorization} from "./CeremonyAuthorization.sol";
 import {CeremonyFields} from "./CeremonyFields.sol";
-import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {IPlatformVerifier} from "./IPlatformVerifier.sol";
 import {PlatformVerifierBase} from "./PlatformVerifierBase.sol";
 

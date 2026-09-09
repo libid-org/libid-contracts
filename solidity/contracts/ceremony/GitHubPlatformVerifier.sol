@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {CeremonyFields} from "./CeremonyFields.sol";
 import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {INotaryService} from "./INotaryService.sol";
 import {IHonkVerifier} from "./PlatformVerifierBase.sol";

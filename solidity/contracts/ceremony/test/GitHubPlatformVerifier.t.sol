@@ -15,7 +15,6 @@ import {INotaryService} from "../INotaryService.sol";
 import {NotaryService} from "../NotaryService.sol";
 import {IHonkVerifier, PlatformVerifierBase} from "../PlatformVerifierBase.sol";
 import {TlsNotaryVerifierBase} from "../TlsNotaryVerifierBase.sol";
-import {XPlatformVerifier} from "../XPlatformVerifier.sol";
 
 contract Honk is IHonkVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
