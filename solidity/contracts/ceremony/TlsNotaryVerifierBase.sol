@@ -94,6 +94,14 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
+    /// @dev The token request's head is not the run of bytes the profile fixes:
+    ///      a header added, removed, reordered or given another value, or a
+    ///      declared body length that is not plain decimal digits.
+    error WrongTokenRequestHead();
+    /// @dev The request declared a body of one length and the notary signed
+    ///      another, so the bytes the platform parsed as the form are not the
+    ///      bytes read below.
+    error WrongDeclaredBodyLength(uint256 declared, uint256 signed);
 
     // ─── What a profile supplies ────────────────────────────────────
 
@@ -101,6 +109,16 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _identityAuthority() internal pure virtual returns (bytes32);
     function _tokenRequestLine() internal pure virtual returns (bytes memory);
     function _identityRequestLine() internal pure virtual returns (bytes memory);
+
+    /// @dev The token request's head, byte for byte, up to the `content-length`
+    ///      value this verifier reads out of the transcript itself.
+    ///
+    ///      Only the token request has one. The identity request carries the
+    ///      bearer in a header, so its head is not fixed bytes and its headers
+    ///      are held to `requireBearerHeaderRequest` instead: coverage, one
+    ///      line-anchored `authorization`, and the framing around the committed
+    ///      value.
+    function _tokenRequestHead() internal pure virtual returns (bytes memory);
 
     /// @dev How many committed ranges the token request carries. X hides no
     ///      body field and uses a public client, so zero; GitHub commits its
@@ -296,7 +314,11 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         }
         if (!_startsWith(data.sent.revealed[0].value, _tokenRequestLine())) revert WrongRequestLine();
 
-        bytes memory body = _tokenBody(data.sent);
+        // The head is pinned whole below, which subsumes the line just checked.
+        // Both stay: REQ-COMMON-21A is about the method and the path, and a
+        // deployment pointed at the wrong endpoint should hear that rather than
+        // that some byte of its request differs.
+        bytes memory body = _tokenBody(data.sent, data.sentTranscriptLength);
         _checkTokenBody(body);
 
         // REQ-COMMON-15A. This is the whole binding between the evidence and
@@ -435,11 +457,40 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      X carries none, because it hides no body field and authenticates
     ///      with a public client; GitHub carries one, its `client_secret`,
     ///      ordered last under REQ-COMMON-22 and reaching the transcript end.
-    function _tokenBody(CeremonyAttestation.DirectionBlock memory block_) internal pure returns (bytes memory body) {
+    ///
+    ///      AND THE HEAD ITSELF, byte for byte. Revealing the headers is not
+    ///      checking them: they were public and unconstrained here, while
+    ///      `formField` below reads the body under a form-encoding assumption
+    ///      that only `content-type` makes true of the platform as well.
+    ///      REQ-COMMON-21B fixes the media type in the deployment profile
+    ///      because it selects the platform's request parser, and a pinned
+    ///      value nothing compares is a pin in name only. The same holds of
+    ///      any other header that changes what the platform does with these
+    ///      bytes, so the profile fixes the whole run rather than one field.
+    ///
+    ///      One comparison against fixed bytes, not a header parser. A header
+    ///      added, removed, reordered or given another value all move the same
+    ///      bytes, so all four fail here; a parser would have to catch each of
+    ///      them, and its own leniencies are what the CRLF rules on the
+    ///      identity request exist to close.
+    ///
+    ///      `content-length` is the one value the profile cannot fix, because
+    ///      it is the body's own length -- so it is read, and matched against
+    ///      the length the NOTARY signed. Without that the platform could frame
+    ///      a shorter body than the one read below, and parse a form this
+    ///      verifier never saw.
+    function _tokenBody(CeremonyAttestation.DirectionBlock memory block_, uint32 signedLength)
+        internal
+        pure
+        returns (bytes memory body)
+    {
         if (block_.revealed.length != 1 || block_.commitments.length != _tokenSentCommitments()) {
             revert WrongTokenRequestLayout(block_.revealed.length, block_.commitments.length);
         }
         bytes memory whole = block_.revealed[0].value;
+
+        bytes memory head = _tokenRequestHead();
+        if (!_startsWith(whole, head)) revert WrongTokenRequestHead();
 
         // Exactly one head boundary. A well-formed request has one; requiring
         // it removes any question of which run of bytes the body is.
@@ -453,7 +504,25 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         }
         if (seen != 1) revert NoHeadBoundary(seen);
 
+        // Everything between the pinned head and that boundary is the declared
+        // length and nothing else, so no header can hide after the last one the
+        // profile names. Ten digits is `uint32`'s worst case, which is what a
+        // signed transcript length is; a leading zero is a second spelling of a
+        // head this exists to fix one spelling of.
+        uint256 declared;
+        if (at <= head.length || at - head.length > 10) revert WrongTokenRequestHead();
+        if (at - head.length > 1 && whole[head.length] == "0") revert WrongTokenRequestHead();
+        for (uint256 i = head.length; i < at; ++i) {
+            if (whole[i] < "0" || whole[i] > "9") revert WrongTokenRequestHead();
+            declared = declared * 10 + (uint8(whole[i]) - 0x30);
+        }
+
         at += 4;
+        // `signedLength` is the whole request, and the head is revealed, so the
+        // remainder is the body -- GitHub's committed `client_secret` included,
+        // which the revealed run stops short of.
+        if (declared != signedLength - at) revert WrongDeclaredBodyLength(declared, signedLength - at);
+
         body = new bytes(whole.length - at);
         for (uint256 i = 0; i < body.length; ++i) {
             body[i] = whole[at + i];

@@ -89,6 +89,28 @@ contract GitHubPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    /// The header block `github/v1` fixes, in the order the Token-Exchange
+    /// Service must send it.
+    bytes constant EXCHANGE_HEADERS =
+        "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
+
+    /// The exchange request's head, declaring a body of `bodyLength` bytes.
+    /// Assembled from its parts so a test can change one header and watch the
+    /// verifier refuse it.
+    function _exchangeHead(uint256 bodyLength) private pure returns (bytes memory) {
+        return _exchangeHead(EXCHANGE_HEADERS, bodyLength);
+    }
+
+    function _exchangeHead(bytes memory headers, uint256 bodyLength) private pure returns (bytes memory) {
+        return abi.encodePacked(
+            "POST /login/oauth/access_token HTTP/1.1\r\n",
+            headers,
+            "content-length: ",
+            vm.toString(bodyLength),
+            "\r\n\r\n"
+        );
+    }
+
     /// The exchange: request line, then the revealed body PREFIX. The secret is
     /// ordered last and committed, so the prefix stops where it begins.
     /// The exchange request as the profile fixes it: one revealed run up to
@@ -96,11 +118,13 @@ contract GitHubPlatformVerifierTest is Test {
     /// inside the revealed run, so the body is located by the framing rather
     /// than by a range position.
     function _exchangeSent() private view returns (AttestationBuilder.Direction memory) {
-        bytes memory whole = abi.encodePacked(
-            "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
+        bytes memory prefix = abi.encodePacked(
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
             CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
+        // The declared length covers the committed `client_secret` too: it is
+        // the body GitHub parsed, not the part of it this side can read.
+        bytes memory whole = abi.encodePacked(_exchangeHead(prefix.length + 40), prefix);
         uint32 wholeEnd = uint32(whole.length);
         uint32 secretEnd = wholeEnd + 40; // `&client_secret=<hex>`, committed
 
@@ -352,11 +376,11 @@ contract GitHubPlatformVerifierTest is Test {
     /// Commitment FIRST, then one revealed run: tiles, one commitment as the profile demands,
     /// head boundary inside the run. Only TlsNotaryVerifierBase.sol:294 stands between this and acceptance.
     function test_rejectsAnExchangeWhoseRequestLineIsHidden() public {
-        bytes memory whole = abi.encodePacked(
-            "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\n\r\n",
+        bytes memory prefix = abi.encodePacked(
             "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
             CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
         );
+        bytes memory whole = abi.encodePacked(_exchangeHead(prefix.length), prefix);
         AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
             revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 40, value: whole})),
             commitments: AttestationBuilder.one(
@@ -369,6 +393,46 @@ contract GitHubPlatformVerifierTest is Test {
         s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
         vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.RequestLineNotAtOrigin.selector, uint32(40)));
         this.run{value: quote}(s);
+    }
+
+    /// @dev REQ-COMMON-21B, on the profile whose exchange this repository does
+    ///      not compose: `github/v1` pins its OWN head, so a service sending a
+    ///      request X's constant would have accepted is still refused here.
+    ///      The media type is the header the requirement names, because it is
+    ///      what decides whether GitHub reads the bytes `formField` reads as a
+    ///      form at all.
+    function test_rejectsAnotherMediaTypeOnTheExchange() public {
+        bytes memory prefix = abi.encodePacked(
+            "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
+            CeremonyAuthorization.codeVerifier(DIGEST, AUTH_NONCE)
+        );
+        bytes memory head = _exchangeHead(
+            "host: github.com\r\ncontent-type: application/json\r\naccept: application/json\r\nconnection: close\r\n",
+            prefix.length + 40
+        );
+        bytes memory whole = abi.encodePacked(head, prefix);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({
+                    start: uint32(whole.length), end: uint32(whole.length) + 40, value: bytes32(uint256(0x5EC1E7))
+                })
+            ),
+            length: uint32(whole.length) + 40
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB, T0, sent, _exchangeResponse());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the fixtures above compose that head from parts, so this is
+    ///      what says the parts are the profile's own.
+    function test_theFixtureHeadIsTheProfilesOwn() public pure {
+        assertEq(
+            string(_exchangeHead(0)), string(abi.encodePacked(CeremonyProfile.GITHUB_TOKEN_REQUEST_HEAD, "0\r\n\r\n"))
+        );
     }
 
     function test_rejectsAnExchangeResponseWithNoRevealedAnchors() public {
