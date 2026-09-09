@@ -39,7 +39,7 @@ contract IdentityDeployWiringTest is Test {
 
     /// The rules come from the generated table, so a change to `handles.json`
     /// reaches the deploy without anybody editing it.
-    function test_theGeneratedRulesAreTheOnesTheDeployInstalls() public {
+    function test_theGeneratedRulesAreTheOnesTheDeployInstalls() public pure {
         HandleNormalizer.Rules memory x = HandleVectors.rulesFor(HandleVectors.PLATFORM_X);
         assertEq(x.maxLength, uint16(HandleVectors.MAX_LENGTH_X), "X length");
         assertTrue(x.stripLeadingAt, "X strips a leading @");

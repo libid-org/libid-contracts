@@ -359,7 +359,7 @@ contract UpgradeSafetyTest is Test {
     // ─── IdentityNames ──────────────────────────────────────────────
 
     IdentityNames names;
-    CeremonyProofVerifier pv;
+    CeremonyProofVerifier proofVerifier;
     StubPlatformVerifier stub;
     address alice = makeAddr("alice");
 
@@ -372,13 +372,13 @@ contract UpgradeSafetyTest is Test {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         names.initialize(OWNER);
         CeremonyProofVerifier pvImpl = new CeremonyProofVerifier();
-        pv = CeremonyProofVerifier(
+        proofVerifier = CeremonyProofVerifier(
             address(new ERC1967Proxy(address(pvImpl), abi.encodeCall(CeremonyProofVerifier.initialize, (OWNER))))
         );
         stub = new StubPlatformVerifier(X, 0);
         vm.startPrank(OWNER);
-        names.setProofVerifier(IProofVerifier(address(pv)));
-        pv.setVerifier(X, 1, IPlatformVerifier(address(stub)));
+        names.setProofVerifier(IProofVerifier(address(proofVerifier)));
+        proofVerifier.setVerifier(X, 1, IPlatformVerifier(address(stub)));
         vm.stopPrank();
         vm.warp(2_000_000_000);
     }
@@ -414,7 +414,7 @@ contract UpgradeSafetyTest is Test {
         assertEq(names.resolveHandle(X, "alice"), alice);
         assertEq(names.primaryOf(alice, X), "alice");
         assertTrue(names.digestSpent(digest));
-        assertEq(address(names.proofVerifier()), address(pv));
+        assertEq(address(names.proofVerifier()), address(proofVerifier));
         assertEq(names.owner(), OWNER);
         // and the contract still works after the upgrade (newer watermark)
         stub.setObservedAt(1_780_000_000);

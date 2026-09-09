@@ -149,7 +149,7 @@ contract LayoutForgeryTest is Test {
 
     function _identity(AttestationBuilder.Direction memory received)
         private
-        view
+        pure
         returns (ICeremony.Attestation memory)
     {
         bytes memory head = abi.encodePacked(
@@ -177,7 +177,7 @@ contract LayoutForgeryTest is Test {
         return abi.encode(address(0xBEEF));
     }
 
-    function _submission() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+    function _submission() private pure returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
         s.ceremonyVersion = 1;
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;

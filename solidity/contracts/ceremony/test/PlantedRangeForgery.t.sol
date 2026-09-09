@@ -131,7 +131,7 @@ contract PlantedRangeForgeryTest is Test {
         return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
     }
 
-    function _honestIdentity() private view returns (ICeremony.Attestation memory) {
+    function _honestIdentity() private pure returns (ICeremony.Attestation memory) {
         bytes memory head =
             abi.encodePacked("GET /2/users/me HTTP/1.1\r\nhost: api.x.com\r\n", "\r\nauthorization: Bearer ");
         bytes memory bearer = "TOKENTOKENTOKEN";
@@ -162,7 +162,7 @@ contract PlantedRangeForgeryTest is Test {
         return abi.encode(address(0xBEEF));
     }
 
-    function _base() private view returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
+    function _base() private pure returns (TlsNotaryVerifierBase.TlsNotaryProof memory s) {
         s.ceremonyVersion = 1;
         s.operationDomain = DOMAIN;
         s.authorizationNonce = AUTH_NONCE;

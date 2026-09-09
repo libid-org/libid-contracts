@@ -545,6 +545,7 @@ contract ReenteringVerifier is IPlatformVerifier {
         return 0;
     }
 
+    /// @dev The claim it returns is zeroed; the reentry is the whole point.
     function verify(bytes calldata) external payable returns (VerifiedClaim memory c) {
         if (armed) {
             armed = false;
@@ -552,6 +553,7 @@ contract ReenteringVerifier is IPlatformVerifier {
                 address(names).call(abi.encodeCall(IdentityNames.claim, (platform, 1, innerPayload, false)));
             if (!ok) assembly { revert(add(ret, 32), mload(ret)) }
         }
+        return c;
     }
 }
 
