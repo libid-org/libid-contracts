@@ -24,10 +24,10 @@ contract Ping {
 }
 
 contract Pong {
-    uint256 public immutable stored;
+    uint256 public immutable STORED;
 
-    constructor(uint256 stored_) {
-        stored = stored_;
+    constructor(uint256 value) {
+        STORED = value;
     }
 }
 
@@ -69,7 +69,7 @@ contract Create3Test is Test {
         vm.revertToState(snapshot);
         address withPong = harness.deploy(salt, abi.encodePacked(type(Pong).creationCode, abi.encode(uint256(42))));
         assertEq(withPong, predicted);
-        assertEq(Pong(withPong).stored(), 42);
+        assertEq(Pong(withPong).STORED(), 42);
     }
 
     function test_deploy_differentSaltsDifferentAddresses() public {

@@ -498,6 +498,10 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      same guard REQ-COMMON-39 puts on the identity request, and without
     ///      it a bare line feed ends the head somewhere the platform's parser
     ///      does and this one does not.
+    // `1 << i` is the mask for line i. The lint's heuristic reads a literal on
+    // the left of a shift as swapped operands, which is what building a mask
+    // looks like.
+    // forge-lint: disable-next-item(incorrect-shift)
     function _checkTokenHead(bytes memory head) private pure returns (uint256 declared) {
         CeremonyAttestation.requireCrlfLineEndings(head);
 

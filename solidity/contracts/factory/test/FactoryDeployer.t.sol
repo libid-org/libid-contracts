@@ -29,6 +29,8 @@ contract FactoryDeployerTest is Test {
         bytes memory ret;
         (ok, ret) = FactoryDeployer.CREATE2_DEPLOYER.call(data);
         if (ok && ret.length == 20) {
+            // Casting to bytes20 is safe: the condition holds `ret` to 20 bytes.
+            // forge-lint: disable-next-line(unsafe-typecast)
             addr = address(bytes20(ret));
         }
     }

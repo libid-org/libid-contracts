@@ -217,6 +217,8 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
         // field element that does not fit `u64` must not become one that does.
         uint256 rawExp = uint256(p.publicInputs[OFF_EXP]);
         if (rawExp > type(uint64).max) revert ExpiryNotAUint64(rawExp);
+        // Casting to uint64 is safe: the line above refuses anything wider.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint64 exp = uint64(rawExp);
         if (block.timestamp >= exp) revert TokenExpired(exp, uint64(block.timestamp));
         // And a ceiling above it. Without one, a token minted with a distant
@@ -293,6 +295,10 @@ contract GooglePlatformVerifier is IPlatformVerifier, PlatformVerifierBase {
             // proved. Refuse instead (REQ-COMMON-28 in spirit: no truncation).
             if (v >> 248 != 0) revert PublicInputOverwide(offset + f, v, 248);
             for (uint256 i = 0; i < 31; ++i) {
+                // Casting to uint8 takes the low byte on purpose: the shift
+                // brought byte `i` to the bottom, and the other iterations
+                // read the rest.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 full[f * 31 + (30 - i)] = bytes1(uint8(v >> (8 * i)));
             }
         }

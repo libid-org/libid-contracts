@@ -844,6 +844,11 @@ contract GoogleJwtRoots is Initializable, UUPSUpgradeable, Ownable2StepUpgradeab
             inIdx += 4;
             out[outIdx] = bytes1(uint8((b0 << 2) | (b1 >> 4)));
             out[outIdx + 1] = bytes1(uint8(((b1 & 0xf) << 4) | (b2 >> 2)));
+            // Casting to uint8 is safe: `b3` is six bits and the pair above it
+            // fills the top two, so the value is a byte. The two lines above
+            // are the same shape and pass only because every operand there is
+            // parenthesized, which the lint does not look through.
+            // forge-lint: disable-next-line(unsafe-typecast)
             out[outIdx + 2] = bytes1(uint8(((b2 & 0x3) << 6) | b3));
             outIdx += 3;
         }

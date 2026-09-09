@@ -64,6 +64,9 @@ contract ChainProfileTest is Test {
     ///      eight-byte big-endian form, and each hashes somewhere else. The
     ///      vectors above already settle it; this says which readings they
     ///      rule out.
+    // Casting ETHEREUM to uint8 and uint64 is safe (it is 1) and the point:
+    // the narrower preimages are the readings this rules out.
+    // forge-lint: disable-next-item(unsafe-typecast)
     function test_theWidthIsTwoHundredAndFiftySixBits() public {
         vm.chainId(ETHEREUM);
         assertTrue(this.chainId() != keccak256(abi.encodePacked(uint8(ETHEREUM))), "a minimal-length preimage");

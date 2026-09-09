@@ -91,7 +91,9 @@ contract CeremonyFieldsTest is Test {
     }
 
     function test_refusesAnyOtherTerminator() public {
-        // A space would let `123 456` read as `123`.
+        // A space would let `123 456` read as `123`. Casting the literal to
+        // bytes1 is safe: one longer than a byte would not compile.
+        // forge-lint: disable-next-line(unsafe-typecast)
         vm.expectRevert(abi.encodeWithSelector(CeremonyFields.BadIntegerTerminator.selector, "id", bytes1(" ")));
         this.jsonInteger(bytes('{"id":123 456}'), "id");
     }
@@ -104,6 +106,8 @@ contract CeremonyFieldsTest is Test {
         // terminator is not `,`/`}`.
         vm.expectRevert(abi.encodeWithSelector(CeremonyFields.NoncanonicalInteger.selector, "id"));
         this.jsonInteger(bytes('{"id":-1}'), "id");
+        // Casting to bytes1 is safe, as above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         vm.expectRevert(abi.encodeWithSelector(CeremonyFields.BadIntegerTerminator.selector, "id", bytes1(".")));
         this.jsonInteger(bytes('{"id":1.5}'), "id");
     }
