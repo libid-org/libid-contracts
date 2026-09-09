@@ -21,11 +21,7 @@
 //! error that says why.
 //!
 //! Changing a value here changes what a deployed verifier accepts. That is a
-//! new ceremonyVersion, not an edit: --check compares every shipped profile
-//! against the last release and refuses a changed profile that kept its
-//! version. `deployed` is what says which profiles that rule has taken hold
-//! of -- until one is registered somewhere, its bytes are still being agreed
-//! and there is no verifier for a version bump to protect.
+//! new ceremonyVersion, not an edit.
 
 /// Which shape a platform's immutable identifier takes in its response.
 ///

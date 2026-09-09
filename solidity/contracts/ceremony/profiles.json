@@ -20,11 +20,7 @@
     "error that says why.",
     "",
     "Changing a value here changes what a deployed verifier accepts. That is a",
-    "new ceremonyVersion, not an edit: --check compares every shipped profile",
-    "against the last release and refuses a changed profile that kept its",
-    "version. `deployed` is what says which profiles that rule has taken hold",
-    "of -- until one is registered somewhere, its bytes are still being agreed",
-    "and there is no verifier for a version bump to protect."
+    "new ceremonyVersion, not an edit."
   ],
   "parameters": {
     "maxFutureAttestationSkewSeconds": 300,
@@ -39,7 +35,6 @@
     {
       "platform": "google",
       "ceremonyVersion": 1,
-      "deployed": false,
       "note": [
         "Google's evidence is a signed token checked against Google's published",
         "keys, so the profile notarizes nothing: no session, no attestation,",
@@ -50,7 +45,6 @@
     {
       "platform": "x",
       "ceremonyVersion": 1,
-      "deployed": false,
       "proofLifetimeSeconds": 3600,
       "note": [
         "A public client with S256 PKCE and two browser-owned sessions, both",
@@ -103,7 +97,6 @@
     {
       "platform": "github",
       "ceremonyVersion": 1,
-      "deployed": false,
       "proofLifetimeSeconds": 3600,
       "note": [
         "A confidential client. The exchange runs in the deployment because the",

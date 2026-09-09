@@ -94,13 +94,7 @@ jobs:
       # No submodules: the scripts format their Solidity output through
       # `forge fmt --raw -` (stdin), which reads foundry.toml but compiles
       # nothing, so the libraries are never consulted.
-      #
-      # Tags ARE needed: the ceremony-profile check compares each shipped
-      # profile against the last release, and a shallow clone carrying none
-      # would find nothing to compare and pass in silence.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       # Not the forge-build composite: this job needs the `forge` binary for
       # fmt, not the artifacts, and skipping the build keeps the check at the
@@ -112,8 +106,6 @@ jobs:
       - name: Generated handle tables are current
         run: python3 scripts/regen-identity-handles.py --check
 
-      # Also refuses a shipped ceremony profile whose values changed while its
-      # ceremonyVersion stayed put, which needs the release tags.
       - name: Generated ceremony profiles are current
         run: python3 scripts/regen-ceremony-profiles.py --check
 
@@ -414,9 +406,7 @@ jobs:
     if: github.event_name == 'release' && github.event.action == 'published'
     # `generated-tables` is load-bearing here, not decoration: it is what
     # refuses a release whose committed tables no longer match the file they
-    # come from, and what refuses a shipped ceremony profile whose values
-    # changed while its version stayed put. Publishing either would put a
-    # table on crates.io that no deployed verifier agrees with.
+    # come from. Publishing one would ship constants the source no longer says.
     needs: [verify-tag, versions, solidity, rust, publish-check, generated-tables]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

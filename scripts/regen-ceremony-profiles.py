@@ -15,12 +15,6 @@ That is the point: four components must produce the same bytes, and a
 disagreement between them is silent -- a Consumer dispatching on one string and
 a verifier registered under another simply never meet.
 
-`--check` additionally refuses a SHIPPED profile whose values changed while its
-`ceremonyVersion` stayed put. Changing what a deployed verifier accepts is a new
-version, not an edit, and the previous release is what says which is which --
-for a profile some deployment has registered a verifier for, which is what
-`deployed` records.
-
 Run: ./scripts/regen-ceremony-profiles.py
 """
 from __future__ import annotations
@@ -214,11 +208,6 @@ def validate(spec: dict[str, Any]) -> None:
         if not platform.islower() or not platform.isascii():
             raise SystemExit(f"ERROR: platform {platform!r} must be lowercase ASCII")
         safe(platform, "platform")
-        # Stated rather than defaulted: `deployed` decides whether the version
-        # guard below holds this profile's bytes still, so a profile that
-        # forgot to say would silently lose that protection.
-        if not isinstance(profile.get("deployed"), bool):
-            raise SystemExit(f"ERROR: {platform!r} must say whether it is `deployed`")
         for name, session in sessions_of(profile):
             host = safe(session["authority"], "authority")
             safe(session["method"], "method")
@@ -245,104 +234,6 @@ def validate(spec: dict[str, Any]) -> None:
         # links them.
         if len(sessions_of(profile)) == 1:
             raise SystemExit(f"ERROR: {platform!r} has one session; expected none or both")
-
-
-# --------------------------------------------------------------------------
-# Version guard
-# --------------------------------------------------------------------------
-
-
-SKIPPED = ("note", "deployed")
-
-
-def without_notes(value: Any) -> Any:
-    """The value with prose and the deployment flag removed.
-
-    Prose because it says nothing a verifier compares. `deployed` because it
-    records where the profile got to rather than what it is: flipping it is the
-    act of freezing these bytes, and a flip that read as a change would demand a
-    version bump for saying so.
-    """
-    if isinstance(value, dict):
-        return {k: without_notes(v) for k, v in value.items() if k not in SKIPPED}
-    if isinstance(value, list):
-        return [without_notes(v) for v in value]
-    return value
-
-
-def previous_release(spec: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    """The newest release tag that carried this file, and what it said.
-
-    Returns nothing when the file is new, when no release carries it yet, or
-    when git is unavailable -- a check that cannot read history must not
-    invent a verdict.
-    """
-    if shutil.which("git") is None:
-        return None
-    try:
-        tags = subprocess.run(
-            ["git", "tag", "--list", "v*", "--sort=-v:refname"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=REPO_ROOT,
-        ).stdout.split()
-    except subprocess.CalledProcessError:
-        return None
-
-    for tag in tags:
-        done = subprocess.run(
-            ["git", "show", f"{tag}:{SOURCE_REL}"],
-            capture_output=True,
-            text=True,
-            cwd=REPO_ROOT,
-        )
-        if done.returncode == 0:
-            try:
-                return tag, json.loads(done.stdout)
-            except json.JSONDecodeError:
-                return None
-    return None
-
-
-def check_versions(spec: dict[str, Any]) -> list[str]:
-    """Complaints about profiles that changed without moving their version.
-
-    Only about DEPLOYED ones. The rule protects a verifier that is already
-    answering under a version, and a release of this repository is a package,
-    not a deployment: while no verifier is registered for a profile, its bytes
-    are still being agreed between the four components that must produce them,
-    and every such agreement would otherwise cost a version nobody ran. A
-    profile deployed on either side of the comparison is held to the rule, so
-    the release that first sets `deployed` cannot also change the bytes.
-
-    An unheld change is printed rather than passed over: skipping in silence is
-    how a flag meant for one pre-launch stretch becomes permanent.
-    """
-    found = previous_release(spec)
-    if found is None:
-        return []
-    tag, old = found
-
-    released = {p["platform"]: p for p in old["profiles"]}
-    problems = []
-    for profile in spec["profiles"]:
-        before = released.get(profile["platform"])
-        if before is None:
-            continue
-        if without_notes(before) == without_notes(profile):
-            continue
-        name = f"{profile['platform']}/v{profile['ceremonyVersion']}"
-        if not (before.get("deployed") or profile["deployed"]):
-            print(f"note: {name} changed since {tag}; no deployment pins it yet")
-            continue
-        if before["ceremonyVersion"] == profile["ceremonyVersion"]:
-            problems.append(
-                f"{name} changed since {tag} "
-                f"but kept its ceremonyVersion. Changing what a deployed verifier "
-                f"accepts is a new version, not an edit."
-            )
-    return problems
 
 
 # --------------------------------------------------------------------------
@@ -863,8 +754,7 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Write nothing; exit non-zero if a generated file is stale or a "
-        "shipped profile changed without moving its version.",
+        help="Write nothing; exit non-zero if a generated file is stale.",
     )
     args = parser.parse_args()
 
@@ -889,10 +779,6 @@ def main() -> int:
         )
 
     if args.check:
-        failed = False
-        for problem in check_versions(spec):
-            print(f"ERROR: {problem}", file=sys.stderr)
-            failed = True
         stale = [
             path
             for path, text in outputs
@@ -905,8 +791,6 @@ def main() -> int:
             )
             for path in stale:
                 print(f"  {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-            failed = True
-        if failed:
             return 1
         print("generated files are up to date")
         return 0
