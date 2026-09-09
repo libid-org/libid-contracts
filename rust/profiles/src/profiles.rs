@@ -23,7 +23,9 @@
 //! Changing a value here changes what a deployed verifier accepts. That is a
 //! new ceremonyVersion, not an edit: --check compares every shipped profile
 //! against the last release and refuses a changed profile that kept its
-//! version.
+//! version. `deployed` is what says which profiles that rule has taken hold
+//! of -- until one is registered somewhere, its bytes are still being agreed
+//! and there is no verifier for a version bump to protect.
 
 /// Which shape a platform's immutable identifier takes in its response.
 ///
@@ -62,6 +64,15 @@ pub struct TokenSession {
     /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,
     /// whose request hides nothing and is revealed whole.
     pub secret_field: Option<&'static str>,
+    /// Every header this request sends, lowercased as the wire spells them,
+    /// in the order a prover must set them. `content-length` is absent
+    /// because the HTTP client appends it; a builder setting one of its own
+    /// moves it and the head below stops matching.
+    pub request_headers: &'static [&'static str],
+    /// Those headers as the run of bytes the Platform Verifier compares: the
+    /// request line, the headers, and the `content-length` name whose value
+    /// the verifier reads and checks against the signed body length.
+    pub request_head: &'static str,
 }
 
 /// The identity session: the authenticated read that names the account.
@@ -116,6 +127,8 @@ pub const X: Profile = Profile {
             request_line: "POST /2/oauth2/token ",
         },
         secret_field: None,
+        request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
+        request_head: "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ",
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -145,6 +158,8 @@ pub const GITHUB: Profile = Profile {
             request_line: "POST /login/oauth/access_token ",
         },
         secret_field: Some("client_secret"),
+        request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
+        request_head: "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ",
     }),
     identity: Some(IdentitySession {
         session: Session {

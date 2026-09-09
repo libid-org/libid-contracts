@@ -22,7 +22,9 @@
     "Changing a value here changes what a deployed verifier accepts. That is a",
     "new ceremonyVersion, not an edit: --check compares every shipped profile",
     "against the last release and refuses a changed profile that kept its",
-    "version."
+    "version. `deployed` is what says which profiles that rule has taken hold",
+    "of -- until one is registered somewhere, its bytes are still being agreed",
+    "and there is no verifier for a version bump to protect."
   ],
   "parameters": {
     "maxFutureAttestationSkewSeconds": 300,
@@ -37,6 +39,7 @@
     {
       "platform": "google",
       "ceremonyVersion": 1,
+      "deployed": false,
       "note": [
         "Google's evidence is a signed token checked against Google's published",
         "keys, so the profile notarizes nothing: no session, no attestation,",
@@ -47,6 +50,7 @@
     {
       "platform": "x",
       "ceremonyVersion": 1,
+      "deployed": false,
       "proofLifetimeSeconds": 3600,
       "note": [
         "A public client with S256 PKCE and two browser-owned sessions, both",
@@ -58,10 +62,28 @@
           "method": "POST",
           "path": "/2/oauth2/token",
           "secretField": null,
+          "requestHeaders": [
+            "host: api.x.com",
+            "content-type: application/x-www-form-urlencoded",
+            "accept: application/json",
+            "connection: close"
+          ],
           "note": [
             "A public client hides no body field, so the request is revealed",
             "whole and the verifier accepts exactly zero committed ranges in",
-            "this direction."
+            "this direction.",
+            "",
+            "Which is why the headers are listed. Revealed is not checked: they",
+            "were public and unconstrained until the verifier compared them, and",
+            "`content-type` is the one that decides how X parses the very bytes",
+            "`formField` reads. REQ-COMMON-21B fixes the media type in the",
+            "deployment profile because it selects the platform's request",
+            "parser, and a pin nothing compares is a pin in name only.",
+            "",
+            "In the order the browser sets them, which is the order they reach",
+            "the wire. `content-length` is not among them: the HTTP client",
+            "appends it, its value is the body's own length, and the verifier",
+            "checks it against the length the notary signed."
           ]
         },
         "identity": {
@@ -81,6 +103,7 @@
     {
       "platform": "github",
       "ceremonyVersion": 1,
+      "deployed": false,
       "proofLifetimeSeconds": 3600,
       "note": [
         "A confidential client. The exchange runs in the deployment because the",
@@ -94,10 +117,23 @@
           "method": "POST",
           "path": "/login/oauth/access_token",
           "secretField": "client_secret",
+          "requestHeaders": [
+            "host: github.com",
+            "content-type: application/x-www-form-urlencoded",
+            "accept: application/json",
+            "connection: close"
+          ],
           "note": [
             "The client secret is committed rather than revealed, ordered last",
             "in the body under REQ-COMMON-22 so the committed run is a suffix",
-            "and not a hole."
+            "and not a hole.",
+            "",
+            "The media type and `accept` are section 6.2's; `host` names the",
+            "authority the notary authenticated, and `connection: close` is what",
+            "ends every notarized session here. The Token-Exchange Service is",
+            "the party that sends this one, so unlike X's it is agreed here",
+            "BEFORE it is written rather than read off a browser that already",
+            "sends it."
           ]
         },
         "identity": {

@@ -30,7 +30,9 @@ pragma solidity ^0.8.24;
 /// Changing a value here changes what a deployed verifier accepts. That is a
 /// new ceremonyVersion, not an edit: --check compares every shipped profile
 /// against the last release and refuses a changed profile that kept its
-/// version.
+/// version. `deployed` is what says which profiles that rule has taken hold
+/// of -- until one is registered somewhere, its bytes are still being agreed
+/// and there is no verifier for a version bump to protect.
 library CeremonyProfile {
     // --- Platform identifiers -----------------------------------------------
 
@@ -60,6 +62,22 @@ library CeremonyProfile {
     bytes internal constant X_IDENTITY_REQUEST_LINE = "GET /2/users/me ";
     bytes internal constant GITHUB_TOKEN_REQUEST_LINE = "POST /login/oauth/access_token ";
     bytes internal constant GITHUB_IDENTITY_REQUEST_LINE = "GET /user ";
+
+    /// @dev The token request's head, byte for byte, ending at the
+    ///      `content-length` value the verifier reads out of the transcript.
+    ///      Its headers are revealed, so leaving them uncompared left the one
+    ///      that decides how the platform parses the body -- the media type
+    ///      REQ-COMMON-21B fixes -- public and unconstrained.
+    ///
+    ///      Pinned as ONE run rather than as a set of lines: the head is fixed
+    ///      bytes, so a comparison against it needs no header parser, and a
+    ///      parser is where an added, reordered or restated header would have
+    ///      to be caught one rule at a time.
+
+    bytes internal constant X_TOKEN_REQUEST_HEAD =
+        "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ";
+    bytes internal constant GITHUB_TOKEN_REQUEST_HEAD =
+        "POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ";
 
     /// @dev How many committed ranges the token request carries. A confidential
     ///      client commits its secret and a public client hides nothing, so this

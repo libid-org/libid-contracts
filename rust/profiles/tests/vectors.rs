@@ -153,3 +153,38 @@ fn the_launch_list_is_closed() {
         assert_eq!(profile.ceremony_version, 1);
     }
 }
+
+#[test]
+fn the_token_request_head_is_the_headers_beside_it() {
+    // Two representations of one agreement: the list a prover builds its
+    // request from, and the run of bytes the Platform Verifier compares. They
+    // are generated together, and this is what says a prover setting the listed
+    // headers in the listed order produces exactly what the chain pins.
+    for profile in LAUNCH {
+        let Some(token) = profile.token else {
+            continue;
+        };
+        let mut composed = format!("{}HTTP/1.1\r\n", token.session.request_line);
+        for header in token.request_headers {
+            composed.push_str(header);
+            composed.push_str("\r\n");
+        }
+        // The head stops at the length rather than stating one: the value is
+        // the body's own, and the verifier reads it out of the transcript.
+        composed.push_str("content-length: ");
+        assert_eq!(token.request_head, composed);
+
+        assert!(
+            !token
+                .request_headers
+                .iter()
+                .any(|header| header.starts_with("content-length:")),
+            "the HTTP client appends the length; a listed one would move it"
+        );
+        let host = format!("host: {}", token.session.authority);
+        assert!(
+            token.request_headers.contains(&host.as_str()),
+            "the pinned `host` header and the pinned authority must name one server"
+        );
+    }
+}

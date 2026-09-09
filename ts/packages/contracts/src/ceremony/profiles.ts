@@ -24,7 +24,9 @@
  * Changing a value here changes what a deployed verifier accepts. That is a
  * new ceremonyVersion, not an edit: --check compares every shipped profile
  * against the last release and refuses a changed profile that kept its
- * version.
+ * version. `deployed` is what says which profiles that rule has taken hold
+ * of -- until one is registered somewhere, its bytes are still being agreed
+ * and there is no verifier for a version bump to protect.
  */
 
 /** Which shape a platform's immutable identifier takes in its response. */
@@ -43,6 +45,12 @@ export interface TokenSession {
   readonly session: Session
   /** The body field committed rather than revealed, or null. */
   readonly secretField: string | null
+  /** Every header this request sends, lowercased, in the order to set them.
+   * `content-length` is absent: the HTTP client appends it. */
+  readonly requestHeaders: readonly string[]
+  /** Those headers as the run of bytes the Platform Verifier compares, ending
+   * at the `content-length` value it reads out of the transcript. */
+  readonly requestHead: string
 }
 
 export interface IdentitySession {
@@ -87,6 +95,14 @@ export const X: Profile = {
       requestLine: 'POST /2/oauth2/token ',
     },
     secretField: null,
+    requestHeaders: [
+      'host: api.x.com',
+      'content-type: application/x-www-form-urlencoded',
+      'accept: application/json',
+      'connection: close',
+    ],
+    requestHead:
+      'POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ',
   },
   identity: {
     session: {
@@ -118,6 +134,14 @@ export const GITHUB: Profile = {
       requestLine: 'POST /login/oauth/access_token ',
     },
     secretField: 'client_secret',
+    requestHeaders: [
+      'host: github.com',
+      'content-type: application/x-www-form-urlencoded',
+      'accept: application/json',
+      'connection: close',
+    ],
+    requestHead:
+      'POST /login/oauth/access_token HTTP/1.1\r\nhost: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\ncontent-length: ',
   },
   identity: {
     session: {
