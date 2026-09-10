@@ -531,6 +531,45 @@ contract XPlatformVerifierTest is Test {
         assertEq(f.sessionId, digest);
     }
 
+    string constant REAL_SESSION = "contracts/ceremony/test/fixtures/x-ceremony-real.json";
+
+    /// @dev A ceremony that actually ran: two MPC-TLS sessions against
+    ///      api.x.com on 2026-09-11, the exchange as a public client with a
+    ///      real authorization code under the PKCE challenge derived from this
+    ///      suite's digest, the identity read with the bearer X issued, the
+    ///      verifier in the prover's process signing as the key this suite
+    ///      trusts (libid-rs `examples/capture_ceremony.rs`). Nothing in the
+    ///      file was written by hand; the bearer is committed and absent from
+    ///      the bytes. X serializes both responses compact, which this file
+    ///      records rather than assumes. Verified with the signatures unedited,
+    ///      at a clock a minute past the identity read.
+    function test_verifiesTheRecordsACeremonyProduced() public {
+        string memory json = vm.readFile(REAL_SESSION);
+        assertEq(vm.parseJsonBytes32(json, ".authorization_digest"), digest, "bound to this suite's digest");
+        assertEq(vm.parseJsonBytes32(json, ".authorization_nonce"), AUTH_NONCE);
+        assertEq(vm.parseJsonAddress(json, ".notary"), vm.addr(NOTARY_KEY), "signed by the key this suite trusts");
+        assertTrue(
+            _contains(vm.parseJsonBytes(json, ".identity.attested_data"), bytes('"username":"')),
+            "X's compact response, as served"
+        );
+        vm.warp(vm.parseJsonUint(json, ".identity.created_at") + 60);
+
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".token.attested_data"),
+            proof: vm.parseJsonBytes(json, ".token.notary_signature")
+        });
+        s.identitySession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".identity.attested_data"),
+            proof: vm.parseJsonBytes(json, ".identity.notary_signature")
+        });
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.userId, "1051915704843333634");
+        assertEq(f.handle, "GreenToo3");
+        assertEq(string(f.clientIdentifier), "MnY0bnJ6VzFGY2hVNmF2N2RFWkg6MTpjaQ");
+        assertEq(f.sessionId, digest);
+    }
+
     // ─── The identity request ───────────────────────────────────────
 
     function test_rejectsASecondAuthorizationHeader() public {
