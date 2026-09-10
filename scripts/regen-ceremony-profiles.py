@@ -510,6 +510,31 @@ def rust_session(session: dict[str, Any], indent: int) -> list[str]:
     ]
 
 
+def rust_max_width() -> int:
+    """rustfmt's line width, read from its own config so the two agree."""
+    config = REPO_ROOT / "rust" / "rustfmt.toml"
+    if not config.exists():
+        return 100
+    for line in config.read_text(encoding="utf-8").splitlines():
+        key, _, rest = line.partition("=")
+        if key.strip() == "max_width":
+            return int(rest.split("#", 1)[0].strip())
+    return 100
+
+
+def rust_array(prefix: str, items: list[str], indent: str, suffix: str) -> list[str]:
+    """`prefix&[items]suffix` on one line when it fits, else one item per line.
+
+    rustfmt's rule, so a generated file passes `fmt --check` unformatted. It
+    used to pass by accident: an unbreakable string in the same struct made
+    rustfmt leave the whole expression alone.
+    """
+    one = f"{indent}{prefix}&[{', '.join(f'\"{item}\"' for item in items)}]{suffix}"
+    if len(one) <= rust_max_width():
+        return [one]
+    return [f"{indent}{prefix}&[", *(f'{indent}    "{item}",' for item in items), f"{indent}]{suffix}"]
+
+
 def gen_rust(spec: dict[str, Any]) -> str:
     lines = [header("//").rstrip("\n"), ""]
     lines += rust_doc(spec.get("note"), marker="//!")
@@ -606,13 +631,11 @@ def gen_rust(spec: dict[str, Any]) -> str:
         if token is None:
             lines.append("    token: None,")
         else:
-            headers = ", ".join(f'"{line}"' for line in token["requestHeaders"])
             lines.append("    token: Some(TokenSession {")
             lines += rust_session(token, 8)
             lines.append(f"        secret_field: {rust_str(token['secretField'])},")
-            lines.append(f"        request_headers: &[{headers}],")
-            required = ", ".join(f'"{line}"' for line in required_headers(token))
-            lines.append(f"        required_headers: &[{required}],")
+            lines += rust_array("request_headers: ", token["requestHeaders"], "        ", ",")
+            lines += rust_array("required_headers: ", required_headers(token), "        ", ",")
             lines.append("    }),")
 
         identity = profile["sessions"].get("identity")
@@ -644,9 +667,8 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "",
     ]
     lines += rust_doc(spec["tokenRequest"].get("note"))
-    forbidden = ", ".join(f'"{name}"' for name in forbidden_headers(spec))
+    lines += rust_array("pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = ", forbidden_headers(spec), "", ";")
     lines += [
-        f"pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &[{forbidden}];",
         "",
         "/// Governance-owned launch parameters, in seconds.",
         f"pub const MAX_FUTURE_ATTESTATION_SKEW_SECONDS: u64 = "

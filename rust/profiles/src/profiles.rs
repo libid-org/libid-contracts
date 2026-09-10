@@ -124,8 +124,16 @@ pub const X: Profile = Profile {
             request_line: "POST /2/oauth2/token ",
         },
         secret_field: None,
-        request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        required_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded"],
+        request_headers: &[
+            "host: api.x.com",
+            "content-type: application/x-www-form-urlencoded",
+            "accept: application/json",
+            "connection: close",
+        ],
+        required_headers: &[
+            "host: api.x.com",
+            "content-type: application/x-www-form-urlencoded",
+        ],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -155,8 +163,16 @@ pub const GITHUB: Profile = Profile {
             request_line: "POST /login/oauth/access_token ",
         },
         secret_field: Some("client_secret"),
-        request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        required_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded"],
+        request_headers: &[
+            "host: github.com",
+            "content-type: application/x-www-form-urlencoded",
+            "accept: application/json",
+            "connection: close",
+        ],
+        required_headers: &[
+            "host: github.com",
+            "content-type: application/x-www-form-urlencoded",
+        ],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -192,7 +208,13 @@ pub fn launch(platform: &str) -> Option<&'static Profile> {
 /// session's requestHeaders, reads `content-length`, and ignores every
 /// other header: one outside both lists changes only what the platform
 /// answers, and a wrong answer is a response the verifier cannot read.
-pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &["authorization", "content-encoding", "cookie", "transfer-encoding", "x-http-method-override"];
+pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &[
+    "authorization",
+    "content-encoding",
+    "cookie",
+    "transfer-encoding",
+    "x-http-method-override",
+];
 
 /// Governance-owned launch parameters, in seconds.
 pub const MAX_FUTURE_ATTESTATION_SKEW_SECONDS: u64 = 300;
