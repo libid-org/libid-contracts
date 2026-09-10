@@ -51,6 +51,7 @@ library CeremonyFields {
         pure
         returns (Found found, bytes memory value)
     {
+        data = normalizeJsonBytes(data);
         bytes memory needle = abi.encodePacked('"', name, '":"');
         uint256 at;
         (found, at) = _findUnique(data, needle);
@@ -88,6 +89,7 @@ library CeremonyFields {
         pure
         returns (Found found, bytes memory digits)
     {
+        data = normalizeJsonBytes(data);
         bytes memory needle = abi.encodePacked('"', name, '":');
         uint256 at;
         (found, at) = _findUnique(data, needle);
@@ -108,6 +110,65 @@ library CeremonyFields {
             digits[i] = data[at + i];
         }
         return (Found.One, digits);
+    }
+
+    /// @notice `data` with the JSON whitespace that touches a structural
+    ///         byte removed.
+    ///
+    /// @dev The four bytes JSON lets a writer put between tokens (RFC 8259
+    ///      section 2): space, tab, line feed, carriage return. GitHub
+    ///      pretty-prints `/user` for the media type the profile pins, so the
+    ///      compact delimiters the readers above match are a grammar, not the
+    ///      bytes on the wire. Removing the whitespace first, the way
+    ///      `CeremonyAttestation.normalizeHeaderBytes` does for a request head,
+    ///      leaves every reader its one exact template and makes a member in
+    ///      any spelling the same member -- so a duplicate spelled with spaces
+    ///      is still counted as one.
+    ///
+    ///      Only a run that touches `:` `,` `{` `}` `[` or `]` on either side
+    ///      goes, which is exactly where JSON puts insignificant whitespace.
+    ///      A run between two tokens stays: `123 456` must not read as
+    ///      `123456`, and a trailing space after digits must still be the
+    ///      byte the terminator check judges. Stateless on purpose, with no
+    ///      notion of being inside a string: a reader with one is a reader a
+    ///      prover desynchronises by cutting a revealed range mid-value, and a
+    ///      needle then hides where the reader believes a string is open. No
+    ///      needle can be manufactured by this either -- one needs unescaped
+    ///      quotes, and this removes none -- and nothing this reads carries
+    ///      whitespace beside a structural byte inside its value.
+    function normalizeJsonBytes(bytes memory data) internal pure returns (bytes memory out) {
+        out = new bytes(data.length);
+        uint256 n;
+        uint256 i;
+        while (i < data.length) {
+            if (!_isJsonWhitespace(data[i])) {
+                out[n++] = data[i];
+                ++i;
+                continue;
+            }
+            uint256 j = i;
+            while (j < data.length && _isJsonWhitespace(data[j])) {
+                ++j;
+            }
+            bool touches = (n != 0 && _isStructural(out[n - 1])) || (j < data.length && _isStructural(data[j]));
+            if (!touches) {
+                for (uint256 k = i; k < j; ++k) {
+                    out[n++] = data[k];
+                }
+            }
+            i = j;
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
+        }
+    }
+
+    function _isJsonWhitespace(bytes1 c) private pure returns (bool) {
+        return c == 0x20 || c == 0x09 || c == 0x0a || c == 0x0d;
+    }
+
+    function _isStructural(bytes1 c) private pure returns (bool) {
+        return c == ":" || c == "," || c == "{" || c == "}" || c == "[" || c == "]";
     }
 
     function _findUnique(bytes memory data, bytes memory needle) private pure returns (Found found, uint256 at) {

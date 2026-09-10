@@ -171,7 +171,9 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      through a second delimiter and the duplicate REQ-COMMON-19A exists
     ///      to reject becomes invisible to it. So the value is read per range
     ///      and the occurrences are counted over the concatenation -- where a
-    ///      seam can only over-count, which fails closed.
+    ///      seam can only over-count, which fails closed. Both read bytes with
+    ///      the JSON whitespace removed, so a copy spelled with spaces is a
+    ///      copy.
     function _delimiterCount(bytes memory joined, bytes memory delimiter) private pure returns (uint256 count) {
         for (uint256 i = 0; i + delimiter.length <= joined.length; ++i) {
             bool hit = true;
@@ -215,7 +217,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
         if (matches != 1) revert FieldNotUnique(name, matches);
         // And the delimiter appears once across the whole revealed set, so a
         // second copy cannot hide under a range boundary.
-        uint256 seen = _delimiterCount(joined, abi.encodePacked('"', name, '":"'));
+        uint256 seen = _delimiterCount(CeremonyFields.normalizeJsonBytes(joined), abi.encodePacked('"', name, '":"'));
         if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
@@ -235,7 +237,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
             }
         }
         if (matches != 1) revert FieldNotUnique(name, matches);
-        uint256 seen = _delimiterCount(joined, abi.encodePacked('"', name, '":'));
+        uint256 seen = _delimiterCount(CeremonyFields.normalizeJsonBytes(joined), abi.encodePacked('"', name, '":'));
         if (seen != 1) revert FieldNotUnique(name, seen);
     }
 
