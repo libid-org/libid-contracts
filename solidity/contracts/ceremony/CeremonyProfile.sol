@@ -71,17 +71,21 @@ library CeremonyProfile {
     bytes internal constant GITHUB_TOKEN_REQUIRED_HEADERS =
         "host: github.com\r\ncontent-type: application/x-www-form-urlencoded";
 
-    /// @dev Header names a token request must not carry, compared lowercased by
-    ///      every Platform Verifier. Each changes what the platform does with the
-    ///      request in a way no revealed byte shows: `authorization` which client
-    ///      it authenticates, `content-encoding` and `transfer-encoding` which
-    ///      bytes it parses, `cookie` the context, `x-http-method-override` the
-    ///      method. The verifier requires each token session's requiredHeaders,
-    ///      `host` and `content-type`, reads `content-length`, and ignores every
-    ///      other header: one outside both lists changes only what the platform
-    ///      answers, and a wrong answer is a response the verifier cannot read.
-    bytes internal constant FORBIDDEN_TOKEN_REQUEST_HEADERS =
-        "authorization\r\ncontent-encoding\r\ncookie\r\ntransfer-encoding\r\nx-http-method-override";
+    /// @dev Header names no notarized request may carry, compared by every
+    ///      Platform Verifier with the name lowercased, its whitespace removed and
+    ///      `_` read as `-`. Each changes what the platform does with the request
+    ///      in a way no revealed byte shows: `authorization` which client it
+    ///      authenticates, `content-encoding` and `transfer-encoding` which bytes
+    ///      it parses, `cookie` which session it answers for, the three override
+    ///      names which method it runs. The identity request is excepted from
+    ///      `authorization` alone: its one such header, under any scheme, is what
+    ///      REQ-COMMON-39 counts. On the token request the verifier further
+    ///      requires each session's requiredHeaders, `host` and `content-type`,
+    ///      reads `content-length`, and ignores every other header: one outside
+    ///      both lists changes only what the platform answers, and a wrong answer
+    ///      is a response the verifier cannot read.
+    bytes internal constant FORBIDDEN_REQUEST_HEADERS =
+        "authorization\r\ncontent-encoding\r\ncookie\r\ntransfer-encoding\r\nx-http-method\r\nx-http-method-override\r\nx-method-override";
 
     /// @dev How many committed ranges the token request carries. A confidential
     ///      client commits its secret and a public client hides nothing, so this

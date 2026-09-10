@@ -31,24 +31,30 @@
       "a deployment stores and updates them."
     ]
   },
-  "tokenRequest": {
+  "requests": {
     "forbiddenHeaders": [
       "authorization",
       "content-encoding",
       "cookie",
       "transfer-encoding",
-      "x-http-method-override"
+      "x-http-method",
+      "x-http-method-override",
+      "x-method-override"
     ],
     "note": [
-      "Header names a token request must not carry, compared lowercased by",
-      "every Platform Verifier. Each changes what the platform does with the",
-      "request in a way no revealed byte shows: `authorization` which client",
-      "it authenticates, `content-encoding` and `transfer-encoding` which",
-      "bytes it parses, `cookie` the context, `x-http-method-override` the",
-      "method. The verifier requires each token session's requiredHeaders,",
-      "`host` and `content-type`, reads `content-length`, and ignores every",
-      "other header: one outside both lists changes only what the platform",
-      "answers, and a wrong answer is a response the verifier cannot read."
+      "Header names no notarized request may carry, compared by every",
+      "Platform Verifier with the name lowercased, its whitespace removed and",
+      "`_` read as `-`. Each changes what the platform does with the request",
+      "in a way no revealed byte shows: `authorization` which client it",
+      "authenticates, `content-encoding` and `transfer-encoding` which bytes",
+      "it parses, `cookie` which session it answers for, the three override",
+      "names which method it runs. The identity request is excepted from",
+      "`authorization` alone: its one such header, under any scheme, is what",
+      "REQ-COMMON-39 counts. On the token request the verifier further",
+      "requires each session's requiredHeaders, `host` and `content-type`,",
+      "reads `content-length`, and ignores every other header: one outside",
+      "both lists changes only what the platform answers, and a wrong answer",
+      "is a response the verifier cannot read."
     ]
   },
   "profiles": [
@@ -96,7 +102,7 @@
             "its value. What else the browser sends -- `accept:",
             "application/json`, `connection: close` -- is its own and",
             "uncompared, as is any header a client adds, save the names in",
-            "tokenRequest.forbiddenHeaders. `content-length` is not among them:",
+            "requests.forbiddenHeaders. `content-length` is not among them:",
             "the HTTP client appends it, its value is the body's own length,",
             "and the verifier checks it against the length the notary signed."
           ]

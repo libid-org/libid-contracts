@@ -63,7 +63,7 @@ pub struct TokenSession {
     /// The header lines a Platform Verifier requires, each exactly once with
     /// its value: `host` and `content-type`, lowercased as the wire spells
     /// them. Every other header is the runtime's own, save the names
-    /// `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. `content-length` is absent
+    /// `FORBIDDEN_REQUEST_HEADERS` lists. `content-length` is absent
     /// because its value is the body's own count: the HTTP client appends
     /// it and the verifier reads it rather than compares it.
     pub required_headers: &'static [&'static str],
@@ -184,21 +184,27 @@ pub fn launch(platform: &str) -> Option<&'static Profile> {
     LAUNCH.iter().copied().find(|p| p.platform == platform)
 }
 
-/// Header names a token request must not carry, compared lowercased by
-/// every Platform Verifier. Each changes what the platform does with the
-/// request in a way no revealed byte shows: `authorization` which client
-/// it authenticates, `content-encoding` and `transfer-encoding` which
-/// bytes it parses, `cookie` the context, `x-http-method-override` the
-/// method. The verifier requires each token session's requiredHeaders,
-/// `host` and `content-type`, reads `content-length`, and ignores every
-/// other header: one outside both lists changes only what the platform
-/// answers, and a wrong answer is a response the verifier cannot read.
-pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &[
+/// Header names no notarized request may carry, compared by every
+/// Platform Verifier with the name lowercased, its whitespace removed and
+/// `_` read as `-`. Each changes what the platform does with the request
+/// in a way no revealed byte shows: `authorization` which client it
+/// authenticates, `content-encoding` and `transfer-encoding` which bytes
+/// it parses, `cookie` which session it answers for, the three override
+/// names which method it runs. The identity request is excepted from
+/// `authorization` alone: its one such header, under any scheme, is what
+/// REQ-COMMON-39 counts. On the token request the verifier further
+/// requires each session's requiredHeaders, `host` and `content-type`,
+/// reads `content-length`, and ignores every other header: one outside
+/// both lists changes only what the platform answers, and a wrong answer
+/// is a response the verifier cannot read.
+pub const FORBIDDEN_REQUEST_HEADERS: &[&str] = &[
     "authorization",
     "content-encoding",
     "cookie",
     "transfer-encoding",
+    "x-http-method",
     "x-http-method-override",
+    "x-method-override",
 ];
 
 /// Governance-owned launch parameters, in seconds.

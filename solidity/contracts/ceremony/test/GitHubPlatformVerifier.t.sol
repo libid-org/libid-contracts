@@ -331,6 +331,26 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev GitHub honours `token` and Basic beside Bearer. A second
+    ///      `authorization` under either is counted all the same; counting only
+    ///      `bearer` left it uncounted, and a leaked personal token in it would
+    ///      have named someone else's account under this exchange's bearer.
+    function test_rejectsASecondAuthorizationHeaderOfAnotherSchemeOnTheIdentityRead() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHeadPrefix("Authorization: token ghp_stolen\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And `cookie`, the other credential a platform might honour over
+    ///      the bearer, is refused on the identity read by name.
+    function test_rejectsACookieOnTheIdentityRead() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHeadPrefix("cookie: user_session=stolen\r\n");
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenRequestHeader.selector, bytes("cookie")));
+        this.run{value: quote}(s);
+    }
+
     /// @dev The wrong authority is still refused before any field is read.
     function test_rejectsAnIdentityReadFromTheWrongAuthority() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();

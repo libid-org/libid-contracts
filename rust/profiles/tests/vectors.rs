@@ -11,7 +11,7 @@
 //! follows.
 
 use libid_profiles::{
-    FORBIDDEN_TOKEN_REQUEST_HEADERS,
+    FORBIDDEN_REQUEST_HEADERS,
     GITHUB,
     GOOGLE,
     LAUNCH,
@@ -187,7 +187,7 @@ fn the_forbidden_names_are_lowercase_and_never_required() {
     // as it is, so a name here in any other case would forbid nothing. And a
     // profile that both requires a name and forbids it rejects every honest
     // session.
-    for name in FORBIDDEN_TOKEN_REQUEST_HEADERS {
+    for name in FORBIDDEN_REQUEST_HEADERS {
         assert_eq!(*name, name.to_ascii_lowercase(), "{name}");
         assert!(!name.is_empty());
     }
@@ -198,7 +198,7 @@ fn the_forbidden_names_are_lowercase_and_never_required() {
         for line in token.required_headers {
             let name = line.split(':').next().unwrap();
             assert!(
-                !FORBIDDEN_TOKEN_REQUEST_HEADERS.contains(&name),
+                !FORBIDDEN_REQUEST_HEADERS.contains(&name),
                 "{} requires a header it forbids: {name}",
                 profile.platform
             );

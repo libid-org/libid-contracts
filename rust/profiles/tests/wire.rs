@@ -24,7 +24,7 @@
 use hyper_util::rt::TokioIo;
 use libid_profiles::{
     TokenSession,
-    FORBIDDEN_TOKEN_REQUEST_HEADERS,
+    FORBIDDEN_REQUEST_HEADERS,
     GITHUB,
     X,
 };
@@ -103,7 +103,7 @@ fn assert_head_admits(session: &TokenSession, wire: &[u8], body_len: usize) {
     }
     for line in &written {
         assert!(
-            !FORBIDDEN_TOKEN_REQUEST_HEADERS.contains(&name_of(line).as_str()),
+            !FORBIDDEN_REQUEST_HEADERS.contains(&name_of(line).as_str()),
             "hyper wrote a forbidden header: {line}"
         );
     }

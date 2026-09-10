@@ -441,6 +441,43 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev And a second one under another scheme. The count sees
+    ///      `authorization:` whatever follows it; counting only `bearer` left
+    ///      a Basic line uncounted, and X answering for whichever credential
+    ///      it honoured -- the one the exchange is bound to, or the other.
+    function test_rejectsASecondAuthorizationHeaderOfAnotherScheme() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "Authorization: Basic dmljdGltOnN0b2xlbg==\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev `cookie` is the other credential a platform might honour over the
+    ///      bearer, and the bearer is the one thing the cross-bind ties to the
+    ///      exchange. Forbidden on the identity request as on the token one.
+    function test_rejectsACookieOnTheIdentityRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "Cookie: auth_token=stolen\r\n");
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenRequestHeader.selector, bytes("cookie")));
+        this.run{value: quote}(s);
+    }
+
+    /// @dev Any other header on the identity request is the runtime's own.
+    function test_acceptsAnUnlistedHeaderOnTheIdentityRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "user-agent: libid-ceremony\r\n");
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A bare carriage return on the identity request is refused the
+    ///      same way, before anything is counted.
+    function test_rejectsABareCarriageReturnOnTheIdentityRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestation("2244994945", "alice", "user-agent: a\rcookie: b\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.BareCarriageReturn.selector);
+        this.run{value: quote}(s);
+    }
+
     function test_rejectsAnObsoleteLineFold() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         s.identitySession = _identityAttestation("2244994945", "alice", "authorization:\r\n Bearer stolen\r\n");
@@ -1110,29 +1147,36 @@ contract XPlatformVerifierTest is Test {
             "authorization: Basic bXlDbGllbnQtMTpzM2NyZXQ=\r\nconnection: close\r\n"
         );
         vm.expectRevert(
-            abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenTokenRequestHeader.selector, bytes("authorization"))
+            abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenRequestHeader.selector, bytes("authorization"))
         );
         this.run{value: quote}(s);
     }
 
     /// @dev Every forbidden name, each in a spelling the platform would read
     ///      as the same header: another case, no space after the colon, a
-    ///      space before it. The name comes back lowercased and trimmed, which
-    ///      is how the list is compared.
+    ///      space before it, an underscore where a CGI-style stack folds it
+    ///      into the dash. The name comes back normalized, which is how the
+    ///      list is compared.
     function test_rejectsEachForbiddenHeaderOnTheTokenRequest() public {
-        string[6] memory lines = [
+        string[9] memory lines = [
             "Transfer-Encoding: chunked",
             "content-encoding:gzip",
+            "Content_Encoding: gzip",
             "Cookie: session=abc",
             "X-HTTP-Method-Override: GET",
+            "x-http-method: DELETE",
+            "X-Method-Override: PUT",
             "AUTHORIZATION: Basic bXlDbGllbnQtMTpzM2NyZXQ=",
             "authorization : Basic bXlDbGllbnQtMTpzM2NyZXQ="
         ];
-        string[6] memory names = [
+        string[9] memory names = [
             "transfer-encoding",
+            "content-encoding",
             "content-encoding",
             "cookie",
             "x-http-method-override",
+            "x-http-method",
+            "x-method-override",
             "authorization",
             "authorization"
         ];
@@ -1145,7 +1189,7 @@ contract XPlatformVerifierTest is Test {
                 )
             );
             vm.expectRevert(
-                abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenTokenRequestHeader.selector, bytes(names[i]))
+                abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenRequestHeader.selector, bytes(names[i]))
             );
             this.run{value: quote}(s);
         }
@@ -1208,6 +1252,18 @@ contract XPlatformVerifierTest is Test {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
             "Host:\tapi.x.com \r\nContent-Type :application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
         );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A carriage return no line feed follows. A compliant parser never
+    ///      ends a line on one, so it is refused rather than left to every
+    ///      platform's handling of it. Tucked inside an ignored header's value,
+    ///      where a parser that did split on it would find a second header.
+    function test_rejectsABareCarriageReturnInTheTokenHead() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\rauthorization: Basic x\r\nconnection: close\r\n"
+        );
+        vm.expectPartialRevert(CeremonyAttestation.BareCarriageReturn.selector);
         this.run{value: quote}(s);
     }
 

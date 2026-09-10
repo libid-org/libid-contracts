@@ -111,22 +111,22 @@ def crlf(lines: list[str]) -> str:
 
 
 def forbidden_headers(spec: dict[str, Any]) -> list[str]:
-    """The header names no token request may carry, checked by name alone.
+    """The header names no notarized request may carry, checked by name alone.
 
     Each changes what the platform does with the request in a way no revealed
     byte shows, so a verifier can only refuse the name. Compared lowercased,
     which is why the list must be.
     """
-    names = spec["tokenRequest"]["forbiddenHeaders"]
+    names = spec["requests"]["forbiddenHeaders"]
     if not isinstance(names, list) or not names:
-        raise SystemExit("ERROR: tokenRequest.forbiddenHeaders must list at least one name")
+        raise SystemExit("ERROR: requests.forbiddenHeaders must list at least one name")
     for name in names:
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise SystemExit(f"ERROR: forbidden header {name!r} is not a lowercase field name")
         if name in REQUIRED_NAMES or name == "content-length":
             raise SystemExit(f"ERROR: {name!r} is read by the verifier and cannot be forbidden")
     if len(set(names)) != len(names):
-        raise SystemExit("ERROR: tokenRequest.forbiddenHeaders names one header twice")
+        raise SystemExit("ERROR: requests.forbiddenHeaders names one header twice")
     return names
 
 
@@ -348,9 +348,9 @@ def gen_sol(spec: dict[str, Any]) -> str:
         )
 
     lines += [""]
-    lines += sol_doc(spec["tokenRequest"].get("note"))
+    lines += sol_doc(spec["requests"].get("note"))
     lines.append(
-        f'    bytes internal constant FORBIDDEN_TOKEN_REQUEST_HEADERS = "{escaped(crlf(forbidden_headers(spec)))}";'
+        f'    bytes internal constant FORBIDDEN_REQUEST_HEADERS = "{escaped(crlf(forbidden_headers(spec)))}";'
     )
 
     lines += [
@@ -546,7 +546,7 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// The header lines a Platform Verifier requires, each exactly once with",
         "    /// its value: `host` and `content-type`, lowercased as the wire spells",
         "    /// them. Every other header is the runtime's own, save the names",
-        "    /// `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. `content-length` is absent",
+        "    /// `FORBIDDEN_REQUEST_HEADERS` lists. `content-length` is absent",
         "    /// because its value is the body's own count: the HTTP client appends",
         "    /// it and the verifier reads it rather than compares it.",
         "    pub required_headers: &'static [&'static str],",
@@ -628,8 +628,8 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "}",
         "",
     ]
-    lines += rust_doc(spec["tokenRequest"].get("note"))
-    lines += rust_array("pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = ", forbidden_headers(spec), "", ";")
+    lines += rust_doc(spec["requests"].get("note"))
+    lines += rust_array("pub const FORBIDDEN_REQUEST_HEADERS: &[&str] = ", forbidden_headers(spec), "", ";")
     lines += [
         "",
         "/// Governance-owned launch parameters, in seconds.",
@@ -724,7 +724,7 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly secretField: string | null",
         "  /** The header lines a Platform Verifier requires, each exactly once with",
         "   * its value: `host` and `content-type`. Every other header is the",
-        "   * runtime's own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists.",
+        "   * runtime's own, save the names `FORBIDDEN_REQUEST_HEADERS` lists.",
         "   * `content-length` is absent: the HTTP client appends it. */",
         "  readonly requiredHeaders: readonly string[]",
         "}",
@@ -791,9 +791,9 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "}",
         "",
     ]
-    lines += ts_doc(spec["tokenRequest"].get("note"))
+    lines += ts_doc(spec["requests"].get("note"))
     lines += ts_array(
-        "export const FORBIDDEN_TOKEN_REQUEST_HEADERS: readonly string[] = ", forbidden_headers(spec), "", ""
+        "export const FORBIDDEN_REQUEST_HEADERS: readonly string[] = ", forbidden_headers(spec), "", ""
     )
     lines += [
         "",
