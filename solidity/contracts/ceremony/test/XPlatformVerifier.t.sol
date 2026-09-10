@@ -432,6 +432,68 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    // ─── The requests the runtime sends ─────────────────────────────
+
+    /// @dev The token request as the browser composes it (`buildTokenRequest`
+    ///      on libid `feat/ceremony-rebuild-plan`): five headers in its order,
+    ///      `content-length` set by the builder itself and third, every name
+    ///      lowercased by hyper on the way to the wire. The rule was written
+    ///      for this head, and this is what says the rule admits it.
+    function test_verifiesTheTokenRequestTheBrowserSends() public {
+        bytes memory body = _honestTokenBody();
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHead(
+            abi.encodePacked(
+                "POST /2/oauth2/token HTTP/1.1\r\nhost: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\ncontent-length: ",
+                vm.toString(body.length),
+                "\r\naccept: application/json\r\nconnection: close\r\n\r\n"
+            )
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And the identity request as `buildIdentityRequest` composes it:
+    ///      `authorization` first and inside the head, then `accept`, `host`,
+    ///      `connection`. The fixtures elsewhere in this file put the bearer
+    ///      line after a blank line, which the verifier tolerates; this one is
+    ///      the head a real session carries.
+    function test_verifiesTheIdentityRequestTheBrowserSends() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityAttestationWithHead(
+            "GET /2/users/me HTTP/1.1\r\nauthorization: Bearer ",
+            "\r\naccept: application/json\r\nhost: api.x.com\r\nconnection: close\r\n\r\n"
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// The honest identity attestation for a request given as the bytes
+    /// before the committed bearer and the bytes after it.
+    function _identityAttestationWithHead(bytes memory head, bytes memory tail)
+        private
+        pure
+        returns (ICeremony.Attestation memory)
+    {
+        bytes memory bearer = "TOKENTOKENTOKEN";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: end + uint32(tail.length)
+        });
+        bytes memory body = 'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice"}';
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: body})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(body.length)
+        });
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_X_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
+    }
+
     // ─── The identity request ───────────────────────────────────────
 
     function test_rejectsASecondAuthorizationHeader() public {

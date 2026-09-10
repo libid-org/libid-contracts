@@ -351,6 +351,55 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev The identity request as the browser composes it (`identityRequest`
+    ///      on libid `feat/ceremony-rebuild-plan`): `host`, `authorization`,
+    ///      `accept`, the browser's own `user-agent`, which GitHub demands,
+    ///      `x-github-api-version`, `connection`, in that order and lowercased
+    ///      by hyper. The exchange the Token-Exchange Service sends is the
+    ///      happy path above already: `host`, `content-type`, `accept`,
+    ///      `connection`, hyper's `content-length` last, which Heorhii ran
+    ///      against GitHub for real.
+    function test_verifiesTheIdentityRequestTheBrowserSends() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHead(
+            "GET /user HTTP/1.1\r\nhost: api.github.com\r\nauthorization: Bearer ",
+            "\r\naccept: application/vnd.github+json\r\n"
+            "user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\n"
+            "x-github-api-version: 2022-11-28\r\nconnection: close\r\n\r\n"
+        );
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.handle, "octocat");
+    }
+
+    /// The honest identity read for a request given as the bytes before the
+    /// committed bearer and the bytes after it.
+    function _identityWithHead(bytes memory head, bytes memory tail)
+        private
+        pure
+        returns (ICeremony.Attestation memory)
+    {
+        bytes memory bearer = "gho_TOKENTOKENTOKEN";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: end + uint32(tail.length)
+        });
+        bytes memory b = abi.encodePacked("HTTP/1.1 200 OK\r\n\r\n", '{"login":"octocat","id":583231}');
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: b})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(b.length)
+        });
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
+    }
+
     /// @dev The wrong authority is still refused before any field is read.
     function test_rejectsAnIdentityReadFromTheWrongAuthority() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();

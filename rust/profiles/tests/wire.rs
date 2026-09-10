@@ -152,6 +152,49 @@ async fn the_declared_length_is_the_body_and_moves_with_it() {
 }
 
 #[tokio::test]
+async fn a_length_the_builder_sets_itself_is_written_once() {
+    // X's browser builder sets `content-length` itself, third among five, and
+    // hyper is still the encoder underneath tlsn's prover. A verifier requires
+    // exactly one, so what matters is that hyper keeps the caller's rather than
+    // adding its own beside it -- and keeps the value.
+    let session = X.token.expect("x notarizes a token session");
+    let body: &'static [u8] = b"grant_type=authorization_code&client_id=abc&code=xyz";
+    let (client, mut server) = tokio::io::duplex(1 << 12);
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(client))
+            .await
+            .expect("handshake");
+    tokio::spawn(connection);
+    let mut request = hyper::Request::builder()
+        .method(session.session.method)
+        .uri(session.session.path);
+    for header in [
+        "host: api.x.com",
+        "content-type: application/x-www-form-urlencoded",
+        "content-length: 52",
+        "accept: application/json",
+        "connection: close",
+    ] {
+        let (name, value) = header.split_once(": ").expect("`name: value`");
+        request = request.header(name, value);
+    }
+    let request = request
+        .body(http_body_util::Full::new(hyper::body::Bytes::from(body)))
+        .expect("valid request");
+    let sending = tokio::spawn(async move { sender.send_request(request).await });
+    let mut wire = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !wire.windows(4).any(|w| w == b"\r\n\r\n") {
+        let read = server.read(&mut buf).await.expect("read");
+        assert!(read > 0, "the connection closed before the request head");
+        wire.extend_from_slice(&buf[..read]);
+    }
+    drop(server);
+    let _ = sending.await;
+    assert_head_admits(&session, &wire, body.len());
+}
+
+#[tokio::test]
 async fn hyper_writes_field_names_in_lower_case() {
     // The generator lays the head out in lowercase and its `validate` refuses
     // any other spelling, which is only correct because hyper writes them that
