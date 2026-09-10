@@ -693,7 +693,7 @@ contract XPlatformVerifierTest is Test {
         // Joined: ...,"username":"alice","username":"mallory"} -- two members,
         // and the boundary falls through the second one's delimiter.
         s.identitySession = _splitIdentityAttestation(
-            'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice","userna', 'me":"mallory"}'
+            'HTTP/1.1 200 OK\r\n\r\n{"id":"2244994945","username":"alice","userna', 'me" \t: \n"mallory"}'
         );
         vm.expectPartialRevert(TlsNotaryVerifierBase.FieldNotUnique.selector);
         this.run{value: quote}(s);

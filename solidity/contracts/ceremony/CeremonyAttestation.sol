@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyFields} from "./CeremonyFields.sol";
+
 /// @title CeremonyAttestation
 /// @notice Decoder for the attested-data layout the launch profiles pin.
 /// @dev THE LAYOUT IS THE PROFILE'S, NOT THE SPECIFICATION'S. REQ-COMMON-18
@@ -142,7 +144,7 @@ library CeremonyAttestation {
     /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts.
     bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:bearer";
 
-    /// @notice The one commitment framed by exactly these revealed bytes.
+    /// @notice The one commitment framed by a revealed JSON string prefix and closing quote.
     ///
     /// @dev For a direction that is NOT exactly covered, where several ranges
     ///      are hidden and only the anchors around one of them are revealed.
@@ -158,22 +160,26 @@ library CeremonyAttestation {
     ///
     ///      Exactly one commitment may carry the framing. Two would leave
     ///      nothing to say which the circuit opened.
-    function requireFramedCommitment(DirectionBlock memory block_, bytes memory prefix, bytes memory suffix)
+    function requireJsonStringCommitment(DirectionBlock memory block_, string memory name)
         internal
         pure
         returns (RangeCommitment memory framed)
     {
+        (uint256 count,) = CeremonyFields.jsonPrefix(concatRevealed(block_), name, true);
+        if (count > 1) revert AmbiguousFraming();
         uint256 found = type(uint256).max;
-        for (uint256 i = 0; i < block_.commitments.length; ++i) {
-            RangeCommitment memory c = block_.commitments[i];
-            if (c.start < prefix.length) continue;
-            bytes memory before_ = _revealedSlice(block_, c.start - uint32(prefix.length), c.start);
-            if (keccak256(before_) != keccak256(prefix)) continue;
-            bytes memory after_ = _revealedSlice(block_, c.end, c.end + uint32(suffix.length));
-            if (keccak256(after_) != keccak256(suffix)) continue;
-
-            if (found != type(uint256).max) revert AmbiguousFraming();
-            found = i;
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            RevealedRange memory anchor = block_.revealed[i];
+            (uint256 matches, uint256 quote) = CeremonyFields.jsonPrefix(anchor.value, name, true);
+            if (matches != 1 || quote + 1 != anchor.value.length) continue;
+            for (uint256 j = 0; j < block_.commitments.length; ++j) {
+                RangeCommitment memory c = block_.commitments[j];
+                if (uint256(anchor.start) + anchor.value.length != c.start) continue;
+                bytes memory after_ = _revealedSlice(block_, c.end, c.end + 1);
+                if (after_.length != 1 || after_[0] != '"') continue;
+                if (found != type(uint256).max) revert AmbiguousFraming();
+                found = j;
+            }
         }
         if (found == type(uint256).max) revert NoFramedCommitment();
         return block_.commitments[found];

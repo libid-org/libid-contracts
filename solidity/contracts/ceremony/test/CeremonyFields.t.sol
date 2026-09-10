@@ -80,6 +80,18 @@ contract CeremonyFieldsTest is Test {
         assertEq(this.jsonString(bytes('{"username":""}'), "username").length, 0);
     }
 
+    function test_jsonWhitespaceAndMixedDuplicateSpellings() public {
+        bytes memory body = bytes('{"login" \t:\r\n "alice", "id"\n : \t123 \r\n}');
+        assertEq(string(this.jsonString(body, "login")), "alice");
+        assertEq(string(this.jsonInteger(body, "id")), "123");
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.AmbiguousField.selector, "login"));
+        this.jsonString(bytes('{"login":"alice","login" : "bob"}'), "login");
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.AmbiguousField.selector, "id"));
+        this.jsonInteger(bytes('{"id":123,"id" : nope}'), "id");
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.FieldNotFound.selector, "login"));
+        this.jsonString(bytes.concat(bytes('{"login":'), hex"0b", bytes('"alice"}')), "login");
+    }
+
     // ─── JSON integers ──────────────────────────────────────────────
 
     /// @dev GitHub's `/user.id` is a bare integer, and the terminator is what
@@ -91,10 +103,10 @@ contract CeremonyFieldsTest is Test {
     }
 
     function test_refusesAnyOtherTerminator() public {
-        // A space would let `123 456` read as `123`. Casting the literal to
+        // Whitespace must still be followed by a structural byte, not more digits. Casting to
         // bytes1 is safe: one longer than a byte would not compile.
         // forge-lint: disable-next-line(unsafe-typecast)
-        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.BadIntegerTerminator.selector, "id", bytes1(" ")));
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.BadIntegerTerminator.selector, "id", bytes1("4")));
         this.jsonInteger(bytes('{"id":123 456}'), "id");
     }
 

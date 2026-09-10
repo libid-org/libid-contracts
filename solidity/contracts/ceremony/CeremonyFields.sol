@@ -51,12 +51,10 @@ library CeremonyFields {
         pure
         returns (Found found, bytes memory value)
     {
-        bytes memory needle = abi.encodePacked('"', name, '":"');
-        uint256 at;
-        (found, at) = _findUnique(data, needle);
-        if (found != Found.One) return (found, "");
-
-        at += needle.length;
+        (uint256 count, uint256 at) = jsonPrefix(data, name, true);
+        if (count == 0) return (Found.None, "");
+        if (count > 1) return (Found.Several, "");
+        ++at;
         uint256 end = at;
         while (end < data.length && data[end] != '"') {
             ++end;
@@ -88,20 +86,20 @@ library CeremonyFields {
         pure
         returns (Found found, bytes memory digits)
     {
-        bytes memory needle = abi.encodePacked('"', name, '":');
-        uint256 at;
-        (found, at) = _findUnique(data, needle);
-        if (found != Found.One) return (found, "");
-
-        at += needle.length;
+        (uint256 count, uint256 at) = jsonPrefix(data, name, false);
+        if (count == 0) return (Found.None, "");
+        if (count > 1) return (Found.Several, "");
         uint256 end = at;
         while (end < data.length && data[end] >= "0" && data[end] <= "9") {
             ++end;
         }
         if (end == at) revert NoncanonicalInteger(name);
         if (end - at > 1 && data[at] == "0") revert NoncanonicalInteger(name);
-        if (end == data.length) return (Found.None, "");
-        if (data[end] != "," && data[end] != "}") revert BadIntegerTerminator(name, data[end]);
+        uint256 terminator = _skipWhitespace(data, end);
+        if (terminator == data.length) return (Found.None, "");
+        if (data[terminator] != "," && data[terminator] != "}") {
+            revert BadIntegerTerminator(name, data[terminator]);
+        }
 
         digits = new bytes(end - at);
         for (uint256 i = 0; i < digits.length; ++i) {
@@ -110,15 +108,32 @@ library CeremonyFields {
         return (Found.One, digits);
     }
 
-    function _findUnique(bytes memory data, bytes memory needle) private pure returns (Found found, uint256 at) {
-        uint256 hit = type(uint256).max;
-        for (uint256 i = 0; i + needle.length <= data.length; ++i) {
-            if (!_matchesAt(data, needle, i)) continue;
-            if (hit != type(uint256).max) return (Found.Several, 0);
-            hit = i;
+    /// @notice Count field prefixes and return the last value offset (opening quote for strings).
+    /// @dev Only JSON whitespace is skipped. Callers read a value only when count is one.
+    function jsonPrefix(bytes memory data, string memory name, bool quoted)
+        internal
+        pure
+        returns (uint256 count, uint256 at)
+    {
+        bytes memory key = abi.encodePacked('"', name, '"');
+        for (uint256 i = 0; i + key.length <= data.length; ++i) {
+            if (!_matchesAt(data, key, i)) continue;
+            uint256 colon = _skipWhitespace(data, i + key.length);
+            if (colon == data.length || data[colon] != ":") continue;
+            uint256 value = _skipWhitespace(data, colon + 1);
+            if (quoted && (value == data.length || data[value] != '"')) continue;
+            ++count;
+            at = value;
         }
-        if (hit == type(uint256).max) return (Found.None, 0);
-        return (Found.One, hit);
+    }
+
+    function _skipWhitespace(bytes memory data, uint256 at) private pure returns (uint256) {
+        while (at < data.length) {
+            bytes1 c = data[at];
+            if (c != 0x20 && c != 0x09 && c != 0x0a && c != 0x0d) break;
+            ++at;
+        }
+        return at;
     }
 
     /// @notice The value of `name=value` in an `application/x-www-form-urlencoded`

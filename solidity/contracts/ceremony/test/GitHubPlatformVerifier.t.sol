@@ -277,9 +277,18 @@ contract GitHubPlatformVerifierTest is Test {
     ///      rather than a prefix of a longer one.
     function test_rejectsAnIdWithoutAStructuralTerminator() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        s.identitySession = _identity('{"login":"octocat","id":583231 }', CeremonyProfile.AUTHORITY_GITHUB_API);
+        s.identitySession = _identity('{"login":"octocat","id":583231 4}', CeremonyProfile.AUTHORITY_GITHUB_API);
         vm.expectPartialRevert(CeremonyFields.BadIntegerTerminator.selector);
         this.run{value: quote}(s);
+    }
+
+    function test_readsPrettyPrintedIdentity() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession =
+            _identity('{\n  "login" : "octocat",\n  "id": 583231 \n}', CeremonyProfile.AUTHORITY_GITHUB_API);
+        ICeremony.VerifiedClaim memory result = this.run{value: quote}(s);
+        assertEq(result.userId, "583231");
+        assertEq(result.handle, "octocat");
     }
 
     function test_rejectsANoncanonicalId() public {

@@ -30,6 +30,52 @@ contract CeremonyAttestationTest is Test {
         return CeremonyAttestation.decode(data);
     }
 
+    function framed(CeremonyAttestation.DirectionBlock memory block_) external pure returns (bytes32) {
+        return CeremonyAttestation.requireJsonStringCommitment(block_, "access_token").commitment;
+    }
+
+    function test_spacedBearerFramingKeepsWhitespaceRevealed() public {
+        bytes memory prefix = bytes('"access_token" \t: \r\n"');
+        uint32 start = uint32(prefix.length);
+        CeremonyAttestation.DirectionBlock memory block_;
+        block_.revealed = new CeremonyAttestation.RevealedRange[](2);
+        block_.revealed[0] = CeremonyAttestation.RevealedRange({start: 0, end: start, value: prefix});
+        block_.revealed[1] = CeremonyAttestation.RevealedRange({start: start + 5, end: start + 6, value: '"'});
+        block_.commitments = new CeremonyAttestation.RangeCommitment[](1);
+        block_.commitments[0] =
+            CeremonyAttestation.RangeCommitment({start: start, end: start + 5, commitment: bytes32(uint256(7))});
+        assertEq(this.framed(block_), bytes32(uint256(7)));
+        block_.commitments[0].start = start + 1;
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.framed(block_);
+        block_.commitments[0].start = start;
+        // A second prefix is ambiguous even without a second framed commitment.
+        block_.revealed[1].value = bytes('" "access_token":"');
+        block_.revealed[1].end = block_.revealed[1].start + uint32(block_.revealed[1].value.length);
+        vm.expectRevert(CeremonyAttestation.AmbiguousFraming.selector);
+        this.framed(block_);
+    }
+
+    function test_refusesASpacedBearerPrefixSplitAcrossDisjointRanges() public {
+        bytes memory first = bytes('"access_token" ');
+        bytes memory second = bytes(': \t"');
+        uint32 split = uint32(first.length);
+        uint32 bearer = split + 1 + uint32(second.length);
+        CeremonyAttestation.DirectionBlock memory block_;
+        block_.revealed = new CeremonyAttestation.RevealedRange[](3);
+        block_.revealed[0] = CeremonyAttestation.RevealedRange({start: 0, end: split, value: first});
+        block_.revealed[1] = CeremonyAttestation.RevealedRange({start: split + 1, end: bearer, value: second});
+        block_.revealed[2] = CeremonyAttestation.RevealedRange({start: bearer + 5, end: bearer + 6, value: '"'});
+        block_.commitments = new CeremonyAttestation.RangeCommitment[](2);
+        block_.commitments[0] =
+            CeremonyAttestation.RangeCommitment({start: split, end: split + 1, commitment: bytes32(uint256(8))});
+        block_.commitments[1] =
+            CeremonyAttestation.RangeCommitment({start: bearer, end: bearer + 5, commitment: bytes32(uint256(7))});
+        CeremonyAttestation.requireExactCoverage(block_, bearer + 6);
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.framed(block_);
+    }
+
     function test_decodesTheRustEncoderOutput() public view {
         CeremonyAttestation.AttestedData memory a = this.decode(FIXTURE);
 
