@@ -420,6 +420,13 @@ contract GitHubPlatformVerifierTest is Test {
         assertEq(vm.parseJsonBytes32(json, ".authorization_nonce"), AUTH_NONCE);
         assertEq(vm.parseJsonAddress(json, ".notary"), vm.addr(NOTARY_KEY), "signed by the key this suite trusts");
         assertEq(uint64(vm.parseJsonUint(json, ".created_at")), T0);
+        // The identity response is formatted as GitHub formats it for the
+        // media type the profile pins, whitespace and all. A compact body here
+        // once let this fixture pass a verifier that refused every real read.
+        assertTrue(
+            _contains(vm.parseJsonBytes(json, ".identity.received"), bytes('"login": "octocat"')),
+            "the fixture carries GitHub's pretty-printed response"
+        );
 
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         s.tokenSession = ICeremony.Attestation({
@@ -435,6 +442,18 @@ contract GitHubPlatformVerifierTest is Test {
         assertEq(f.handle, "octocat");
         assertEq(string(f.clientIdentifier), "Iv1.8a61f9b3a7aba766");
         assertEq(f.sessionId, digest);
+    }
+
+    function _contains(bytes memory haystack, bytes memory needle) private pure returns (bool) {
+        if (needle.length > haystack.length) return false;
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool same = true;
+            for (uint256 j = 0; j < needle.length && same; ++j) {
+                same = haystack[i + j] == needle[j];
+            }
+            if (same) return true;
+        }
+        return false;
     }
 
     /// @dev GitHub pretty-prints `/user` for the media type the profile pins:
