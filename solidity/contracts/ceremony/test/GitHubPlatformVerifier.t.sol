@@ -480,6 +480,46 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    string constant REAL_SESSION = "contracts/ceremony/test/fixtures/github-ceremony-real.json";
+
+    /// @dev A ceremony that actually ran: two MPC-TLS sessions against
+    ///      github.com and api.github.com on 2026-09-11, the exchange with a
+    ///      real authorization code under the PKCE challenge derived from this
+    ///      suite's digest, the identity read with the bearer GitHub issued,
+    ///      the verifier in the prover's process signing as the key this
+    ///      suite trusts (libid-rs `examples/capture_ceremony.rs`). Nothing in
+    ///      the file was written by hand: the head is what hyper put on the
+    ///      wire, the body is what GitHub answered, pretty-printed as GitHub
+    ///      prints it, and the bearer and the secret are committed, not
+    ///      present. Verified with the signatures unedited, at a clock a minute
+    ///      past the identity read.
+    function test_verifiesTheRecordsACeremonyProduced() public {
+        string memory json = vm.readFile(REAL_SESSION);
+        assertEq(vm.parseJsonBytes32(json, ".authorization_digest"), digest, "bound to this suite's digest");
+        assertEq(vm.parseJsonBytes32(json, ".authorization_nonce"), AUTH_NONCE);
+        assertEq(vm.parseJsonAddress(json, ".notary"), vm.addr(NOTARY_KEY), "signed by the key this suite trusts");
+        assertTrue(
+            _contains(vm.parseJsonBytes(json, ".identity.attested_data"), bytes('"login": "')),
+            "GitHub's pretty-printed response, as served"
+        );
+        vm.warp(vm.parseJsonUint(json, ".identity.created_at") + 60);
+
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".token.attested_data"),
+            proof: vm.parseJsonBytes(json, ".token.notary_signature")
+        });
+        s.identitySession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".identity.attested_data"),
+            proof: vm.parseJsonBytes(json, ".identity.notary_signature")
+        });
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.userId, "18346821");
+        assertEq(f.handle, "xgreenx");
+        assertEq(string(f.clientIdentifier), "Ov23liIOfT7uQ9707Fpz");
+        assertEq(f.sessionId, digest);
+    }
+
     /// @dev The wrong authority is still refused before any field is read.
     function test_rejectsAnIdentityReadFromTheWrongAuthority() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
