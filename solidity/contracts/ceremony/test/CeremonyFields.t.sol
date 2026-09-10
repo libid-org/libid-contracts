@@ -176,4 +176,41 @@ contract CeremonyFieldsTest is Test {
         assertFalse(CeremonyFields.isSerializerSafe(bytes("")));
         assertFalse(CeremonyFields.isSerializerSafe(hex"c3a9")); // non-ASCII
     }
+
+    // ─── JSON whitespace ────────────────────────────────────────────
+
+    /// @dev JSON whitespace between tokens is not part of any token. The
+    ///      readers remove it before they look, so a pretty-printed member
+    ///      reads as its compact spelling does.
+    function test_readsMembersThroughJsonWhitespace() public view {
+        bytes memory body = bytes('{\n  "login" \t: "alice",\r\n  "id" : 123 \n}');
+        assertEq(string(this.jsonString(body, "login")), "alice");
+        assertEq(string(this.jsonInteger(body, "id")), "123");
+    }
+
+    /// @dev And a duplicate in another spelling is still a duplicate, for a
+    ///      string and for an integer alike.
+    function test_countsADuplicateInAnotherWhitespaceSpelling() public {
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.AmbiguousField.selector, "login"));
+        this.jsonString(bytes('{"login":"alice","login" : "bob"}'), "login");
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.AmbiguousField.selector, "id"));
+        this.jsonInteger(bytes('{"id":123,"id" : 456}'), "id");
+    }
+
+    /// @dev Only the four bytes JSON calls whitespace are removed. A vertical
+    ///      tab is not one of them, and a member spelled with it is no member.
+    function test_removesOnlyJsonWhitespace() public {
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.FieldNotFound.selector, "login"));
+        this.jsonString(bytes.concat(bytes('{"login":'), hex"0b", bytes('"alice"}')), "login");
+    }
+
+    /// @dev Whitespace before a brace is JSON's and goes; whitespace between
+    ///      two runs of digits touches no structural byte, stays, and is the
+    ///      terminator the reader then refuses. `123 4` does not read as
+    ///      `1234`.
+    function test_stillRefusesDigitsAfterWhitespace() public {
+        assertEq(string(this.jsonInteger(bytes('{"id":123 }'), "id")), "123");
+        vm.expectRevert(abi.encodeWithSelector(CeremonyFields.BadIntegerTerminator.selector, "id", bytes1(0x20)));
+        this.jsonInteger(bytes('{"id":123 4}'), "id");
+    }
 }
