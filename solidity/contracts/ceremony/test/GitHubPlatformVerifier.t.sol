@@ -88,8 +88,8 @@ contract GitHubPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The header set `github/v1` fixes, laid out in the profile's order; the
-    /// verifier accepts any.
+    /// The head the Token-Exchange Service sends: the two headers the profile
+    /// requires, and two it does not compare.
     bytes constant EXCHANGE_HEADERS =
         "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
 
@@ -457,18 +457,18 @@ contract GitHubPlatformVerifierTest is Test {
     }
 
     /// @dev And the fixtures above compose that head from parts, so this is
-    ///      what says the parts are the profile's own.
-    function test_theFixtureHeadIsTheProfilesOwn() public pure {
-        assertEq(
-            string(_exchangeHead(0)),
-            string(
-                abi.encodePacked(
-                    "POST /login/oauth/access_token HTTP/1.1\r\n",
-                    CeremonyProfile.GITHUB_TOKEN_REQUEST_HEADERS,
-                    "\r\ncontent-length: 0\r\n\r\n"
-                )
-            )
-        );
+    ///      what says the two lines the profile requires are among them.
+    function test_theFixtureHeadCarriesTheProfilesRequiredHeaders() public pure {
+        bytes memory head = _exchangeHead(0);
+        bytes memory needle = abi.encodePacked(CeremonyProfile.GITHUB_TOKEN_REQUIRED_HEADERS, "\r\n");
+        bool found;
+        for (uint256 i = 0; i + needle.length <= head.length && !found; ++i) {
+            found = true;
+            for (uint256 j = 0; j < needle.length && found; ++j) {
+                found = head[i + j] == needle[j];
+            }
+        }
+        assertTrue(found);
     }
 
     function test_rejectsAnExchangeResponseWithNoRevealedAnchors() public {

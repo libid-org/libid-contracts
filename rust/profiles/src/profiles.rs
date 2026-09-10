@@ -60,15 +60,12 @@ pub struct TokenSession {
     /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,
     /// whose request hides nothing and is revealed whole.
     pub secret_field: Option<&'static str>,
-    /// Every header this request sends, lowercased as the wire spells them,
-    /// in no particular order. `content-length` is absent because its value
-    /// is the body's own count: the HTTP client appends it and the verifier
-    /// reads it rather than compares it.
-    pub request_headers: &'static [&'static str],
-    /// The subset of those a Platform Verifier requires, each exactly once
-    /// with its value: `host` and `content-type`. Every other header is
-    /// the runtime's own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS`
-    /// lists.
+    /// The header lines a Platform Verifier requires, each exactly once with
+    /// its value: `host` and `content-type`, lowercased as the wire spells
+    /// them. Every other header is the runtime's own, save the names
+    /// `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. `content-length` is absent
+    /// because its value is the body's own count: the HTTP client appends
+    /// it and the verifier reads it rather than compares it.
     pub required_headers: &'static [&'static str],
 }
 
@@ -124,12 +121,6 @@ pub const X: Profile = Profile {
             request_line: "POST /2/oauth2/token ",
         },
         secret_field: None,
-        request_headers: &[
-            "host: api.x.com",
-            "content-type: application/x-www-form-urlencoded",
-            "accept: application/json",
-            "connection: close",
-        ],
         required_headers: &[
             "host: api.x.com",
             "content-type: application/x-www-form-urlencoded",
@@ -163,12 +154,6 @@ pub const GITHUB: Profile = Profile {
             request_line: "POST /login/oauth/access_token ",
         },
         secret_field: Some("client_secret"),
-        request_headers: &[
-            "host: github.com",
-            "content-type: application/x-www-form-urlencoded",
-            "accept: application/json",
-            "connection: close",
-        ],
         required_headers: &[
             "host: github.com",
             "content-type: application/x-www-form-urlencoded",
@@ -204,8 +189,8 @@ pub fn launch(platform: &str) -> Option<&'static Profile> {
 /// request in a way no revealed byte shows: `authorization` which client
 /// it authenticates, `content-encoding` and `transfer-encoding` which
 /// bytes it parses, `cookie` the context, `x-http-method-override` the
-/// method. The verifier requires `host` and `content-type` from each token
-/// session's requestHeaders, reads `content-length`, and ignores every
+/// method. The verifier requires each token session's requiredHeaders,
+/// `host` and `content-type`, reads `content-length`, and ignores every
 /// other header: one outside both lists changes only what the platform
 /// answers, and a wrong answer is a response the verifier cannot read.
 pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &[

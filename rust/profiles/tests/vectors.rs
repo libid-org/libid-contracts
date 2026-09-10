@@ -156,35 +156,23 @@ fn the_launch_list_is_closed() {
 }
 
 #[test]
-fn the_required_headers_are_among_the_headers_sent() {
-    // Two lists per token session: what a prover sends, and the subset a
-    // Platform Verifier holds the head to. The second is generated from the
-    // first, and this is what says which two lines it is and that both are
-    // really sent. It carries no `content-length`: that value is the body's
-    // own and the verifier reads it off the transcript.
+fn the_required_headers_are_host_and_the_media_type() {
+    // The only header data a profile carries: the two lines a Platform
+    // Verifier holds the head to. `host` must name the pinned authority, or
+    // the profile contradicts itself; `content-type` selects the parser. No
+    // `content-length`: that value is the body's own and the verifier reads
+    // it off the transcript.
     for profile in LAUNCH {
         let Some(token) = profile.token else {
             continue;
         };
-        let names: Vec<&str> = token
+        let mut names: Vec<&str> = token
             .required_headers
             .iter()
             .map(|line| line.split(':').next().unwrap())
             .collect();
-        assert_eq!(names, ["host", "content-type"]);
-        for line in token.required_headers {
-            assert!(
-                token.request_headers.contains(line),
-                "a required header the prover does not send: {line}"
-            );
-        }
-        assert!(
-            !token
-                .request_headers
-                .iter()
-                .any(|header| header.starts_with("content-length:")),
-            "the HTTP client appends the length; a listed one would move it"
-        );
+        names.sort_unstable();
+        assert_eq!(names, ["content-type", "host"]);
         let host = format!("host: {}", token.session.authority);
         assert!(
             token.required_headers.contains(&host.as_str()),
@@ -194,10 +182,10 @@ fn the_required_headers_are_among_the_headers_sent() {
 }
 
 #[test]
-fn the_forbidden_names_are_lowercase_and_never_sent() {
+fn the_forbidden_names_are_lowercase_and_never_required() {
     // The verifier lowercases what it reads and compares against this list
     // as it is, so a name here in any other case would forbid nothing. And a
-    // profile that both sends a name and forbids it rejects every honest
+    // profile that both requires a name and forbids it rejects every honest
     // session.
     for name in FORBIDDEN_TOKEN_REQUEST_HEADERS {
         assert_eq!(*name, name.to_ascii_lowercase(), "{name}");
@@ -207,11 +195,11 @@ fn the_forbidden_names_are_lowercase_and_never_sent() {
         let Some(token) = profile.token else {
             continue;
         };
-        for line in token.request_headers {
+        for line in token.required_headers {
             let name = line.split(':').next().unwrap();
             assert!(
                 !FORBIDDEN_TOKEN_REQUEST_HEADERS.contains(&name),
-                "{} sends a header it forbids: {name}",
+                "{} requires a header it forbids: {name}",
                 profile.platform
             );
         }

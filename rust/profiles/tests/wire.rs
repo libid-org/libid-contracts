@@ -3,10 +3,10 @@
 //! A verifier holds a token request's head to the profile's required headers,
 //! each once with its value, refuses the forbidden names, and reads one
 //! `content-length`; the rest of the head is the client's business. This
-//! asserts that hyper, given the profile's headers, writes a head that passes
-//! -- the request built from `request_headers` and driven through the real
-//! `hyper::client::conn::http1` encoder over an in-memory duplex, so what is
-//! checked is the bytes hyper actually wrote.
+//! asserts that hyper, given the profile's required headers and the two a
+//! runtime adds of its own, writes a head that passes -- the request driven
+//! through the real `hyper::client::conn::http1` encoder over an in-memory
+//! duplex, so what is checked is the bytes hyper actually wrote.
 //!
 //! Order is not asserted. Nothing promises where a client puts a header, and
 //! the browser reaches the wire through tlsn's wasm prover, whose
@@ -39,9 +39,11 @@ async fn head_hyper_writes(session: &TokenSession, body: &'static [u8]) -> Vec<u
         .method(session.session.method)
         .uri(session.session.path);
 
-    // In the profile's order, which decides nothing: the verifier matches the
-    // head as a set, and the order hyper writes is not asserted below.
-    for header in session.request_headers {
+    // The profile's required pair, then what the browser and the backend add
+    // of their own and the verifier does not compare. Order decides nothing
+    // and is not asserted below.
+    let own = ["accept: application/json", "connection: close"];
+    for header in session.required_headers.iter().chain(own.iter()) {
         let (name, value) = header.split_once(": ").expect("`name: value`");
         request = request.header(name, value);
     }

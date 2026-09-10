@@ -91,12 +91,13 @@ def request_line(session: dict[str, Any]) -> str:
     return f"{session['method']} {session['path']} "
 
 
-# The header names a Platform Verifier requires of every token request, in the
-# order the generated block lists them. `host` because a profile whose pinned
-# authority and pinned host name different servers contradicts itself, and
-# `content-type` because it selects the platform's request parser
+# The header names a Platform Verifier requires of every token request, and
+# the only header data a profile carries. `host` because a profile whose
+# pinned authority and pinned host name different servers contradicts itself,
+# and `content-type` because it selects the platform's request parser
 # (REQ-COMMON-21B). Nothing else a runtime sends changes what the platform
-# parses, so nothing else is compared.
+# parses, so nothing else is compared, and nothing else is stated: what a
+# runtime adds beyond these is its own.
 REQUIRED_NAMES = ("host", "content-type")
 
 # Lowercase field names, so a verifier lowercasing what it reads can compare
@@ -107,18 +108,6 @@ NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 def crlf(lines: list[str]) -> str:
     """Lines joined by CRLF, the shape a Solidity verifier splits."""
     return "\r\n".join(lines)
-
-
-def required_headers(session: dict[str, Any]) -> list[str]:
-    """The lines a verifier holds a token request's head to, from what it sends.
-
-    A subset rather than the whole list. A header outside it changes only what
-    the platform ANSWERS, and a wrong answer is a response no verifier can
-    read; the ones here, with the forbidden names, are what decide what the
-    platform DOES with the request.
-    """
-    by_name = {line.split(":", 1)[0]: line for line in session["requestHeaders"]}
-    return [by_name[name] for name in REQUIRED_NAMES]
 
 
 def forbidden_headers(spec: dict[str, Any]) -> list[str]:
@@ -195,41 +184,38 @@ def escaped(value: str) -> str:
 HEADER = re.compile(r"^[a-z][a-z0-9-]*: [\x20-\x21\x23-\x26\x28-\x5b\x5d-\x7e]+$")
 
 
-def request_headers(session: dict[str, Any], host: str) -> None:
-    """Refuse a header list a verifier could not compare, or should not.
+def required_headers(session: dict[str, Any]) -> list[str]:
+    """The lines a verifier holds a token request's head to, validated.
 
-    A verifier compares these lines raw, so a header the wire spells
-    differently -- another case, a second copy of a field name, a `content-length`
-    whose value no profile can know -- is a profile that rejects every honest
-    session, and says so here rather than as a rejection with no reason.
+    Exactly the names in `REQUIRED_NAMES`, each as `lowercase-name: value`, the
+    `host` one naming the pinned authority. A verifier compares these lines
+    raw, so a line the wire spells differently is a profile that rejects every
+    honest session, and says so here rather than as a rejection with no
+    reason.
     """
-    headers = session["requestHeaders"]
-    if not isinstance(headers, list) or not headers:
-        raise SystemExit("ERROR: a token session must list the headers it sends")
-
+    headers = session["requiredHeaders"]
+    if not isinstance(headers, list):
+        raise SystemExit("ERROR: a token session must list its required headers")
     names: list[str] = []
     for line in headers:
         if not isinstance(line, str) or not HEADER.fullmatch(line):
             raise SystemExit(f"ERROR: header {line!r} is not `lowercase-name: value`")
         names.append(line.split(":", 1)[0])
-    if len(set(names)) != len(names):
-        raise SystemExit(f"ERROR: {names} names one header twice")
-
+    if sorted(names) != sorted(REQUIRED_NAMES):
+        raise SystemExit(f"ERROR: the required headers must be exactly {REQUIRED_NAMES}, got {names}")
     # The `Host` header is prover-composed text and says nothing about which
     # server answered -- but a profile whose pinned header names one host while
     # its pinned authority names another contradicts itself, and only one of the
     # two can be what the session did.
+    host = session["authority"]
     if f"host: {host}" not in headers:
-        raise SystemExit(f"ERROR: the headers must carry `host: {host}`, the pinned authority")
-    if "content-type" not in names:
-        raise SystemExit("ERROR: the media type selects the platform's request parser and is required")
-    if "content-length" in names:
-        raise SystemExit("ERROR: `content-length` is the body's own count; the verifier reads it, no profile can state it")
+        raise SystemExit(f"ERROR: the required headers must carry `host: {host}`, the pinned authority")
+    return headers
 
 
 def validate(spec: dict[str, Any]) -> None:
     """Refuse a spec that would generate constants nothing can rely on."""
-    forbidden = forbidden_headers(spec)
+    forbidden_headers(spec)
     seen: set[str] = set()
     for profile in spec["profiles"]:
         platform = profile["platform"]
@@ -244,10 +230,7 @@ def validate(spec: dict[str, Any]) -> None:
             safe(session["method"], "method")
             safe(session["path"], "path")
             if name == "token":
-                request_headers(session, host)
-                for line in session["requestHeaders"]:
-                    if line.split(":", 1)[0] in forbidden:
-                        raise SystemExit(f"ERROR: {platform!r} sends a header it forbids: {line!r}")
+                required_headers(session)
                 if session["secretField"] is not None:
                     safe(session["secretField"], "secretField")
             if name == "identity":
@@ -347,29 +330,12 @@ def gen_sol(spec: dict[str, Any]) -> str:
 
     lines += [
         "",
-        "    /// @dev Every header the token request sends, CRLF-joined, lowercased",
-        "    ///      as the wire spells them. What a runtime sets and what fixtures",
-        "    ///      compose a head from; the verifier compares only the required",
-        "    ///      subset below.",
-        "",
-    ]
-    for profile in profiles:
-        token = profile["sessions"].get("token")
-        if token is None:
-            continue
-        const = f"{upper(profile['platform'])}_TOKEN_REQUEST_HEADERS"
-        lines.append(
-            f'    bytes internal constant {const} = "{escaped(crlf(token["requestHeaders"]))}";'
-        )
-
-    lines += [
-        "",
         "    /// @dev The lines a verifier requires of the token request's head, each",
         "    ///      exactly once with its value: `host` naming the pinned authority,",
         "    ///      and the media type that selects the platform's request parser",
         "    ///      (REQ-COMMON-21B). Revealed but uncompared, the media type was a",
         "    ///      byte a prover chose in a request every other field of which is",
-        "    ///      pinned.",
+        "    ///      pinned. What else a runtime sends is its own and not stated here.",
         "",
     ]
     for profile in profiles:
@@ -577,15 +543,12 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,",
         "    /// whose request hides nothing and is revealed whole.",
         "    pub secret_field: Option<&'static str>,",
-        "    /// Every header this request sends, lowercased as the wire spells them,",
-        "    /// in no particular order. `content-length` is absent because its value",
-        "    /// is the body's own count: the HTTP client appends it and the verifier",
-        "    /// reads it rather than compares it.",
-        "    pub request_headers: &'static [&'static str],",
-        "    /// The subset of those a Platform Verifier requires, each exactly once",
-        "    /// with its value: `host` and `content-type`. Every other header is",
-        "    /// the runtime's own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS`",
-        "    /// lists.",
+        "    /// The header lines a Platform Verifier requires, each exactly once with",
+        "    /// its value: `host` and `content-type`, lowercased as the wire spells",
+        "    /// them. Every other header is the runtime's own, save the names",
+        "    /// `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. `content-length` is absent",
+        "    /// because its value is the body's own count: the HTTP client appends",
+        "    /// it and the verifier reads it rather than compares it.",
         "    pub required_headers: &'static [&'static str],",
         "}",
         "",
@@ -634,7 +597,6 @@ def gen_rust(spec: dict[str, Any]) -> str:
             lines.append("    token: Some(TokenSession {")
             lines += rust_session(token, 8)
             lines.append(f"        secret_field: {rust_str(token['secretField'])},")
-            lines += rust_array("request_headers: ", token["requestHeaders"], "        ", ",")
             lines += rust_array("required_headers: ", required_headers(token), "        ", ",")
             lines.append("    }),")
 
@@ -760,12 +722,10 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly session: Session",
         "  /** The body field committed rather than revealed, or null. */",
         "  readonly secretField: string | null",
-        "  /** Every header this request sends, lowercased, in no particular order.",
+        "  /** The header lines a Platform Verifier requires, each exactly once with",
+        "   * its value: `host` and `content-type`. Every other header is the",
+        "   * runtime's own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists.",
         "   * `content-length` is absent: the HTTP client appends it. */",
-        "  readonly requestHeaders: readonly string[]",
-        "  /** The subset a Platform Verifier requires, each exactly once with its",
-        "   * value: `host` and `content-type`. Every other header is the runtime's",
-        "   * own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. */",
         "  readonly requiredHeaders: readonly string[]",
         "}",
         "",
@@ -800,7 +760,6 @@ def gen_ts(spec: dict[str, Any]) -> str:
             lines.append("  token: {")
             lines += ts_session(token, 4)
             lines.append(f"    secretField: {ts_str(token['secretField'])},")
-            lines += ts_array("requestHeaders: ", token["requestHeaders"], "    ", ",")
             lines += ts_array("requiredHeaders: ", required_headers(token), "    ", ",")
             lines.append("  },")
 

@@ -107,8 +107,8 @@ contract XPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The header set `x/v1` fixes, laid out in the profile's order; the
-    /// verifier accepts any.
+    /// The head the browser sends: the two headers the profile requires, and
+    /// two it does not compare.
     bytes constant TOKEN_HEADERS =
         "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
 
@@ -1065,21 +1065,26 @@ contract XPlatformVerifierTest is Test {
         s.tokenSession = _tokenSessionWithHead(head);
     }
 
-    /// @dev The fixtures compose their head from parts; this is what says the
-    ///      parts are the profile's own. Without it an edit to `profiles.json`
-    ///      that the fixtures did not follow would fail every test in this
-    ///      file at once and name none of them as the reason.
-    function test_theFixtureHeadIsTheProfilesOwn() public pure {
-        assertEq(
-            string(_tokenHead(TOKEN_HEADERS, 0)),
-            string(
-                abi.encodePacked(
-                    "POST /2/oauth2/token HTTP/1.1\r\n",
-                    CeremonyProfile.X_TOKEN_REQUEST_HEADERS,
-                    "\r\ncontent-length: 0\r\n\r\n"
-                )
-            )
+    /// @dev The fixtures compose their head from parts; this says the two
+    ///      lines the profile requires are among them. Without it an edit to
+    ///      `profiles.json` that the fixtures did not follow would fail every
+    ///      test in this file at once and name none of them as the reason.
+    function test_theFixtureHeadCarriesTheProfilesRequiredHeaders() public pure {
+        assertTrue(
+            _contains(_tokenHead(TOKEN_HEADERS, 0), abi.encodePacked(CeremonyProfile.X_TOKEN_REQUIRED_HEADERS, "\r\n"))
         );
+    }
+
+    function _contains(bytes memory haystack, bytes memory needle) private pure returns (bool) {
+        if (needle.length > haystack.length) return false;
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool same = true;
+            for (uint256 j = 0; j < needle.length && same; ++j) {
+                same = haystack[i + j] == needle[j];
+            }
+            if (same) return true;
+        }
+        return false;
     }
 
     /// @dev REQ-COMMON-21B: the media type selects the platform's request

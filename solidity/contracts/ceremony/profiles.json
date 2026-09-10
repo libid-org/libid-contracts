@@ -45,8 +45,8 @@
       "request in a way no revealed byte shows: `authorization` which client",
       "it authenticates, `content-encoding` and `transfer-encoding` which",
       "bytes it parses, `cookie` the context, `x-http-method-override` the",
-      "method. The verifier requires `host` and `content-type` from each token",
-      "session's requestHeaders, reads `content-length`, and ignores every",
+      "method. The verifier requires each token session's requiredHeaders,",
+      "`host` and `content-type`, reads `content-length`, and ignores every",
       "other header: one outside both lists changes only what the platform",
       "answers, and a wrong answer is a response the verifier cannot read."
     ]
@@ -76,30 +76,29 @@
           "method": "POST",
           "path": "/2/oauth2/token",
           "secretField": null,
-          "requestHeaders": [
+          "requiredHeaders": [
             "host: api.x.com",
-            "content-type: application/x-www-form-urlencoded",
-            "accept: application/json",
-            "connection: close"
+            "content-type: application/x-www-form-urlencoded"
           ],
           "note": [
             "A public client hides no body field, so the request is revealed",
             "whole and the verifier accepts exactly zero committed ranges in",
             "this direction.",
             "",
-            "Which is why the headers are listed. Revealed is not checked: they",
-            "were public and unconstrained until the verifier compared them, and",
-            "`content-type` is the one that decides how X parses the very bytes",
-            "`formField` reads. REQ-COMMON-21B fixes the media type in the",
-            "deployment profile because it selects the platform's request",
-            "parser, and a pin nothing compares is a pin in name only.",
+            "Which is why the media type is required. Revealed is not checked:",
+            "it was public and unconstrained until the verifier compared it,",
+            "and it decides how X parses the very bytes `formField` reads.",
+            "REQ-COMMON-21B fixes it in the deployment profile because it",
+            "selects the platform's request parser, and a pin nothing compares",
+            "is a pin in name only.",
             "",
-            "What the browser sends. The verifier requires `host` and",
-            "`content-type` of these, ignores the rest, and refuses the names",
-            "in tokenRequest.forbiddenHeaders. `content-length` is not among",
-            "them: the HTTP client appends it, its value is the body's own",
-            "length, and the verifier checks it against the length the notary",
-            "signed."
+            "The two lines the verifier requires of the head, each once with",
+            "its value. What else the browser sends -- `accept:",
+            "application/json`, `connection: close` -- is its own and",
+            "uncompared, as is any header a client adds, save the names in",
+            "tokenRequest.forbiddenHeaders. `content-length` is not among them:",
+            "the HTTP client appends it, its value is the body's own length,",
+            "and the verifier checks it against the length the notary signed."
           ]
         },
         "identity": {
@@ -132,23 +131,23 @@
           "method": "POST",
           "path": "/login/oauth/access_token",
           "secretField": "client_secret",
-          "requestHeaders": [
+          "requiredHeaders": [
             "host: github.com",
-            "content-type: application/x-www-form-urlencoded",
-            "accept: application/json",
-            "connection: close"
+            "content-type: application/x-www-form-urlencoded"
           ],
           "note": [
             "The client secret is committed rather than revealed, ordered last",
             "in the body under REQ-COMMON-22 so the committed run is a suffix",
             "and not a hole.",
             "",
-            "The media type and `accept` are section 6.2's; `host` names the",
-            "authority the notary authenticated, and `connection: close` is what",
-            "ends every notarized session here. The Token-Exchange Service is",
-            "the party that sends this one, so unlike X's it is agreed here",
-            "BEFORE it is written rather than read off a browser that already",
-            "sends it."
+            "The media type is section 6.2's and `host` names the authority",
+            "the notary authenticated. The Token-Exchange Service also sends",
+            "`accept: application/json`, without which GitHub answers",
+            "form-encoded and the verifier finds no `\"access_token\":\"`, and",
+            "`connection: close`, which ends every notarized session here;",
+            "neither is compared. The service is the party that sends this",
+            "request, so unlike X's it is agreed here BEFORE it is written",
+            "rather than read off a browser that already sends it."
           ]
         },
         "identity": {
