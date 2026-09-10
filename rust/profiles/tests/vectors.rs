@@ -11,6 +11,7 @@
 //! follows.
 
 use libid_profiles::{
+    FORBIDDEN_TOKEN_REQUEST_HEADERS,
     GITHUB,
     GOOGLE,
     LAUNCH,
@@ -155,22 +156,28 @@ fn the_launch_list_is_closed() {
 }
 
 #[test]
-fn the_token_request_head_is_the_headers_beside_it() {
-    // Two representations of one agreement: the list a prover builds its
-    // request from, and the block the Platform Verifier matches against. They
-    // are generated together, and this is what says the two say the same thing.
+fn the_required_headers_are_among_the_headers_sent() {
+    // Two lists per token session: what a prover sends, and the subset a
+    // Platform Verifier holds the head to. The second is generated from the
+    // first, and this is what says which two lines it is and that both are
+    // really sent. It carries no `content-length`: that value is the body's
+    // own and the verifier reads it off the transcript.
     for profile in LAUNCH {
         let Some(token) = profile.token else {
             continue;
         };
-        // The block is those same lines joined, which is the shape a verifier
-        // splits and matches as a set. It carries no `content-length`: that
-        // value is the body's own and the verifier reads it off the transcript.
-        assert_eq!(
-            token.request_header_block,
-            token.request_headers.join("\r\n")
-        );
-
+        let names: Vec<&str> = token
+            .required_headers
+            .iter()
+            .map(|line| line.split(':').next().unwrap())
+            .collect();
+        assert_eq!(names, ["host", "content-type"]);
+        for line in token.required_headers {
+            assert!(
+                token.request_headers.contains(line),
+                "a required header the prover does not send: {line}"
+            );
+        }
         assert!(
             !token
                 .request_headers
@@ -180,8 +187,33 @@ fn the_token_request_head_is_the_headers_beside_it() {
         );
         let host = format!("host: {}", token.session.authority);
         assert!(
-            token.request_headers.contains(&host.as_str()),
-            "the pinned `host` header and the pinned authority must name one server"
+            token.required_headers.contains(&host.as_str()),
+            "the required `host` header and the pinned authority must name one server"
         );
+    }
+}
+
+#[test]
+fn the_forbidden_names_are_lowercase_and_never_sent() {
+    // The verifier lowercases what it reads and compares against this list
+    // as it is, so a name here in any other case would forbid nothing. And a
+    // profile that both sends a name and forbids it rejects every honest
+    // session.
+    for name in FORBIDDEN_TOKEN_REQUEST_HEADERS {
+        assert_eq!(*name, name.to_ascii_lowercase(), "{name}");
+        assert!(!name.is_empty());
+    }
+    for profile in LAUNCH {
+        let Some(token) = profile.token else {
+            continue;
+        };
+        for line in token.request_headers {
+            let name = line.split(':').next().unwrap();
+            assert!(
+                !FORBIDDEN_TOKEN_REQUEST_HEADERS.contains(&name),
+                "{} sends a header it forbids: {name}",
+                profile.platform
+            );
+        }
     }
 }

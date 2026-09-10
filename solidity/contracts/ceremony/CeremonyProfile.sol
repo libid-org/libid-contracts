@@ -59,21 +59,39 @@ library CeremonyProfile {
     bytes internal constant GITHUB_TOKEN_REQUEST_LINE = "POST /login/oauth/access_token ";
     bytes internal constant GITHUB_IDENTITY_REQUEST_LINE = "GET /user ";
 
-    /// @dev The token request's head, byte for byte, ending at the
-    ///      `content-length` value the verifier reads out of the transcript.
-    ///      Its headers are revealed, so leaving them uncompared left the one
-    ///      that decides how the platform parses the body -- the media type
-    ///      REQ-COMMON-21B fixes -- public and unconstrained.
-    ///
-    ///      Pinned as ONE run rather than as a set of lines: the head is fixed
-    ///      bytes, so a comparison against it needs no header parser, and a
-    ///      parser is where an added, reordered or restated header would have
-    ///      to be caught one rule at a time.
+    /// @dev Every header the token request sends, CRLF-joined, lowercased
+    ///      as the wire spells them. What a runtime sets and what fixtures
+    ///      compose a head from; the verifier compares only the required
+    ///      subset below.
 
     bytes internal constant X_TOKEN_REQUEST_HEADERS =
         "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close";
     bytes internal constant GITHUB_TOKEN_REQUEST_HEADERS =
         "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close";
+
+    /// @dev The lines a verifier requires of the token request's head, each
+    ///      exactly once with its value: `host` naming the pinned authority,
+    ///      and the media type that selects the platform's request parser
+    ///      (REQ-COMMON-21B). Revealed but uncompared, the media type was a
+    ///      byte a prover chose in a request every other field of which is
+    ///      pinned.
+
+    bytes internal constant X_TOKEN_REQUIRED_HEADERS =
+        "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded";
+    bytes internal constant GITHUB_TOKEN_REQUIRED_HEADERS =
+        "host: github.com\r\ncontent-type: application/x-www-form-urlencoded";
+
+    /// @dev Header names a token request must not carry, compared lowercased by
+    ///      every Platform Verifier. Each changes what the platform does with the
+    ///      request in a way no revealed byte shows: `authorization` which client
+    ///      it authenticates, `content-encoding` and `transfer-encoding` which
+    ///      bytes it parses, `cookie` the context, `x-http-method-override` the
+    ///      method. The verifier requires `host` and `content-type` from each token
+    ///      session's requestHeaders, reads `content-length`, and ignores every
+    ///      other header: one outside both lists changes only what the platform
+    ///      answers, and a wrong answer is a response the verifier cannot read.
+    bytes internal constant FORBIDDEN_TOKEN_REQUEST_HEADERS =
+        "authorization\r\ncontent-encoding\r\ncookie\r\ntransfer-encoding\r\nx-http-method-override";
 
     /// @dev How many committed ranges the token request carries. A confidential
     ///      client commits its secret and a public client hides nothing, so this

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {CeremonyAttestation} from "./CeremonyAttestation.sol";
+import {CeremonyProfile} from "./CeremonyProfile.sol";
 import {CeremonyAuthorization} from "./CeremonyAuthorization.sol";
 import {CeremonyFields} from "./CeremonyFields.sol";
 import {IPlatformVerifier} from "./IPlatformVerifier.sol";
@@ -41,7 +42,7 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev HTTP framing owns this one, not the profile: the client appends
     ///      it and its value is the body's own count, so the head carries it
     ///      and no profile lists it.
-    bytes private constant LENGTH_HEADER = "content-length: ";
+    bytes private constant LENGTH_HEADER = "content-length";
 
     bytes internal constant ACCESS_TOKEN_PREFIX = '"access_token":"';
     bytes internal constant ACCESS_TOKEN_SUFFIX = '"';
@@ -98,10 +99,14 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     /// @dev The head/body separator is missing or ambiguous, so the body cannot
     ///      be located by the framing the server itself parsed.
     error NoHeadBoundary(uint256 occurrences);
-    /// @dev The token request's head is not the profile's header set: a header
-    ///      added, removed, repeated or given another value, or a declared body
-    ///      length that is not plain decimal digits.
+    /// @dev The token request's head lacks a required header, repeats one,
+    ///      gives one another value, carries a line no colon splits, or
+    ///      declares a body length that is not plain decimal digits.
     error WrongTokenRequestHead();
+    /// @dev The token request carries a header the profile forbids: one that
+    ///      changes what the platform does with the request in a way no
+    ///      revealed byte shows. The name, lowercased.
+    error ForbiddenTokenRequestHeader(bytes name);
     /// @dev The request declared a body of one length and the notary signed
     ///      another, so the bytes the platform parsed as the form are not the
     ///      bytes read below.
@@ -114,15 +119,17 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _tokenRequestLine() internal pure virtual returns (bytes memory);
     function _identityRequestLine() internal pure virtual returns (bytes memory);
 
-    /// @dev The token request's header lines, CRLF-joined, which `_checkTokenHead`
-    ///      splits and matches as a set. `content-length` is not among them:
-    ///      this verifier reads its value out of the transcript itself.
+    /// @dev The header lines the token request must carry, CRLF-joined: `host`
+    ///      naming the pinned authority, and the media type that selects the
+    ///      platform's parser. `_checkTokenHead` requires each once with its
+    ///      value, refuses the names `CeremonyProfile.FORBIDDEN_TOKEN_REQUEST_HEADERS`
+    ///      lists, reads `content-length`, and ignores every other header.
     ///
     ///      Only the token request has one. The identity request carries the
     ///      bearer in a header, so its headers are not fixed and are held to
     ///      `requireBearerHeaderRequest` instead: coverage, one line-anchored
     ///      `authorization`, and the framing around the committed value.
-    function _tokenRequestHeaders() internal pure virtual returns (bytes memory);
+    function _tokenRequiredHeaders() internal pure virtual returns (bytes memory);
 
     /// @dev How many committed ranges the token request carries. X hides no
     ///      body field and uses a public client, so zero; GitHub commits its
@@ -483,21 +490,27 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     ///      the length the NOTARY signed. Without that the platform could frame
     ///      a shorter body than the one read below, and parse a form this
     ///      verifier never saw.
-    /// @dev The head's header lines are the profile's, in any order, plus the
-    ///      one `content-length` HTTP framing owns. Returns its value.
+    /// @dev The head's header lines: each required one exactly once with its
+    ///      value, none of the forbidden names, one `content-length`, and
+    ///      anything else ignored. Returns the declared length.
     ///
-    ///      A SET rather than a fixed run of bytes. Order changes nothing a
-    ///      platform does with a request -- field order is insignificant except
-    ///      for repeated names, which this rejects, and the
-    ///      `transfer-encoding` precedence is by presence rather than position
-    ///      -- so pinning it would only bind every prover to the order its HTTP
-    ///      library emits. The browser's reaches the wire through a `HashMap`.
+    ///      Required and forbidden rather than a fixed set. A header outside
+    ///      both lists changes only what the platform ANSWERS, and a wrong
+    ///      answer is a response this verifier cannot read, not one it can be
+    ///      fooled by. The forbidden names change what the platform does with
+    ///      the request in ways no revealed byte shows: which client it
+    ///      authenticates, which bytes it parses, which method it runs. Between
+    ///      the two, what a prover's HTTP library adds is its own business.
     ///
-    ///      Reading lines is what a fixed run avoided, so the leniencies a
-    ///      parser invites are refused first: `requireCrlfLineEndings` is the
-    ///      same guard REQ-COMMON-39 puts on the identity request, and without
-    ///      it a bare line feed ends the head somewhere the platform's parser
-    ///      does and this one does not.
+    ///      Names are compared lowercased, because the platform reads them
+    ///      case-insensitively and a forbidden name in another case is the same
+    ///      header to it. Values are compared exactly, with the optional
+    ///      whitespace HTTP allows around them removed.
+    ///
+    ///      Reading lines is where the leniencies live, so `requireCrlfLineEndings`
+    ///      goes first: the same guard REQ-COMMON-39 puts on the identity
+    ///      request, without which a bare line feed ends the head somewhere the
+    ///      platform's parser does and this one does not.
     // `1 << i` is the mask for line i. The lint's heuristic reads a literal on
     // the left of a shift as swapped operands, which is what building a mask
     // looks like.
@@ -505,36 +518,85 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     function _checkTokenHead(bytes memory head) private pure returns (uint256 declared) {
         CeremonyAttestation.requireCrlfLineEndings(head);
 
-        bytes memory expected = _tokenRequestHeaders();
-        uint256 wanted = _countLines(expected);
-        // One bit per expected line. A profile with more than 256 headers is
-        // not a profile, and `validate` in the generator refuses one long
-        // before this could matter.
+        bytes memory required = _tokenRequiredHeaders();
+        uint256 wanted = _countLines(required);
         uint256 found;
-        uint256 lengths;
+        bool lengths;
 
         // Past the request line, which `_tokenSession` has already compared.
         uint256 from = _lineEnd(head, 0) + 2;
         while (from < head.length) {
             uint256 to = _lineEnd(head, from);
-            bytes memory line = _slice(head, from, to);
+            (bytes memory name, bytes memory value) = _field(_slice(head, from, to));
 
-            if (_startsWith(line, LENGTH_HEADER)) {
-                if (lengths != 0) revert WrongTokenRequestHead();
-                lengths = 1;
-                declared = _decimal(line, LENGTH_HEADER.length);
+            if (_indexOfLine(CeremonyProfile.FORBIDDEN_TOKEN_REQUEST_HEADERS, name) != type(uint256).max) {
+                revert ForbiddenTokenRequestHeader(name);
+            }
+            if (_equal(name, LENGTH_HEADER)) {
+                if (lengths) revert WrongTokenRequestHead();
+                lengths = true;
+                declared = _decimal(value, 0);
             } else {
-                uint256 i = _indexOfLine(expected, line);
-                if (i == type(uint256).max) revert WrongTokenRequestHead();
-                if (found & (1 << i) != 0) revert WrongTokenRequestHead();
-                found |= 1 << i;
+                uint256 i = _indexOfName(required, name);
+                if (i != type(uint256).max) {
+                    if (!_equal(value, _valueOf(required, i))) revert WrongTokenRequestHead();
+                    if (found & (1 << i) != 0) revert WrongTokenRequestHead();
+                    found |= 1 << i;
+                }
             }
             from = to + 2;
         }
 
-        if (lengths == 0) revert WrongTokenRequestHead();
-        // Every expected line seen: the low `wanted` bits all set.
+        if (!lengths) revert WrongTokenRequestHead();
+        // Every required line seen: the low `wanted` bits all set.
         if (found != (1 << wanted) - 1) revert WrongTokenRequestHead();
+    }
+
+    /// @dev A header line as the platform reads it: the name before the first
+    ///      colon, lowercased, and the value after it with the optional
+    ///      whitespace on either side removed. A line with no colon, or nothing
+    ///      before it, is not a header.
+    function _field(bytes memory line) private pure returns (bytes memory name, bytes memory value) {
+        uint256 colon;
+        while (colon < line.length && line[colon] != ":") {
+            ++colon;
+        }
+        if (colon == 0 || colon == line.length) revert WrongTokenRequestHead();
+        name = _slice(line, 0, colon);
+        for (uint256 i = 0; i < name.length; ++i) {
+            if (name[i] >= "A" && name[i] <= "Z") name[i] = bytes1(uint8(name[i]) + 32);
+        }
+        uint256 start = colon + 1;
+        uint256 end = line.length;
+        while (start < end && (line[start] == " " || line[start] == "\t")) {
+            ++start;
+        }
+        while (end > start && (line[end - 1] == " " || line[end - 1] == "\t")) {
+            --end;
+        }
+        value = _slice(line, start, end);
+    }
+
+    /// @dev Which line of the CRLF-joined `block_` names `name`, or `max`.
+    function _indexOfName(bytes memory block_, bytes memory name) private pure returns (uint256 index) {
+        uint256 from;
+        while (from <= block_.length) {
+            uint256 to = _lineEnd(block_, from);
+            (bytes memory lineName,) = _field(_slice(block_, from, to));
+            if (_equal(lineName, name)) return index;
+            ++index;
+            from = to + 2;
+        }
+        return type(uint256).max;
+    }
+
+    /// @dev The value of line `index` of the CRLF-joined `block_`.
+    function _valueOf(bytes memory block_, uint256 index) private pure returns (bytes memory value) {
+        uint256 from;
+        for (uint256 i = 0; i < index; ++i) {
+            from = _lineEnd(block_, from) + 2;
+        }
+        (, value) = _field(_slice(block_, from, _lineEnd(block_, from)));
     }
 
     /// @dev The offset of the CRLF that ends the line beginning at `from`, or

@@ -65,10 +65,11 @@ pub struct TokenSession {
     /// is the body's own count: the HTTP client appends it and the verifier
     /// reads it rather than compares it.
     pub request_headers: &'static [&'static str],
-    /// The same lines joined by CRLF, which is the shape a Platform
-    /// Verifier splits and matches as a set -- order is the prover's, the
-    /// set is the profile's.
-    pub request_header_block: &'static str,
+    /// The subset of those a Platform Verifier requires, each exactly once
+    /// with its value: `host` and `content-type`. Every other header is
+    /// the runtime's own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS`
+    /// lists.
+    pub required_headers: &'static [&'static str],
 }
 
 /// The identity session: the authenticated read that names the account.
@@ -124,7 +125,7 @@ pub const X: Profile = Profile {
         },
         secret_field: None,
         request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_header_block: "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
+        required_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded"],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -155,7 +156,7 @@ pub const GITHUB: Profile = Profile {
         },
         secret_field: Some("client_secret"),
         request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_header_block: "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
+        required_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded"],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -181,6 +182,17 @@ pub const LAUNCH: &[&Profile] = &[&GOOGLE, &X, &GITHUB];
 pub fn launch(platform: &str) -> Option<&'static Profile> {
     LAUNCH.iter().copied().find(|p| p.platform == platform)
 }
+
+/// Header names a token request must not carry, compared lowercased by
+/// every Platform Verifier. Each changes what the platform does with the
+/// request in a way no revealed byte shows: `authorization` which client
+/// it authenticates, `content-encoding` and `transfer-encoding` which
+/// bytes it parses, `cookie` the context, `x-http-method-override` the
+/// method. The verifier requires `host` and `content-type` from each token
+/// session's requestHeaders, reads `content-length`, and ignores every
+/// other header: one outside both lists changes only what the platform
+/// answers, and a wrong answer is a response the verifier cannot read.
+pub const FORBIDDEN_TOKEN_REQUEST_HEADERS: &[&str] = &["authorization", "content-encoding", "cookie", "transfer-encoding", "x-http-method-override"];
 
 /// Governance-owned launch parameters, in seconds.
 pub const MAX_FUTURE_ATTESTATION_SKEW_SECONDS: u64 = 300;

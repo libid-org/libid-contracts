@@ -1095,39 +1095,124 @@ contract XPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// @dev A header the profile does not name is one the prover chose, in a
-    ///      request every other byte of which is pinned. `authorization: Basic`
-    ///      is the shape of it: X authenticates the client from that header
-    ///      instead, so the revealed `client_id` this verifier returns stops
-    ///      being the credential the exchange was made under.
-    function test_rejectsAnExtraHeaderOnTheTokenRequest() public {
+    /// @dev `authorization: Basic` is the header the forbidden list exists
+    ///      for: X authenticates the client from it instead, so the revealed
+    ///      `client_id` this verifier returns stops being the credential the
+    ///      exchange was made under, and no revealed byte says so.
+    function test_rejectsAForbiddenHeaderOnTheTokenRequest() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
             "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\n"
             "authorization: Basic bXlDbGllbnQtMTpzM2NyZXQ=\r\nconnection: close\r\n"
         );
-        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenTokenRequestHeader.selector, bytes("authorization"))
+        );
         this.run{value: quote}(s);
     }
 
-    /// @dev And a header the profile DOES name has to be there. Dropping
-    ///      `accept` leaves X free to answer in another representation, which
-    ///      is a response the framing around the committed bearer was chosen
-    ///      for one shape of.
-    function test_rejectsATokenRequestMissingAHeader() public {
-        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
-            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"
+    /// @dev Every forbidden name, each in a spelling the platform would read
+    ///      as the same header: another case, no space after the colon. The
+    ///      name comes back lowercased, which is how the list is compared.
+    function test_rejectsEachForbiddenHeaderOnTheTokenRequest() public {
+        string[5] memory lines = [
+            "Transfer-Encoding: chunked",
+            "content-encoding:gzip",
+            "Cookie: session=abc",
+            "X-HTTP-Method-Override: GET",
+            "AUTHORIZATION: Basic bXlDbGllbnQtMTpzM2NyZXQ="
+        ];
+        string[5] memory names =
+            ["transfer-encoding", "content-encoding", "cookie", "x-http-method-override", "authorization"];
+        for (uint256 i = 0; i < lines.length; ++i) {
+            TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+                abi.encodePacked(
+                    "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\n",
+                    lines[i],
+                    "\r\naccept: application/json\r\nconnection: close\r\n"
+                )
+            );
+            vm.expectRevert(
+                abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenTokenRequestHeader.selector, bytes(names[i]))
+            );
+            this.run{value: quote}(s);
+        }
+    }
+
+    /// @dev A required header has to be there. Without the media type nothing
+    ///      says X read the bytes `formField` reads as a form at all; without
+    ///      `host` nothing says which server the prover meant.
+    function test_rejectsATokenRequestMissingARequiredHeader() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s =
+            _payloadWithHeaders("host: api.x.com\r\naccept: application/json\r\nconnection: close\r\n");
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+
+        s = _payloadWithHeaders(
+            "content-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
         );
         vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
         this.run{value: quote}(s);
     }
 
-    /// @dev Membership is pinned, not order. The same four headers in another
-    ///      order are the same request: field order is insignificant in HTTP
-    ///      except for repeated names, which this rejects separately, so a
-    ///      reordering changes nothing X does with the request. Pinning it
-    ///      would instead bind every prover to the order its HTTP library
-    ///      emits -- and the browser reaches the wire through a `HashMap`,
-    ///      which has none to promise.
+    /// @dev And twice is not once: two media types leave X to pick one and
+    ///      this verifier with no way to know which.
+    function test_rejectsARequiredHeaderTwice() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\n"
+            "content-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A header the profile sends but nothing verifies may be missing.
+    ///      Without `accept`, X may answer in another representation, and that
+    ///      is a response this verifier cannot read rather than one it can be
+    ///      fooled by.
+    function test_acceptsATokenRequestWithoutAnUncomparedHeader() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And headers the profile never mentions may be present: what a
+    ///      prover's HTTP library adds is its own business, as long as it is
+    ///      not on the forbidden list.
+    function test_acceptsUnlistedHeadersOnTheTokenRequest() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\nuser-agent: libid-ceremony\r\ncontent-type: application/x-www-form-urlencoded\r\n"
+            "accept: application/json\r\naccept-encoding: identity\r\nconnection: close\r\nx-request-id: 7\r\n"
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A required header in another spelling the platform reads the
+    ///      same: the name in another case, no space after the colon, a tab
+    ///      before the value. HTTP reads all three as one header, and so does
+    ///      this.
+    function test_acceptsARequiredHeaderInAnotherSpelling() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "Host:\tapi.x.com \r\nContent-Type:application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
+        );
+        this.run{value: quote}(s);
+    }
+
+    /// @dev A line no colon splits is not a header, and a head carrying one is
+    ///      a head some parser somewhere reads differently.
+    function test_rejectsAHeaderLineWithoutAColon() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
+            "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\nnot a header\r\nconnection: close\r\n"
+        );
+        vm.expectRevert(TlsNotaryVerifierBase.WrongTokenRequestHead.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev Nothing is pinned by position. The same headers in another order
+    ///      are the same request: field order is insignificant in HTTP except
+    ///      for repeated names, so a reordering changes nothing X does with the
+    ///      request, and pinning it would bind every prover to the order its
+    ///      HTTP library emits.
     function test_acceptsTheSameHeadersInAnotherOrder() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
             "host: api.x.com\r\naccept: application/json\r\ncontent-type: application/x-www-form-urlencoded\r\nconnection: close\r\n"

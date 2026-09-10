@@ -31,6 +31,26 @@
       "a deployment stores and updates them."
     ]
   },
+  "tokenRequest": {
+    "forbiddenHeaders": [
+      "authorization",
+      "content-encoding",
+      "cookie",
+      "transfer-encoding",
+      "x-http-method-override"
+    ],
+    "note": [
+      "Header names a token request must not carry, compared lowercased by",
+      "every Platform Verifier. Each changes what the platform does with the",
+      "request in a way no revealed byte shows: `authorization` which client",
+      "it authenticates, `content-encoding` and `transfer-encoding` which",
+      "bytes it parses, `cookie` the context, `x-http-method-override` the",
+      "method. The verifier requires `host` and `content-type` from each token",
+      "session's requestHeaders, reads `content-length`, and ignores every",
+      "other header: one outside both lists changes only what the platform",
+      "answers, and a wrong answer is a response the verifier cannot read."
+    ]
+  },
   "profiles": [
     {
       "platform": "google",
@@ -74,10 +94,12 @@
             "deployment profile because it selects the platform's request",
             "parser, and a pin nothing compares is a pin in name only.",
             "",
-            "In no particular order: the verifier matches them as a set.",
-            "`content-length` is not among them: the HTTP client appends it,",
-            "its value is the body's own length, and the verifier checks it",
-            "against the length the notary signed."
+            "What the browser sends. The verifier requires `host` and",
+            "`content-type` of these, ignores the rest, and refuses the names",
+            "in tokenRequest.forbiddenHeaders. `content-length` is not among",
+            "them: the HTTP client appends it, its value is the body's own",
+            "length, and the verifier checks it against the length the notary",
+            "signed."
           ]
         },
         "identity": {

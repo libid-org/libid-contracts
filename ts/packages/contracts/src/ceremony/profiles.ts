@@ -44,9 +44,10 @@ export interface TokenSession {
   /** Every header this request sends, lowercased, in no particular order.
    * `content-length` is absent: the HTTP client appends it. */
   readonly requestHeaders: readonly string[]
-  /** The same lines joined by CRLF, which a Platform Verifier splits and
-   * matches as a set. */
-  readonly requestHeaderBlock: string
+  /** The subset a Platform Verifier requires, each exactly once with its
+   * value: `host` and `content-type`. Every other header is the runtime's
+   * own, save the names `FORBIDDEN_TOKEN_REQUEST_HEADERS` lists. */
+  readonly requiredHeaders: readonly string[]
 }
 
 export interface IdentitySession {
@@ -97,8 +98,7 @@ export const X: Profile = {
       'accept: application/json',
       'connection: close',
     ],
-    requestHeaderBlock:
-      'host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
+    requiredHeaders: ['host: api.x.com', 'content-type: application/x-www-form-urlencoded'],
   },
   identity: {
     session: {
@@ -136,8 +136,7 @@ export const GITHUB: Profile = {
       'accept: application/json',
       'connection: close',
     ],
-    requestHeaderBlock:
-      'host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
+    requiredHeaders: ['host: github.com', 'content-type: application/x-www-form-urlencoded'],
   },
   identity: {
     session: {
@@ -164,6 +163,25 @@ export function launch(platform: string): Profile | undefined {
 export function attestationCount(profile: Profile): number {
   return (profile.token ? 1 : 0) + (profile.identity ? 1 : 0)
 }
+
+/**
+ * Header names a token request must not carry, compared lowercased by
+ * every Platform Verifier. Each changes what the platform does with the
+ * request in a way no revealed byte shows: `authorization` which client
+ * it authenticates, `content-encoding` and `transfer-encoding` which
+ * bytes it parses, `cookie` the context, `x-http-method-override` the
+ * method. The verifier requires `host` and `content-type` from each token
+ * session's requestHeaders, reads `content-length`, and ignores every
+ * other header: one outside both lists changes only what the platform
+ * answers, and a wrong answer is a response the verifier cannot read.
+ */
+export const FORBIDDEN_TOKEN_REQUEST_HEADERS: readonly string[] = [
+  'authorization',
+  'content-encoding',
+  'cookie',
+  'transfer-encoding',
+  'x-http-method-override',
+]
 
 /** Governance-owned launch parameters, in seconds. */
 export const MAX_FUTURE_ATTESTATION_SKEW_SECONDS = 300

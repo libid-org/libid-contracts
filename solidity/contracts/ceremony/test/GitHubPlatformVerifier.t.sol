@@ -426,6 +426,36 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev A header the profile never mentions is the Token-Exchange
+    ///      Service's own business -- a `user-agent`, say -- as long as it is
+    ///      not one of the forbidden names. The exchange still verifies.
+    function test_acceptsAnUnlistedHeaderOnTheExchange() public {
+        bytes memory prefix = abi.encodePacked(
+            "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
+        );
+        bytes memory head = _exchangeHead(
+            "host: github.com\r\nuser-agent: libid-bridge/0.3.0\r\ncontent-type: application/x-www-form-urlencoded\r\n"
+            "accept: application/json\r\nconnection: close\r\n",
+            prefix.length + 40
+        );
+        bytes memory whole = abi.encodePacked(head, prefix);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({
+                    start: uint32(whole.length), end: uint32(whole.length) + 40, value: bytes32(uint256(0x5EC1E7))
+                })
+            ),
+            length: uint32(whole.length) + 40
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB, T0, sent, _exchangeResponse());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.handle, "octocat");
+    }
+
     /// @dev And the fixtures above compose that head from parts, so this is
     ///      what says the parts are the profile's own.
     function test_theFixtureHeadIsTheProfilesOwn() public pure {

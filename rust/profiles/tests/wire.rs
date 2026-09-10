@@ -1,21 +1,21 @@
 //! hyper writes a head this table admits.
 //!
-//! The profile fixes which headers a token request carries, not the order they
-//! go in, so what a verifier checks is a set: every line the profile lists,
-//! once each, nothing else, plus the `content-length` HTTP framing owns. This
-//! asserts that hyper, given the profile's headers, writes exactly that -- the
-//! request built from `request_headers` and driven through the real
+//! A verifier holds a token request's head to the profile's required headers,
+//! each once with its value, refuses the forbidden names, and reads one
+//! `content-length`; the rest of the head is the client's business. This
+//! asserts that hyper, given the profile's headers, writes a head that passes
+//! -- the request built from `request_headers` and driven through the real
 //! `hyper::client::conn::http1` encoder over an in-memory duplex, so what is
-//! compared is the bytes hyper actually wrote.
+//! checked is the bytes hyper actually wrote.
 //!
-//! Order is deliberately not asserted. Nothing promises where a client puts a
-//! header, and the browser reaches the wire through tlsn's wasm prover, whose
-//! `HttpRequest` holds them in a `HashMap` -- a test demanding an order would
-//! pass here and fail there for a reason neither end could name.
+//! Order is not asserted. Nothing promises where a client puts a header, and
+//! the browser reaches the wire through tlsn's wasm prover, whose
+//! `HttpRequest` holds them in a `HashMap`.
 //!
-//! What this still catches is a header hyper adds or drops on its own, and a
-//! `content-length` it does not append for a known-length body. The lowercase
-//! claim needs an input the profile cannot supply, which is the last case.
+//! What this catches is hyper adding a forbidden header on its own, dropping
+//! a required one, or not appending `content-length` for a known-length body.
+//! The lowercase claim needs an input the profile cannot supply, which is the
+//! last case.
 //!
 //! The GitHub exchange is the reason this exists. It runs in the deployment's
 //! backend, which is the prover for that session and reaches the wire through
@@ -24,6 +24,7 @@
 use hyper_util::rt::TokioIo;
 use libid_profiles::{
     TokenSession,
+    FORBIDDEN_TOKEN_REQUEST_HEADERS,
     GITHUB,
     X,
 };
@@ -88,21 +89,27 @@ fn header_lines(wire: &[u8]) -> Vec<String> {
 }
 
 fn assert_head_admits(session: &TokenSession, wire: &[u8], body_len: usize) {
-    let mut written = header_lines(wire);
-    written.sort();
+    let written = header_lines(wire);
+    let name_of = |line: &String| line.split(':').next().unwrap().to_ascii_lowercase();
 
-    let mut expected: Vec<String> = session
-        .request_headers
+    for required in session.required_headers {
+        let count = written.iter().filter(|line| *line == required).count();
+        assert_eq!(
+            count, 1,
+            "required header not written exactly once: {required}"
+        );
+    }
+    for line in &written {
+        assert!(
+            !FORBIDDEN_TOKEN_REQUEST_HEADERS.contains(&name_of(line).as_str()),
+            "hyper wrote a forbidden header: {line}"
+        );
+    }
+    let lengths: Vec<&String> = written
         .iter()
-        .map(|line| (*line).to_owned())
+        .filter(|line| name_of(line) == "content-length")
         .collect();
-    expected.push(format!("content-length: {body_len}"));
-    expected.sort();
-
-    assert_eq!(
-        written, expected,
-        "hyper wrote a head the profile does not admit"
-    );
+    assert_eq!(lengths, [&format!("content-length: {body_len}")]);
 }
 
 #[tokio::test]
