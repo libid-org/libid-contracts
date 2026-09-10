@@ -277,7 +277,10 @@ contract GitHubPlatformVerifierTest is Test {
     ///      rather than a prefix of a longer one.
     function test_rejectsAnIdWithoutAStructuralTerminator() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
-        s.identitySession = _identity('{"login":"octocat","id":583231 }', CeremonyProfile.AUTHORITY_GITHUB_API);
+        // A space before the brace is JSON's own and reads through; a space
+        // before more digits touches no structural byte and is the
+        // terminator, which is not one.
+        s.identitySession = _identity('{"login":"octocat","id":583231 4}', CeremonyProfile.AUTHORITY_GITHUB_API);
         vm.expectPartialRevert(CeremonyFields.BadIntegerTerminator.selector);
         this.run{value: quote}(s);
     }
@@ -328,6 +331,30 @@ contract GitHubPlatformVerifierTest is Test {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
         s.identitySession = _identityWithHeadPrefix("authorization: Bearer stolen\r\n");
         vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev GitHub pretty-prints `/user` for the media type the profile pins:
+    ///      a newline and two spaces before every member, a space after every
+    ///      colon. The readers remove JSON whitespace before they look, so the
+    ///      compact delimiters they match are the grammar, not the bytes.
+    function test_readsTheIdentityGitHubPrettyPrints() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identity(
+            '{\n  "login": "octocat",\n  "id": 583231,\n  "node_id": "MDQ6VXNlcjU4MzIzMQ==",\n  "name": "The Octocat"\n}',
+            CeremonyProfile.AUTHORITY_GITHUB_API
+        );
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.userId, "583231");
+        assertEq(f.handle, "octocat");
+    }
+
+    /// @dev A second `login` in another spelling is a second `login`.
+    function test_rejectsADuplicateMemberInAnotherWhitespaceSpelling() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession =
+            _identity('{"login":"octocat","id":583231,"login" : "mallory"}', CeremonyProfile.AUTHORITY_GITHUB_API);
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.FieldNotUnique.selector, "login", 2));
         this.run{value: quote}(s);
     }
 

@@ -192,4 +192,64 @@ contract CeremonyAttestationTest is Test {
             )
         );
     }
+
+    // ─── Framing behind JSON whitespace ─────────────────────────────
+
+    function framed(CeremonyAttestation.DirectionBlock memory block_) external pure returns (bytes32) {
+        return CeremonyAttestation.requireFramedCommitment(block_, '"access_token":"', '"').commitment;
+    }
+
+    /// @dev The anchor range carries the prefix with the platform's spaces,
+    ///      tab and newline inside, ends where the commitment starts, and the
+    ///      closing quote follows. The whitespace stays revealed at its
+    ///      offsets -- the range is the wire -- and is only ignored to compare.
+    function test_framesABearerBehindJsonWhitespace() public {
+        bytes memory prefix = bytes('"access_token" \t: \r\n"');
+        uint32 start = uint32(prefix.length);
+        CeremonyAttestation.DirectionBlock memory block_;
+        block_.revealed = new CeremonyAttestation.RevealedRange[](2);
+        block_.revealed[0] = CeremonyAttestation.RevealedRange({start: 0, end: start, value: prefix});
+        block_.revealed[1] = CeremonyAttestation.RevealedRange({start: start + 5, end: start + 6, value: '"'});
+        block_.commitments = new CeremonyAttestation.RangeCommitment[](1);
+        block_.commitments[0] =
+            CeremonyAttestation.RangeCommitment({start: start, end: start + 5, commitment: bytes32(uint256(7))});
+        assertEq(this.framed(block_), bytes32(uint256(7)));
+
+        // One byte off: no revealed range ends where the commitment starts.
+        block_.commitments[0].start = start + 1;
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.framed(block_);
+
+        // A second prefix, compact, elsewhere among the revealed bytes is
+        // ambiguous even with no second commitment behind it.
+        block_.commitments[0].start = start;
+        block_.revealed[1].value = bytes('" "access_token":"');
+        block_.revealed[1].end = block_.revealed[1].start + uint32(block_.revealed[1].value.length);
+        vm.expectRevert(CeremonyAttestation.AmbiguousFraming.selector);
+        this.framed(block_);
+    }
+
+    /// @dev The prefix split across two revealed ranges around a committed
+    ///      byte. Joined and normalized it would read as the prefix; it is
+    ///      refused, because no single range ends at the commitment with it,
+    ///      and a prefix assembled across a seam is one the platform never
+    ///      wrote in one piece.
+    function test_refusesAPrefixSplitAcrossRanges() public {
+        bytes memory first = bytes('"access_token" ');
+        bytes memory second = bytes(': \t"');
+        uint32 split = uint32(first.length);
+        uint32 bearer = split + 1 + uint32(second.length);
+        CeremonyAttestation.DirectionBlock memory block_;
+        block_.revealed = new CeremonyAttestation.RevealedRange[](3);
+        block_.revealed[0] = CeremonyAttestation.RevealedRange({start: 0, end: split, value: first});
+        block_.revealed[1] = CeremonyAttestation.RevealedRange({start: split + 1, end: bearer, value: second});
+        block_.revealed[2] = CeremonyAttestation.RevealedRange({start: bearer + 5, end: bearer + 6, value: '"'});
+        block_.commitments = new CeremonyAttestation.RangeCommitment[](2);
+        block_.commitments[0] =
+            CeremonyAttestation.RangeCommitment({start: split, end: split + 1, commitment: bytes32(uint256(8))});
+        block_.commitments[1] =
+            CeremonyAttestation.RangeCommitment({start: bearer, end: bearer + 5, commitment: bytes32(uint256(7))});
+        vm.expectRevert(CeremonyAttestation.NoFramedCommitment.selector);
+        this.framed(block_);
+    }
 }

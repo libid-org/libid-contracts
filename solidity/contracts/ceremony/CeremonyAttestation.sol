@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {CeremonyFields} from "./CeremonyFields.sol";
+
 /// @title CeremonyAttestation
 /// @notice Decoder for the attested-data layout the launch profiles pin.
 /// @dev THE LAYOUT IS THE PROFILE'S, NOT THE SPECIFICATION'S. REQ-COMMON-18
@@ -142,7 +144,8 @@ library CeremonyAttestation {
     /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts.
     bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:bearer";
 
-    /// @notice The one commitment framed by exactly these revealed bytes.
+    /// @notice The one commitment framed by these revealed bytes, JSON
+    ///         whitespace aside.
     ///
     /// @dev For a direction that is NOT exactly covered, where several ranges
     ///      are hidden and only the anchors around one of them are revealed.
@@ -163,12 +166,21 @@ library CeremonyAttestation {
         pure
         returns (RangeCommitment memory framed)
     {
+        // The prefix at most once across everything revealed, JSON whitespace
+        // removed: a second one, in any spelling, is a second place the framing
+        // could point, whether or not a commitment sits behind it.
+        if (_occurrences(CeremonyFields.normalizeJsonBytes(concatRevealed(block_)), prefix) > 1) {
+            revert AmbiguousFraming();
+        }
+
         uint256 found = type(uint256).max;
         for (uint256 i = 0; i < block_.commitments.length; ++i) {
             RangeCommitment memory c = block_.commitments[i];
-            if (c.start < prefix.length) continue;
-            bytes memory before_ = _revealedSlice(block_, c.start - uint32(prefix.length), c.start);
-            if (keccak256(before_) != keccak256(prefix)) continue;
+            // The one revealed range ending where the commitment starts is the
+            // anchor, and its bytes with the JSON whitespace removed end with
+            // the prefix. One range, never a join: a prefix assembled across a
+            // seam is one the platform never wrote in one piece.
+            if (!_anchoredBy(block_, c.start, prefix)) continue;
             bytes memory after_ = _revealedSlice(block_, c.end, c.end + uint32(suffix.length));
             if (keccak256(after_) != keccak256(suffix)) continue;
 
@@ -177,6 +189,36 @@ library CeremonyAttestation {
         }
         if (found == type(uint256).max) revert NoFramedCommitment();
         return block_.commitments[found];
+    }
+
+    /// @dev Whether a revealed range ends exactly at `at` and, JSON whitespace
+    ///      removed, ends with `prefix`. The whitespace stays revealed at its
+    ///      offsets -- the range is the wire -- and is only ignored to compare.
+    function _anchoredBy(DirectionBlock memory block_, uint32 at, bytes memory prefix) private pure returns (bool) {
+        for (uint256 i = 0; i < block_.revealed.length; ++i) {
+            RevealedRange memory range = block_.revealed[i];
+            if (range.end != at) continue;
+            bytes memory normalized = CeremonyFields.normalizeJsonBytes(range.value);
+            if (normalized.length < prefix.length) return false;
+            for (uint256 j = 0; j < prefix.length; ++j) {
+                if (normalized[normalized.length - prefix.length + j] != prefix[j]) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function _occurrences(bytes memory haystack, bytes memory needle) private pure returns (uint256 count) {
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool hit = true;
+            for (uint256 j = 0; j < needle.length; ++j) {
+                if (haystack[i + j] != needle[j]) {
+                    hit = false;
+                    break;
+                }
+            }
+            if (hit) ++count;
+        }
     }
 
     /// @notice Every check REQ-COMMON-35, -39 and -40 require of an
