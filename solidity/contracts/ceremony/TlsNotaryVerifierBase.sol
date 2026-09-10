@@ -553,16 +553,23 @@ abstract contract TlsNotaryVerifierBase is IPlatformVerifier, PlatformVerifierBa
     }
 
     /// @dev A header line as the platform reads it: the name before the first
-    ///      colon, lowercased, and the value after it with the optional
-    ///      whitespace on either side removed. A line with no colon, or nothing
-    ///      before it, is not a header.
+    ///      colon, lowercased and with any whitespace before the colon removed
+    ///      -- the normalization common REQ-COMMON-39 gives the identity
+    ///      request -- and the value after it with the optional whitespace on
+    ///      either side removed. A line with no colon, or nothing before it, is
+    ///      not a header.
     function _field(bytes memory line) private pure returns (bytes memory name, bytes memory value) {
         uint256 colon;
         while (colon < line.length && line[colon] != ":") {
             ++colon;
         }
-        if (colon == 0 || colon == line.length) revert WrongTokenRequestHead();
-        name = _slice(line, 0, colon);
+        if (colon == line.length) revert WrongTokenRequestHead();
+        uint256 nameEnd = colon;
+        while (nameEnd > 0 && (line[nameEnd - 1] == " " || line[nameEnd - 1] == "\t")) {
+            --nameEnd;
+        }
+        if (nameEnd == 0) revert WrongTokenRequestHead();
+        name = _slice(line, 0, nameEnd);
         for (uint256 i = 0; i < name.length; ++i) {
             if (name[i] >= "A" && name[i] <= "Z") name[i] = bytes1(uint8(name[i]) + 32);
         }

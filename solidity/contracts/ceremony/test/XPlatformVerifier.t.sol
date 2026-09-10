@@ -1116,18 +1116,26 @@ contract XPlatformVerifierTest is Test {
     }
 
     /// @dev Every forbidden name, each in a spelling the platform would read
-    ///      as the same header: another case, no space after the colon. The
-    ///      name comes back lowercased, which is how the list is compared.
+    ///      as the same header: another case, no space after the colon, a
+    ///      space before it. The name comes back lowercased and trimmed, which
+    ///      is how the list is compared.
     function test_rejectsEachForbiddenHeaderOnTheTokenRequest() public {
-        string[5] memory lines = [
+        string[6] memory lines = [
             "Transfer-Encoding: chunked",
             "content-encoding:gzip",
             "Cookie: session=abc",
             "X-HTTP-Method-Override: GET",
-            "AUTHORIZATION: Basic bXlDbGllbnQtMTpzM2NyZXQ="
+            "AUTHORIZATION: Basic bXlDbGllbnQtMTpzM2NyZXQ=",
+            "authorization : Basic bXlDbGllbnQtMTpzM2NyZXQ="
         ];
-        string[5] memory names =
-            ["transfer-encoding", "content-encoding", "cookie", "x-http-method-override", "authorization"];
+        string[6] memory names = [
+            "transfer-encoding",
+            "content-encoding",
+            "cookie",
+            "x-http-method-override",
+            "authorization",
+            "authorization"
+        ];
         for (uint256 i = 0; i < lines.length; ++i) {
             TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
                 abi.encodePacked(
@@ -1193,12 +1201,12 @@ contract XPlatformVerifierTest is Test {
     }
 
     /// @dev A required header in another spelling the platform reads the
-    ///      same: the name in another case, no space after the colon, a tab
-    ///      before the value. HTTP reads all three as one header, and so does
-    ///      this.
+    ///      same: the name in another case, no space after the colon, a space
+    ///      before it, a tab before the value. HTTP reads all of them as one
+    ///      header, and so does this.
     function test_acceptsARequiredHeaderInAnotherSpelling() public {
         TlsNotaryVerifierBase.TlsNotaryProof memory s = _payloadWithHeaders(
-            "Host:\tapi.x.com \r\nContent-Type:application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
+            "Host:\tapi.x.com \r\nContent-Type :application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n"
         );
         this.run{value: quote}(s);
     }
