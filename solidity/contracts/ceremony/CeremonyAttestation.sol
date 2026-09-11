@@ -97,6 +97,11 @@ library CeremonyAttestation {
     ///      see -- and a platform parser that accepts it would honour that
     ///      header.
     error BareLineFeed(uint256 at);
+    /// @dev A carriage return not followed by a line feed. A compliant parser
+    ///      never ends a line on one, but a parser that does ends the head
+    ///      somewhere this one does not, so the byte is refused rather than
+    ///      trusted to every platform's handling of it.
+    error BareCarriageReturn(uint256 at);
     error NotOneAuthorizationHeader(uint256 count);
     error BadBearerFraming();
     /// @dev No commitment in this direction is framed by the delimiters the
@@ -141,8 +146,11 @@ library CeremonyAttestation {
     bytes internal constant BEARER_PREFIX = "\r\nauthorization: Bearer ";
     /// @dev And immediately after it.
     bytes internal constant BEARER_SUFFIX = "\r\n";
-    /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts.
-    bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:bearer";
+    /// @dev The normalized, line-anchored needle REQ-COMMON-39 counts: the
+    ///      credential header under ANY scheme. Counting only `bearer` left a
+    ///      second `authorization: Basic` or `authorization: token` line
+    ///      uncounted, and the platform answering to whichever it honoured.
+    bytes internal constant AUTHORIZATION_NEEDLE = "\r\nauthorization:";
 
     /// @notice The one commitment framed by these revealed bytes, JSON
     ///         whitespace aside.
@@ -326,6 +334,9 @@ library CeremonyAttestation {
         for (uint256 i = 0; i < revealed.length; ++i) {
             if (revealed[i] == 0x0a && (i == 0 || revealed[i - 1] != 0x0d)) {
                 revert BareLineFeed(i);
+            }
+            if (revealed[i] == 0x0d && (i + 1 == revealed.length || revealed[i + 1] != 0x0a)) {
+                revert BareCarriageReturn(i);
             }
         }
     }

@@ -41,12 +41,11 @@ export interface TokenSession {
   readonly session: Session
   /** The body field committed rather than revealed, or null. */
   readonly secretField: string | null
-  /** Every header this request sends, lowercased, in no particular order.
+  /** The header lines a Platform Verifier requires, each exactly once with
+   * its value: `host` and `content-type`. Every other header is the
+   * runtime's own, save the names `FORBIDDEN_REQUEST_HEADERS` lists.
    * `content-length` is absent: the HTTP client appends it. */
-  readonly requestHeaders: readonly string[]
-  /** The same lines joined by CRLF, which a Platform Verifier splits and
-   * matches as a set. */
-  readonly requestHeaderBlock: string
+  readonly requiredHeaders: readonly string[]
 }
 
 export interface IdentitySession {
@@ -91,14 +90,7 @@ export const X: Profile = {
       requestLine: 'POST /2/oauth2/token ',
     },
     secretField: null,
-    requestHeaders: [
-      'host: api.x.com',
-      'content-type: application/x-www-form-urlencoded',
-      'accept: application/json',
-      'connection: close',
-    ],
-    requestHeaderBlock:
-      'host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
+    requiredHeaders: ['host: api.x.com', 'content-type: application/x-www-form-urlencoded'],
   },
   identity: {
     session: {
@@ -130,14 +122,7 @@ export const GITHUB: Profile = {
       requestLine: 'POST /login/oauth/access_token ',
     },
     secretField: 'client_secret',
-    requestHeaders: [
-      'host: github.com',
-      'content-type: application/x-www-form-urlencoded',
-      'accept: application/json',
-      'connection: close',
-    ],
-    requestHeaderBlock:
-      'host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close',
+    requiredHeaders: ['host: github.com', 'content-type: application/x-www-form-urlencoded'],
   },
   identity: {
     session: {
@@ -164,6 +149,31 @@ export function launch(platform: string): Profile | undefined {
 export function attestationCount(profile: Profile): number {
   return (profile.token ? 1 : 0) + (profile.identity ? 1 : 0)
 }
+
+/**
+ * Header names no notarized request may carry, compared by every
+ * Platform Verifier with the name lowercased, its whitespace removed and
+ * `_` read as `-`. Each changes what the platform does with the request
+ * in a way no revealed byte shows: `authorization` which client it
+ * authenticates, `content-encoding` and `transfer-encoding` which bytes
+ * it parses, `cookie` which session it answers for, the three override
+ * names which method it runs. The identity request is excepted from
+ * `authorization` alone: its one such header, under any scheme, is what
+ * REQ-COMMON-39 counts. On the token request the verifier further
+ * requires each session's requiredHeaders, `host` and `content-type`,
+ * reads `content-length`, and ignores every other header: one outside
+ * both lists changes only what the platform answers, and a wrong answer
+ * is a response the verifier cannot read.
+ */
+export const FORBIDDEN_REQUEST_HEADERS: readonly string[] = [
+  'authorization',
+  'content-encoding',
+  'cookie',
+  'transfer-encoding',
+  'x-http-method',
+  'x-http-method-override',
+  'x-method-override',
+]
 
 /** Governance-owned launch parameters, in seconds. */
 export const MAX_FUTURE_ATTESTATION_SKEW_SECONDS = 300

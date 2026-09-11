@@ -48,7 +48,6 @@ SESSIONS = ("token", "identity")
 # The transport's, not a platform's: TLSNotary speaks HTTP/1.1, and the length
 # header is written by the HTTP client rather than chosen by anyone.
 HTTP_VERSION = "HTTP/1.1"
-LENGTH_HEADER = "content-length: "
 
 
 def header(comment: str) -> str:
@@ -92,23 +91,43 @@ def request_line(session: dict[str, Any]) -> str:
     return f"{session['method']} {session['path']} "
 
 
-def request_header_block(session: dict[str, Any]) -> str:
-    """The header lines a verifier must find, joined by CRLF.
+# The header names a Platform Verifier requires of every token request, and
+# the only header data a profile carries. `host` because a profile whose
+# pinned authority and pinned host name different servers contradicts itself,
+# and `content-type` because it selects the platform's request parser
+# (REQ-COMMON-21B). Nothing else a runtime sends changes what the platform
+# parses, so nothing else is compared, and nothing else is stated: what a
+# runtime adds beyond these is its own.
+REQUIRED_NAMES = ("host", "content-type")
 
-    A block rather than one run of the whole head, because the head's ORDER is
-    not fixed. A verifier splits both this and the head it was given into lines
-    and matches them as sets: every line here found exactly once there, nothing
-    there that is not here, plus the `content-length` HTTP framing owns.
+# Lowercase field names, so a verifier lowercasing what it reads can compare
+# against the list as it is.
+NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 
-    Order is left to the prover because it changes nothing a platform does with
-    the request, and fixing it would bind every prover to the order its HTTP
-    library emits -- the browser reaches the wire through tlsn's wasm prover,
-    whose `HttpRequest` holds headers in a `HashMap`. Neither is the version or
-    the length header profile data: hyper writes `HTTP/1.1`, lowercases every
-    field name, and appends its own length, so the profile states what a caller
-    chooses and the verifier expects what the client does with it.
+
+def crlf(lines: list[str]) -> str:
+    """Lines joined by CRLF, the shape a Solidity verifier splits."""
+    return "\r\n".join(lines)
+
+
+def forbidden_headers(spec: dict[str, Any]) -> list[str]:
+    """The header names no notarized request may carry, checked by name alone.
+
+    Each changes what the platform does with the request in a way no revealed
+    byte shows, so a verifier can only refuse the name. Compared lowercased,
+    which is why the list must be.
     """
-    return "\r\n".join(session["requestHeaders"])
+    names = spec["requests"]["forbiddenHeaders"]
+    if not isinstance(names, list) or not names:
+        raise SystemExit("ERROR: requests.forbiddenHeaders must list at least one name")
+    for name in names:
+        if not isinstance(name, str) or not NAME.fullmatch(name):
+            raise SystemExit(f"ERROR: forbidden header {name!r} is not a lowercase field name")
+        if name in REQUIRED_NAMES or name == "content-length":
+            raise SystemExit(f"ERROR: {name!r} is read by the verifier and cannot be forbidden")
+    if len(set(names)) != len(names):
+        raise SystemExit("ERROR: requests.forbiddenHeaders names one header twice")
+    return names
 
 
 def sessions_of(profile: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -165,40 +184,38 @@ def escaped(value: str) -> str:
 HEADER = re.compile(r"^[a-z][a-z0-9-]*: [\x20-\x21\x23-\x26\x28-\x5b\x5d-\x7e]+$")
 
 
-def request_headers(session: dict[str, Any], host: str) -> None:
-    """Refuse a header list a verifier could not compare, or should not.
+def required_headers(session: dict[str, Any]) -> list[str]:
+    """The lines a verifier holds a token request's head to, validated.
 
-    A verifier compares these lines raw, so a header the wire spells
-    differently -- another case, a second copy of a field name, a `content-length`
-    whose value no profile can know -- is a profile that rejects every honest
-    session, and says so here rather than as a rejection with no reason.
+    Exactly the names in `REQUIRED_NAMES`, each as `lowercase-name: value`, the
+    `host` one naming the pinned authority. A verifier compares these lines
+    raw, so a line the wire spells differently is a profile that rejects every
+    honest session, and says so here rather than as a rejection with no
+    reason.
     """
-    headers = session["requestHeaders"]
-    if not isinstance(headers, list) or not headers:
-        raise SystemExit("ERROR: a token session must list the headers it sends")
-
+    headers = session["requiredHeaders"]
+    if not isinstance(headers, list):
+        raise SystemExit("ERROR: a token session must list its required headers")
     names: list[str] = []
     for line in headers:
         if not isinstance(line, str) or not HEADER.fullmatch(line):
             raise SystemExit(f"ERROR: header {line!r} is not `lowercase-name: value`")
         names.append(line.split(":", 1)[0])
-    if len(set(names)) != len(names):
-        raise SystemExit(f"ERROR: {names} names one header twice")
-
+    if sorted(names) != sorted(REQUIRED_NAMES):
+        raise SystemExit(f"ERROR: the required headers must be exactly {REQUIRED_NAMES}, got {names}")
     # The `Host` header is prover-composed text and says nothing about which
     # server answered -- but a profile whose pinned header names one host while
     # its pinned authority names another contradicts itself, and only one of the
     # two can be what the session did.
+    host = session["authority"]
     if f"host: {host}" not in headers:
-        raise SystemExit(f"ERROR: the headers must carry `host: {host}`, the pinned authority")
-    if "content-type" not in names:
-        raise SystemExit("ERROR: the media type selects the platform's request parser and is required")
-    if "content-length" in names:
-        raise SystemExit("ERROR: `content-length` is the body's own count; the verifier reads it, no profile can state it")
+        raise SystemExit(f"ERROR: the required headers must carry `host: {host}`, the pinned authority")
+    return headers
 
 
 def validate(spec: dict[str, Any]) -> None:
     """Refuse a spec that would generate constants nothing can rely on."""
+    forbidden_headers(spec)
     seen: set[str] = set()
     for profile in spec["profiles"]:
         platform = profile["platform"]
@@ -213,7 +230,7 @@ def validate(spec: dict[str, Any]) -> None:
             safe(session["method"], "method")
             safe(session["path"], "path")
             if name == "token":
-                request_headers(session, host)
+                required_headers(session)
                 if session["secretField"] is not None:
                     safe(session["secretField"], "secretField")
             if name == "identity":
@@ -313,26 +330,28 @@ def gen_sol(spec: dict[str, Any]) -> str:
 
     lines += [
         "",
-        "    /// @dev The token request's head, byte for byte, ending at the",
-        "    ///      `content-length` value the verifier reads out of the transcript.",
-        "    ///      Its headers are revealed, so leaving them uncompared left the one",
-        "    ///      that decides how the platform parses the body -- the media type",
-        "    ///      REQ-COMMON-21B fixes -- public and unconstrained.",
-        "    ///",
-        "    ///      Pinned as ONE run rather than as a set of lines: the head is fixed",
-        "    ///      bytes, so a comparison against it needs no header parser, and a",
-        "    ///      parser is where an added, reordered or restated header would have",
-        "    ///      to be caught one rule at a time.",
+        "    /// @dev The lines a verifier requires of the token request's head, each",
+        "    ///      exactly once with its value: `host` naming the pinned authority,",
+        "    ///      and the media type that selects the platform's request parser",
+        "    ///      (REQ-COMMON-21B). Revealed but uncompared, the media type was a",
+        "    ///      byte a prover chose in a request every other field of which is",
+        "    ///      pinned. What else a runtime sends is its own and not stated here.",
         "",
     ]
     for profile in profiles:
         token = profile["sessions"].get("token")
         if token is None:
             continue
-        const = f"{upper(profile['platform'])}_TOKEN_REQUEST_HEADERS"
+        const = f"{upper(profile['platform'])}_TOKEN_REQUIRED_HEADERS"
         lines.append(
-            f'    bytes internal constant {const} = "{escaped(request_header_block(token))}";'
+            f'    bytes internal constant {const} = "{escaped(crlf(required_headers(token)))}";'
         )
+
+    lines += [""]
+    lines += sol_doc(spec["requests"].get("note"))
+    lines.append(
+        f'    bytes internal constant FORBIDDEN_REQUEST_HEADERS = "{escaped(crlf(forbidden_headers(spec)))}";'
+    )
 
     lines += [
         "",
@@ -457,6 +476,31 @@ def rust_session(session: dict[str, Any], indent: int) -> list[str]:
     ]
 
 
+def rust_max_width() -> int:
+    """rustfmt's line width, read from its own config so the two agree."""
+    config = REPO_ROOT / "rust" / "rustfmt.toml"
+    if not config.exists():
+        return 100
+    for line in config.read_text(encoding="utf-8").splitlines():
+        key, _, rest = line.partition("=")
+        if key.strip() == "max_width":
+            return int(rest.split("#", 1)[0].strip())
+    return 100
+
+
+def rust_array(prefix: str, items: list[str], indent: str, suffix: str) -> list[str]:
+    """`prefix&[items]suffix` on one line when it fits, else one item per line.
+
+    rustfmt's rule, so a generated file passes `fmt --check` unformatted. It
+    used to pass by accident: an unbreakable string in the same struct made
+    rustfmt leave the whole expression alone.
+    """
+    one = f"{indent}{prefix}&[{', '.join(f'\"{item}\"' for item in items)}]{suffix}"
+    if len(one) <= rust_max_width():
+        return [one]
+    return [f"{indent}{prefix}&[", *(f'{indent}    "{item}",' for item in items), f"{indent}]{suffix}"]
+
+
 def gen_rust(spec: dict[str, Any]) -> str:
     lines = [header("//").rstrip("\n"), ""]
     lines += rust_doc(spec.get("note"), marker="//!")
@@ -499,15 +543,13 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "    /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,",
         "    /// whose request hides nothing and is revealed whole.",
         "    pub secret_field: Option<&'static str>,",
-        "    /// Every header this request sends, lowercased as the wire spells them,",
-        "    /// in no particular order. `content-length` is absent because its value",
-        "    /// is the body's own count: the HTTP client appends it and the verifier",
-        "    /// reads it rather than compares it.",
-        "    pub request_headers: &'static [&'static str],",
-        "    /// The same lines joined by CRLF, which is the shape a Platform",
-        "    /// Verifier splits and matches as a set -- order is the prover's, the",
-        "    /// set is the profile's.",
-        "    pub request_header_block: &'static str,",
+        "    /// The header lines a Platform Verifier requires, each exactly once with",
+        "    /// its value: `host` and `content-type`, lowercased as the wire spells",
+        "    /// them. Every other header is the runtime's own, save the names",
+        "    /// `FORBIDDEN_REQUEST_HEADERS` lists. `content-length` is absent",
+        "    /// because its value is the body's own count: the HTTP client appends",
+        "    /// it and the verifier reads it rather than compares it.",
+        "    pub required_headers: &'static [&'static str],",
         "}",
         "",
         "/// The identity session: the authenticated read that names the account.",
@@ -552,14 +594,10 @@ def gen_rust(spec: dict[str, Any]) -> str:
         if token is None:
             lines.append("    token: None,")
         else:
-            headers = ", ".join(f'"{line}"' for line in token["requestHeaders"])
             lines.append("    token: Some(TokenSession {")
             lines += rust_session(token, 8)
             lines.append(f"        secret_field: {rust_str(token['secretField'])},")
-            lines.append(f"        request_headers: &[{headers}],")
-            lines.append(
-                f'        request_header_block: "{escaped(request_header_block(token))}",'
-            )
+            lines += rust_array("required_headers: ", required_headers(token), "        ", ",")
             lines.append("    }),")
 
         identity = profile["sessions"].get("identity")
@@ -588,6 +626,11 @@ def gen_rust(spec: dict[str, Any]) -> str:
         "pub fn launch(platform: &str) -> Option<&'static Profile> {",
         "    LAUNCH.iter().copied().find(|p| p.platform == platform)",
         "}",
+        "",
+    ]
+    lines += rust_doc(spec["requests"].get("note"))
+    lines += rust_array("pub const FORBIDDEN_REQUEST_HEADERS: &[&str] = ", forbidden_headers(spec), "", ";")
+    lines += [
         "",
         "/// Governance-owned launch parameters, in seconds.",
         f"pub const MAX_FUTURE_ATTESTATION_SKEW_SECONDS: u64 = "
@@ -638,6 +681,26 @@ def ts_session(session: dict[str, Any], indent: int) -> list[str]:
     ]
 
 
+def ts_line_width() -> int:
+    """The formatter's line width, read from its own config so the two agree."""
+    config = REPO_ROOT / "ts" / "biome.json"
+    if not config.exists():
+        return 80
+    return int(json.loads(config.read_text(encoding="utf-8")).get("formatter", {}).get("lineWidth", 80))
+
+
+def ts_array(prefix: str, items: list[str], indent: str, suffix: str) -> list[str]:
+    """`prefix[items]suffix` on one line when it fits, else one item per line.
+
+    That is the formatter's rule, and a generated file has to pass `fmt:check`
+    unformatted.
+    """
+    one = f"{indent}{prefix}[{', '.join(ts_str(item) for item in items)}]{suffix}"
+    if len(one) <= ts_line_width():
+        return [one]
+    return [f"{indent}{prefix}[", *(f"{indent}  {ts_str(item)}," for item in items), f"{indent}]{suffix}"]
+
+
 def gen_ts(spec: dict[str, Any]) -> str:
     lines = [header("//").rstrip("\n"), ""]
     lines += ts_doc(spec.get("note"))
@@ -659,12 +722,11 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "  readonly session: Session",
         "  /** The body field committed rather than revealed, or null. */",
         "  readonly secretField: string | null",
-        "  /** Every header this request sends, lowercased, in no particular order.",
+        "  /** The header lines a Platform Verifier requires, each exactly once with",
+        "   * its value: `host` and `content-type`. Every other header is the",
+        "   * runtime's own, save the names `FORBIDDEN_REQUEST_HEADERS` lists.",
         "   * `content-length` is absent: the HTTP client appends it. */",
-        "  readonly requestHeaders: readonly string[]",
-        "  /** The same lines joined by CRLF, which a Platform Verifier splits and",
-        "   * matches as a set. */",
-        "  readonly requestHeaderBlock: string",
+        "  readonly requiredHeaders: readonly string[]",
         "}",
         "",
         "export interface IdentitySession {",
@@ -698,13 +760,7 @@ def gen_ts(spec: dict[str, Any]) -> str:
             lines.append("  token: {")
             lines += ts_session(token, 4)
             lines.append(f"    secretField: {ts_str(token['secretField'])},")
-            # Broken across lines the way the repository's formatter would
-            # break them, so a generated file passes `fmt:check` unformatted.
-            lines.append("    requestHeaders: [")
-            lines += [f"      {ts_str(line)}," for line in token["requestHeaders"]]
-            lines.append("    ],")
-            lines.append("    requestHeaderBlock:")
-            lines.append(f"      '{escaped(request_header_block(token))}',")
+            lines += ts_array("requiredHeaders: ", required_headers(token), "    ", ",")
             lines.append("  },")
 
         identity = profile["sessions"].get("identity")
@@ -733,6 +789,13 @@ def gen_ts(spec: dict[str, Any]) -> str:
         "export function attestationCount(profile: Profile): number {",
         "  return (profile.token ? 1 : 0) + (profile.identity ? 1 : 0)",
         "}",
+        "",
+    ]
+    lines += ts_doc(spec["requests"].get("note"))
+    lines += ts_array(
+        "export const FORBIDDEN_REQUEST_HEADERS: readonly string[] = ", forbidden_headers(spec), "", ""
+    )
+    lines += [
         "",
         "/** Governance-owned launch parameters, in seconds. */",
         f"export const MAX_FUTURE_ATTESTATION_SKEW_SECONDS = "

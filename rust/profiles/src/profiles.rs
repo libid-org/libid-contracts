@@ -60,15 +60,13 @@ pub struct TokenSession {
     /// committed run is a suffix (REQ-COMMON-22). `None` for a public client,
     /// whose request hides nothing and is revealed whole.
     pub secret_field: Option<&'static str>,
-    /// Every header this request sends, lowercased as the wire spells them,
-    /// in no particular order. `content-length` is absent because its value
-    /// is the body's own count: the HTTP client appends it and the verifier
-    /// reads it rather than compares it.
-    pub request_headers: &'static [&'static str],
-    /// The same lines joined by CRLF, which is the shape a Platform
-    /// Verifier splits and matches as a set -- order is the prover's, the
-    /// set is the profile's.
-    pub request_header_block: &'static str,
+    /// The header lines a Platform Verifier requires, each exactly once with
+    /// its value: `host` and `content-type`, lowercased as the wire spells
+    /// them. Every other header is the runtime's own, save the names
+    /// `FORBIDDEN_REQUEST_HEADERS` lists. `content-length` is absent
+    /// because its value is the body's own count: the HTTP client appends
+    /// it and the verifier reads it rather than compares it.
+    pub required_headers: &'static [&'static str],
 }
 
 /// The identity session: the authenticated read that names the account.
@@ -123,8 +121,10 @@ pub const X: Profile = Profile {
             request_line: "POST /2/oauth2/token ",
         },
         secret_field: None,
-        request_headers: &["host: api.x.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_header_block: "host: api.x.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
+        required_headers: &[
+            "host: api.x.com",
+            "content-type: application/x-www-form-urlencoded",
+        ],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -154,8 +154,10 @@ pub const GITHUB: Profile = Profile {
             request_line: "POST /login/oauth/access_token ",
         },
         secret_field: Some("client_secret"),
-        request_headers: &["host: github.com", "content-type: application/x-www-form-urlencoded", "accept: application/json", "connection: close"],
-        request_header_block: "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close",
+        required_headers: &[
+            "host: github.com",
+            "content-type: application/x-www-form-urlencoded",
+        ],
     }),
     identity: Some(IdentitySession {
         session: Session {
@@ -181,6 +183,29 @@ pub const LAUNCH: &[&Profile] = &[&GOOGLE, &X, &GITHUB];
 pub fn launch(platform: &str) -> Option<&'static Profile> {
     LAUNCH.iter().copied().find(|p| p.platform == platform)
 }
+
+/// Header names no notarized request may carry, compared by every
+/// Platform Verifier with the name lowercased, its whitespace removed and
+/// `_` read as `-`. Each changes what the platform does with the request
+/// in a way no revealed byte shows: `authorization` which client it
+/// authenticates, `content-encoding` and `transfer-encoding` which bytes
+/// it parses, `cookie` which session it answers for, the three override
+/// names which method it runs. The identity request is excepted from
+/// `authorization` alone: its one such header, under any scheme, is what
+/// REQ-COMMON-39 counts. On the token request the verifier further
+/// requires each session's requiredHeaders, `host` and `content-type`,
+/// reads `content-length`, and ignores every other header: one outside
+/// both lists changes only what the platform answers, and a wrong answer
+/// is a response the verifier cannot read.
+pub const FORBIDDEN_REQUEST_HEADERS: &[&str] = &[
+    "authorization",
+    "content-encoding",
+    "cookie",
+    "transfer-encoding",
+    "x-http-method",
+    "x-http-method-override",
+    "x-method-override",
+];
 
 /// Governance-owned launch parameters, in seconds.
 pub const MAX_FUTURE_ATTESTATION_SKEW_SECONDS: u64 = 300;

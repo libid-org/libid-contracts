@@ -1,21 +1,21 @@
 //! hyper writes a head this table admits.
 //!
-//! The profile fixes which headers a token request carries, not the order they
-//! go in, so what a verifier checks is a set: every line the profile lists,
-//! once each, nothing else, plus the `content-length` HTTP framing owns. This
-//! asserts that hyper, given the profile's headers, writes exactly that -- the
-//! request built from `request_headers` and driven through the real
-//! `hyper::client::conn::http1` encoder over an in-memory duplex, so what is
-//! compared is the bytes hyper actually wrote.
+//! A verifier holds a token request's head to the profile's required headers,
+//! each once with its value, refuses the forbidden names, and reads one
+//! `content-length`; the rest of the head is the client's business. This
+//! asserts that hyper, given the profile's required headers and the two a
+//! runtime adds of its own, writes a head that passes -- the request driven
+//! through the real `hyper::client::conn::http1` encoder over an in-memory
+//! duplex, so what is checked is the bytes hyper actually wrote.
 //!
-//! Order is deliberately not asserted. Nothing promises where a client puts a
-//! header, and the browser reaches the wire through tlsn's wasm prover, whose
-//! `HttpRequest` holds them in a `HashMap` -- a test demanding an order would
-//! pass here and fail there for a reason neither end could name.
+//! Order is not asserted. Nothing promises where a client puts a header, and
+//! the browser reaches the wire through tlsn's wasm prover, whose
+//! `HttpRequest` holds them in a `HashMap`.
 //!
-//! What this still catches is a header hyper adds or drops on its own, and a
-//! `content-length` it does not append for a known-length body. The lowercase
-//! claim needs an input the profile cannot supply, which is the last case.
+//! What this catches is hyper adding a forbidden header on its own, dropping
+//! a required one, or not appending `content-length` for a known-length body.
+//! The lowercase claim needs an input the profile cannot supply, which is the
+//! last case.
 //!
 //! The GitHub exchange is the reason this exists. It runs in the deployment's
 //! backend, which is the prover for that session and reaches the wire through
@@ -24,6 +24,7 @@
 use hyper_util::rt::TokioIo;
 use libid_profiles::{
     TokenSession,
+    FORBIDDEN_REQUEST_HEADERS,
     GITHUB,
     X,
 };
@@ -38,9 +39,11 @@ async fn head_hyper_writes(session: &TokenSession, body: &'static [u8]) -> Vec<u
         .method(session.session.method)
         .uri(session.session.path);
 
-    // In the profile's order, which decides nothing: the verifier matches the
-    // head as a set, and the order hyper writes is not asserted below.
-    for header in session.request_headers {
+    // The profile's required pair, then what the browser and the backend add
+    // of their own and the verifier does not compare. Order decides nothing
+    // and is not asserted below.
+    let own = ["accept: application/json", "connection: close"];
+    for header in session.required_headers.iter().chain(own.iter()) {
         let (name, value) = header.split_once(": ").expect("`name: value`");
         request = request.header(name, value);
     }
@@ -88,21 +91,27 @@ fn header_lines(wire: &[u8]) -> Vec<String> {
 }
 
 fn assert_head_admits(session: &TokenSession, wire: &[u8], body_len: usize) {
-    let mut written = header_lines(wire);
-    written.sort();
+    let written = header_lines(wire);
+    let name_of = |line: &String| line.split(':').next().unwrap().to_ascii_lowercase();
 
-    let mut expected: Vec<String> = session
-        .request_headers
+    for required in session.required_headers {
+        let count = written.iter().filter(|line| *line == required).count();
+        assert_eq!(
+            count, 1,
+            "required header not written exactly once: {required}"
+        );
+    }
+    for line in &written {
+        assert!(
+            !FORBIDDEN_REQUEST_HEADERS.contains(&name_of(line).as_str()),
+            "hyper wrote a forbidden header: {line}"
+        );
+    }
+    let lengths: Vec<&String> = written
         .iter()
-        .map(|line| (*line).to_owned())
+        .filter(|line| name_of(line) == "content-length")
         .collect();
-    expected.push(format!("content-length: {body_len}"));
-    expected.sort();
-
-    assert_eq!(
-        written, expected,
-        "hyper wrote a head the profile does not admit"
-    );
+    assert_eq!(lengths, [&format!("content-length: {body_len}")]);
 }
 
 #[tokio::test]
@@ -140,6 +149,49 @@ async fn the_declared_length_is_the_body_and_moves_with_it() {
             "the declared length is not the body's own"
         );
     }
+}
+
+#[tokio::test]
+async fn a_length_the_builder_sets_itself_is_written_once() {
+    // X's browser builder sets `content-length` itself, third among five, and
+    // hyper is still the encoder underneath tlsn's prover. A verifier requires
+    // exactly one, so what matters is that hyper keeps the caller's rather than
+    // adding its own beside it -- and keeps the value.
+    let session = X.token.expect("x notarizes a token session");
+    let body: &'static [u8] = b"grant_type=authorization_code&client_id=abc&code=xyz";
+    let (client, mut server) = tokio::io::duplex(1 << 12);
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(client))
+            .await
+            .expect("handshake");
+    tokio::spawn(connection);
+    let mut request = hyper::Request::builder()
+        .method(session.session.method)
+        .uri(session.session.path);
+    for header in [
+        "host: api.x.com",
+        "content-type: application/x-www-form-urlencoded",
+        "content-length: 52",
+        "accept: application/json",
+        "connection: close",
+    ] {
+        let (name, value) = header.split_once(": ").expect("`name: value`");
+        request = request.header(name, value);
+    }
+    let request = request
+        .body(http_body_util::Full::new(hyper::body::Bytes::from(body)))
+        .expect("valid request");
+    let sending = tokio::spawn(async move { sender.send_request(request).await });
+    let mut wire = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !wire.windows(4).any(|w| w == b"\r\n\r\n") {
+        let read = server.read(&mut buf).await.expect("read");
+        assert!(read > 0, "the connection closed before the request head");
+        wire.extend_from_slice(&buf[..read]);
+    }
+    drop(server);
+    let _ = sending.await;
+    assert_head_admits(&session, &wire, body.len());
 }
 
 #[tokio::test]

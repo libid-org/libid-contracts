@@ -88,8 +88,8 @@ contract GitHubPlatformVerifierTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The header set `github/v1` fixes, laid out in the profile's order; the
-    /// verifier accepts any.
+    /// The head the Token-Exchange Service sends: the two headers the profile
+    /// requires, and two it does not compare.
     bytes constant EXCHANGE_HEADERS =
         "host: github.com\r\ncontent-type: application/x-www-form-urlencoded\r\naccept: application/json\r\nconnection: close\r\n";
 
@@ -334,6 +334,128 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
+    /// @dev GitHub honours `token` and Basic beside Bearer. A second
+    ///      `authorization` under either is counted all the same; counting only
+    ///      `bearer` left it uncounted, and a leaked personal token in it would
+    ///      have named someone else's account under this exchange's bearer.
+    function test_rejectsASecondAuthorizationHeaderOfAnotherSchemeOnTheIdentityRead() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHeadPrefix("Authorization: token ghp_stolen\r\n");
+        vm.expectPartialRevert(CeremonyAttestation.NotOneAuthorizationHeader.selector);
+        this.run{value: quote}(s);
+    }
+
+    /// @dev And `cookie`, the other credential a platform might honour over
+    ///      the bearer, is refused on the identity read by name.
+    function test_rejectsACookieOnTheIdentityRead() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHeadPrefix("cookie: user_session=stolen\r\n");
+        vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.ForbiddenRequestHeader.selector, bytes("cookie")));
+        this.run{value: quote}(s);
+    }
+
+    /// @dev The identity request as the browser composes it (`identityRequest`
+    ///      on libid `feat/ceremony-rebuild-plan`): `host`, `authorization`,
+    ///      `accept`, the browser's own `user-agent`, which GitHub demands,
+    ///      `x-github-api-version`, `connection`, in that order and lowercased
+    ///      by hyper. The exchange the Token-Exchange Service sends is the
+    ///      happy path above already: `host`, `content-type`, `accept`,
+    ///      `connection`, hyper's `content-length` last, which Heorhii ran
+    ///      against GitHub for real.
+    function test_verifiesTheIdentityRequestTheBrowserSends() public {
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.identitySession = _identityWithHead(
+            "GET /user HTTP/1.1\r\nhost: api.github.com\r\nauthorization: Bearer ",
+            "\r\naccept: application/vnd.github+json\r\n"
+            "user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36\r\n"
+            "x-github-api-version: 2022-11-28\r\nconnection: close\r\n\r\n"
+        );
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.handle, "octocat");
+    }
+
+    /// The honest identity read for a request given as the bytes before the
+    /// committed bearer and the bytes after it.
+    function _identityWithHead(bytes memory head, bytes memory tail)
+        private
+        pure
+        returns (ICeremony.Attestation memory)
+    {
+        bytes memory bearer = "gho_TOKENTOKENTOKEN";
+        uint32 start = uint32(head.length);
+        uint32 end = start + uint32(bearer.length);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.two(
+                AttestationBuilder.Range({start: 0, value: head}), AttestationBuilder.Range({start: end, value: tail})
+            ),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({start: start, end: end, value: IDENTITY_COMMITMENT})
+            ),
+            length: end + uint32(tail.length)
+        });
+        bytes memory b = abi.encodePacked("HTTP/1.1 200 OK\r\n\r\n", '{"login":"octocat","id":583231}');
+        AttestationBuilder.Direction memory received = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: b})),
+            commitments: AttestationBuilder.none(),
+            length: uint32(b.length)
+        });
+        bytes memory attested = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB_API, T0, sent, received);
+        return ICeremony.Attestation({attestedData: attested, proof: _sign(attested)});
+    }
+
+    string constant RUST_SESSION = "contracts/ceremony/test/fixtures/github-ceremony-session.json";
+
+    /// @dev The exchange as the Token-Exchange Service composes it and the
+    ///      identity read as the browser composes it, both encoded by hyper,
+    ///      laid out by `libid_transcript::ceremony`, committed with tlsn's
+    ///      SHA-256 plaintext hashes, recorded by `AttestedData::from_observed`
+    ///      and signed by the key this suite trusts -- the Rust pipeline minus
+    ///      the MPC, with nothing written by hand. Verified with those
+    ///      signatures unedited; the verifier inside was derived from this
+    ///      suite's digest, which the first assertion checks. Generated by
+    ///      `cargo run -p libid-tlsn --example ceremony_fixtures` in libid-rs.
+    function test_verifiesTheRecordsLibidRsProduces() public {
+        string memory json = vm.readFile(RUST_SESSION);
+        assertEq(vm.parseJsonBytes32(json, ".authorization_digest"), digest, "derived from this suite's digest");
+        assertEq(vm.parseJsonBytes32(json, ".authorization_nonce"), AUTH_NONCE);
+        assertEq(vm.parseJsonAddress(json, ".notary"), vm.addr(NOTARY_KEY), "signed by the key this suite trusts");
+        assertEq(uint64(vm.parseJsonUint(json, ".created_at")), T0);
+        // The identity response is formatted as GitHub formats it for the
+        // media type the profile pins, whitespace and all. A compact body here
+        // once let this fixture pass a verifier that refused every real read.
+        assertTrue(
+            _contains(vm.parseJsonBytes(json, ".identity.received"), bytes('"login": "octocat"')),
+            "the fixture carries GitHub's pretty-printed response"
+        );
+
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".token.attested_data"),
+            proof: vm.parseJsonBytes(json, ".token.notary_signature")
+        });
+        s.identitySession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".identity.attested_data"),
+            proof: vm.parseJsonBytes(json, ".identity.notary_signature")
+        });
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.userId, "583231");
+        assertEq(f.handle, "octocat");
+        assertEq(string(f.clientIdentifier), "Iv1.8a61f9b3a7aba766");
+        assertEq(f.sessionId, digest);
+    }
+
+    function _contains(bytes memory haystack, bytes memory needle) private pure returns (bool) {
+        if (needle.length > haystack.length) return false;
+        for (uint256 i = 0; i + needle.length <= haystack.length; ++i) {
+            bool same = true;
+            for (uint256 j = 0; j < needle.length && same; ++j) {
+                same = haystack[i + j] == needle[j];
+            }
+            if (same) return true;
+        }
+        return false;
+    }
+
     /// @dev GitHub pretty-prints `/user` for the media type the profile pins:
     ///      a newline and two spaces before every member, a space after every
     ///      colon. The readers remove JSON whitespace before they look, so the
@@ -356,6 +478,46 @@ contract GitHubPlatformVerifierTest is Test {
             _identity('{"login":"octocat","id":583231,"login" : "mallory"}', CeremonyProfile.AUTHORITY_GITHUB_API);
         vm.expectRevert(abi.encodeWithSelector(TlsNotaryVerifierBase.FieldNotUnique.selector, "login", 2));
         this.run{value: quote}(s);
+    }
+
+    string constant REAL_SESSION = "contracts/ceremony/test/fixtures/github-ceremony-real.json";
+
+    /// @dev A ceremony that actually ran: two MPC-TLS sessions against
+    ///      github.com and api.github.com on 2026-09-11, the exchange with a
+    ///      real authorization code under the PKCE challenge derived from this
+    ///      suite's digest, the identity read with the bearer GitHub issued,
+    ///      the verifier in the prover's process signing as the key this
+    ///      suite trusts (libid-rs `examples/capture_ceremony.rs`). Nothing in
+    ///      the file was written by hand: the head is what hyper put on the
+    ///      wire, the body is what GitHub answered, pretty-printed as GitHub
+    ///      prints it, and the bearer and the secret are committed, not
+    ///      present. Verified with the signatures unedited, at a clock a minute
+    ///      past the identity read.
+    function test_verifiesTheRecordsACeremonyProduced() public {
+        string memory json = vm.readFile(REAL_SESSION);
+        assertEq(vm.parseJsonBytes32(json, ".authorization_digest"), digest, "bound to this suite's digest");
+        assertEq(vm.parseJsonBytes32(json, ".authorization_nonce"), AUTH_NONCE);
+        assertEq(vm.parseJsonAddress(json, ".notary"), vm.addr(NOTARY_KEY), "signed by the key this suite trusts");
+        assertTrue(
+            _contains(vm.parseJsonBytes(json, ".identity.attested_data"), bytes('"login": "')),
+            "GitHub's pretty-printed response, as served"
+        );
+        vm.warp(vm.parseJsonUint(json, ".identity.created_at") + 60);
+
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".token.attested_data"),
+            proof: vm.parseJsonBytes(json, ".token.notary_signature")
+        });
+        s.identitySession = ICeremony.Attestation({
+            attestedData: vm.parseJsonBytes(json, ".identity.attested_data"),
+            proof: vm.parseJsonBytes(json, ".identity.notary_signature")
+        });
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.userId, "18346821");
+        assertEq(f.handle, "xgreenx");
+        assertEq(string(f.clientIdentifier), "Ov23liIOfT7uQ9707Fpz");
+        assertEq(f.sessionId, digest);
     }
 
     /// @dev The wrong authority is still refused before any field is read.
@@ -453,19 +615,49 @@ contract GitHubPlatformVerifierTest is Test {
         this.run{value: quote}(s);
     }
 
-    /// @dev And the fixtures above compose that head from parts, so this is
-    ///      what says the parts are the profile's own.
-    function test_theFixtureHeadIsTheProfilesOwn() public pure {
-        assertEq(
-            string(_exchangeHead(0)),
-            string(
-                abi.encodePacked(
-                    "POST /login/oauth/access_token HTTP/1.1\r\n",
-                    CeremonyProfile.GITHUB_TOKEN_REQUEST_HEADERS,
-                    "\r\ncontent-length: 0\r\n\r\n"
-                )
-            )
+    /// @dev A header the profile never mentions is the Token-Exchange
+    ///      Service's own business -- a `user-agent`, say -- as long as it is
+    ///      not one of the forbidden names. The exchange still verifies.
+    function test_acceptsAnUnlistedHeaderOnTheExchange() public {
+        bytes memory prefix = abi.encodePacked(
+            "client_id=Iv1.8a61f9b3a7aba766&code=abc&redirect_uri=https%3A%2F%2Fa.example&code_verifier=",
+            CeremonyAuthorization.codeVerifier(digest, AUTH_NONCE)
         );
+        bytes memory head = _exchangeHead(
+            "host: github.com\r\nuser-agent: libid-bridge/0.3.0\r\ncontent-type: application/x-www-form-urlencoded\r\n"
+            "accept: application/json\r\nconnection: close\r\n",
+            prefix.length + 40
+        );
+        bytes memory whole = abi.encodePacked(head, prefix);
+        AttestationBuilder.Direction memory sent = AttestationBuilder.Direction({
+            revealed: AttestationBuilder.one(AttestationBuilder.Range({start: 0, value: whole})),
+            commitments: AttestationBuilder.one(
+                AttestationBuilder.Commitment({
+                    start: uint32(whole.length), end: uint32(whole.length) + 40, value: bytes32(uint256(0x5EC1E7))
+                })
+            ),
+            length: uint32(whole.length) + 40
+        });
+        bytes memory a = AttestationBuilder.encode(CeremonyProfile.AUTHORITY_GITHUB, T0, sent, _exchangeResponse());
+        TlsNotaryVerifierBase.TlsNotaryProof memory s = _payload();
+        s.tokenSession = ICeremony.Attestation({attestedData: a, proof: _sign(a)});
+        ICeremony.VerifiedClaim memory f = this.run{value: quote}(s);
+        assertEq(f.handle, "octocat");
+    }
+
+    /// @dev And the fixtures above compose that head from parts, so this is
+    ///      what says the two lines the profile requires are among them.
+    function test_theFixtureHeadCarriesTheProfilesRequiredHeaders() public pure {
+        bytes memory head = _exchangeHead(0);
+        bytes memory needle = abi.encodePacked(CeremonyProfile.GITHUB_TOKEN_REQUIRED_HEADERS, "\r\n");
+        bool found;
+        for (uint256 i = 0; i + needle.length <= head.length && !found; ++i) {
+            found = true;
+            for (uint256 j = 0; j < needle.length && found; ++j) {
+                found = head[i + j] == needle[j];
+            }
+        }
+        assertTrue(found);
     }
 
     function test_rejectsAnExchangeResponseWithNoRevealedAnchors() public {

@@ -85,12 +85,13 @@ contract XPlatformVerifier is TlsNotaryVerifierBase {
         return CeremonyProfile.X_TOKEN_REQUEST_LINE;
     }
 
-    /// @dev REQ-COMMON-21B. The four headers the browser sends, in any order,
-    ///      among them the media type that makes X read the body the way
-    ///      `formField` reads it. Revealed but uncompared, they were bytes a
-    ///      prover chose in a request every other field of which is pinned.
-    function _tokenRequestHeaders() internal pure override returns (bytes memory) {
-        return CeremonyProfile.X_TOKEN_REQUEST_HEADERS;
+    /// @dev REQ-COMMON-21B. `host`, and the media type that makes X read the
+    ///      body the way `formField` reads it. Revealed but uncompared, the
+    ///      media type was a byte a prover chose in a request every other
+    ///      field of which is pinned. The rest of what the browser sends is
+    ///      not compared: it changes what X answers, never what X parses.
+    function _tokenRequiredHeaders() internal pure override returns (bytes memory) {
+        return CeremonyProfile.X_TOKEN_REQUIRED_HEADERS;
     }
 
     function _identityRequestLine() internal pure override returns (bytes memory) {

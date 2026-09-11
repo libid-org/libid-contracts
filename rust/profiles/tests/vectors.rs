@@ -11,6 +11,7 @@
 //! follows.
 
 use libid_profiles::{
+    FORBIDDEN_REQUEST_HEADERS,
     GITHUB,
     GOOGLE,
     LAUNCH,
@@ -155,33 +156,52 @@ fn the_launch_list_is_closed() {
 }
 
 #[test]
-fn the_token_request_head_is_the_headers_beside_it() {
-    // Two representations of one agreement: the list a prover builds its
-    // request from, and the block the Platform Verifier matches against. They
-    // are generated together, and this is what says the two say the same thing.
+fn the_required_headers_are_host_and_the_media_type() {
+    // The only header data a profile carries: the two lines a Platform
+    // Verifier holds the head to. `host` must name the pinned authority, or
+    // the profile contradicts itself; `content-type` selects the parser. No
+    // `content-length`: that value is the body's own and the verifier reads
+    // it off the transcript.
     for profile in LAUNCH {
         let Some(token) = profile.token else {
             continue;
         };
-        // The block is those same lines joined, which is the shape a verifier
-        // splits and matches as a set. It carries no `content-length`: that
-        // value is the body's own and the verifier reads it off the transcript.
-        assert_eq!(
-            token.request_header_block,
-            token.request_headers.join("\r\n")
-        );
-
-        assert!(
-            !token
-                .request_headers
-                .iter()
-                .any(|header| header.starts_with("content-length:")),
-            "the HTTP client appends the length; a listed one would move it"
-        );
+        let mut names: Vec<&str> = token
+            .required_headers
+            .iter()
+            .map(|line| line.split(':').next().unwrap())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["content-type", "host"]);
         let host = format!("host: {}", token.session.authority);
         assert!(
-            token.request_headers.contains(&host.as_str()),
-            "the pinned `host` header and the pinned authority must name one server"
+            token.required_headers.contains(&host.as_str()),
+            "the required `host` header and the pinned authority must name one server"
         );
+    }
+}
+
+#[test]
+fn the_forbidden_names_are_lowercase_and_never_required() {
+    // The verifier lowercases what it reads and compares against this list
+    // as it is, so a name here in any other case would forbid nothing. And a
+    // profile that both requires a name and forbids it rejects every honest
+    // session.
+    for name in FORBIDDEN_REQUEST_HEADERS {
+        assert_eq!(*name, name.to_ascii_lowercase(), "{name}");
+        assert!(!name.is_empty());
+    }
+    for profile in LAUNCH {
+        let Some(token) = profile.token else {
+            continue;
+        };
+        for line in token.required_headers {
+            let name = line.split(':').next().unwrap();
+            assert!(
+                !FORBIDDEN_REQUEST_HEADERS.contains(&name),
+                "{} requires a header it forbids: {name}",
+                profile.platform
+            );
+        }
     }
 }
